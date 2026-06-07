@@ -452,6 +452,16 @@ pub enum Node {
         /// longer; low notes naturally ring longer than high ones).
         #[serde(default = "default_pluck_decay")]
         pluck_decay: f32,
+        /// Path to a SoundFont (.sf2) file when `wave` is `sampler`.
+        #[serde(default)]
+        sf2: String,
+        /// General MIDI program number (0..=127) when `wave` is `sampler`.
+        #[serde(default)]
+        sf2_preset: u32,
+        /// SoundFont bank when `wave` is `sampler` (0 = melodic, 128 = the
+        /// percussion bank / GM drum map).
+        #[serde(default)]
+        sf2_bank: u32,
         /// Swing, 0..1: every off-beat grid step is delayed by this fraction
         /// of a step (0 = straight, ~0.55 = classic shuffle). Off-beats are
         /// odd steps, so set `steps_per_beat` to the swung subdivision.
@@ -777,6 +787,13 @@ pub enum SeqWave {
     /// decay — played melodically it is THE phonk / Memphis lead. More
     /// cowbell.
     Cowbell,
+    /// SoundFont sampler: plays the notes through real recorded instruments
+    /// from an `.sf2` file (set the seq's `sf2` path and `sf2_preset` — the
+    /// General MIDI program number, e.g. 0 grand piano, 32 acoustic bass,
+    /// 48 strings; `sf2_bank: 128` selects the percussion bank, where notes
+    /// follow the GM drum map). The biggest realism jump available: this is
+    /// how DAWs sound real.
+    Sampler,
 }
 
 /// An ADSR amplitude envelope. One shape, used in three places: the [`Node::Env`]
@@ -1020,6 +1037,9 @@ fn validate_node(node: &Node) -> Result<(), String> {
             fm_index,
             fm_strike,
             pluck_decay,
+            sf2,
+            sf2_preset,
+            wave,
             swing,
             humanize,
             env,
@@ -1052,6 +1072,22 @@ fn validate_node(node: &Node) -> Result<(), String> {
             }
             in_unit("seq.swing", *swing)?;
             in_unit("seq.humanize", *humanize)?;
+            if *wave == SeqWave::Sampler {
+                if sf2.is_empty() {
+                    return Err(
+                        "seq.sf2 must point at a SoundFont (.sf2) file when wave is 'sampler'"
+                            .into(),
+                    );
+                }
+                if !std::path::Path::new(sf2).exists() {
+                    return Err(format!("seq.sf2: no such file '{sf2}'"));
+                }
+                if *sf2_preset > 127 {
+                    return Err(format!(
+                        "seq.sf2_preset must be in 0..=127, got {sf2_preset}"
+                    ));
+                }
+            }
             env.validate("seq.env")?;
             for note in notes {
                 if note.len < 1 {

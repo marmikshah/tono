@@ -112,6 +112,8 @@ tracks in a DAW:
 | `strings` | string ensemble | 3 detuned saws, slow bow swell (~150 ms — write notes slightly early), mellowing lowpass. |
 | `bass` | fingered bass | filtered saw + sine sub; velocity snaps the filter open. |
 | `kit` | drum kit | General MIDI map: pitch picks the drum (see below). |
+| `sampler` | **real recorded instruments** | plays any SoundFont: `sf2` path + `sf2_preset` (GM program: 0 grand piano, 32 acoustic bass, 48 strings…); `sf2_bank: 128` = GM drum map. The realism instrument. |
+| `cowbell` | pitched cowbell | the phonk lead; also GM 56 in the kit. |
 | `fm` | FM mallets/bells | tunable: `fm_ratio` 1 = piano-ish, 3.5 = bell, 14 = tine; `fm_index`/`fm_strike`. |
 | `pluck` | plucked string | Karplus-Strong guitar/harp/koto; `pluck_decay` sets ring. |
 
@@ -141,6 +143,24 @@ frequency: `midi:36` kick, `38` snare, `42` closed hat, `46` open hat,
 
 **A band** is a `mix` of seqs — drums + bass + epiano chords + strings pad —
 through shared processors (`compress`, `reverb`) like a mix bus.
+
+**Sampler setup**: download any General MIDI SoundFont once (e.g. FluidR3 GM
+or GeneralUser GS, both free) and point `sf2` at it:
+```json
+{ "type": "seq", "bpm": 70, "wave": "sampler",
+  "sf2": "/Users/you/.sonarium/sf2/gm.sf2", "sf2_preset": 0,
+  "env": { "s": 1, "r": 0.2 },
+  "notes": [ { "step": 0, "len": 4, "pitch": "C4" } ] }
+```
+Groove: every seq takes `swing` (0..1 off-beat delay — shuffle) and
+`humanize` (0..1 deterministic timing/velocity jitter). Glue: the `duck`
+processor sidechains anything to a trigger (kick-pumped bass/pads):
+```json
+{ "type": "chain", "stages": [
+  { "type": "seq", "...": "the pad" },
+  { "type": "duck", "amount": 0.8, "release": 0.25,
+    "trigger": { "type": "seq", "wave": "kit", "...": "the kick pattern" } } ] }
+```
 
 Two tunable instruments in detail:
 

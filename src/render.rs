@@ -323,6 +323,9 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
             fm_index,
             fm_strike,
             pluck_decay,
+            sf2,
+            sf2_preset,
+            sf2_bank,
             swing,
             humanize,
             env,
@@ -335,6 +338,9 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
                 fm_index: *fm_index,
                 fm_strike: *fm_strike,
                 pluck_decay: *pluck_decay,
+                sf2,
+                sf2_preset: *sf2_preset,
+                sf2_bank: *sf2_bank,
                 swing: *swing,
                 humanize: *humanize,
                 env,
@@ -968,9 +974,37 @@ struct SeqVoice<'a> {
     fm_index: f32,
     fm_strike: f32,
     pluck_decay: f32,
+    sf2: &'a str,
+    sf2_preset: u32,
+    sf2_bank: u32,
     swing: f32,
     humanize: f32,
     env: &'a Adsr,
+}
+
+/// Groove placement for one note: its start sample (swing + humanize timing)
+/// and its humanized gain.
+fn groove_note(note: &SeqNote, voice: &SeqVoice, step_dur: f32) -> (usize, f32) {
+    // Swing delays every off-beat (odd) step by a fraction of a step;
+    // humanize adds a deterministic per-note timing push/pull and velocity
+    // wobble so repeats stop sounding machine-perfect.
+    let swing_delay = if note.step % 2 == 1 {
+        voice.swing * 0.5 * step_dur
+    } else {
+        0.0
+    };
+    let (human_delay, gain) = if voice.humanize > 0.0 {
+        // Seed from the note's identity so the jitter is stable per note.
+        let mut hr = Rng::new((note.step as u64) << 32 ^ (note.len as u64) << 8 ^ 0x6A09_E667);
+        (
+            voice.humanize * 0.12 * step_dur * hr.bi(),
+            note.gain * (1.0 + voice.humanize * 0.15 * hr.bi()),
+        )
+    } else {
+        (0.0, note.gain)
+    };
+    let start = (note.step as f32 * step_dur + swing_delay + human_delay).max(0.0) as usize;
+    (start, gain.clamp(0.0, 1.0))
 }
 
 /// Render a note sequence: each note is an instrument voice with its own
@@ -987,28 +1021,14 @@ fn render_seq(
 ) -> Signal {
     let srf = sr as f32;
     let step_dur = srf * 60.0 / bpm / steps_per_beat.max(1) as f32; // samples per step
+    // The sampler plays all notes through one shared synthesizer (voices
+    // interact via polyphony), so it renders the sequence as a whole.
+    if voice.wave == SeqWave::Sampler {
+        return sampler_seq(voice, notes, step_dur, n, sr);
+    }
     let mut out = vec![0.0f32; n];
     for note in notes {
-        // Groove: swing delays every off-beat (odd) step by a fraction of a
-        // step; humanize adds a deterministic per-note timing push/pull and
-        // velocity wobble so repeats stop sounding machine-perfect.
-        let swing_delay = if note.step % 2 == 1 {
-            voice.swing * 0.5 * step_dur
-        } else {
-            0.0
-        };
-        let (human_delay, gain) = if voice.humanize > 0.0 {
-            // Seed from the note's identity so the jitter is stable per note.
-            let mut hr = Rng::new((note.step as u64) << 32 ^ (note.len as u64) << 8 ^ 0x6A09_E667);
-            (
-                voice.humanize * 0.12 * step_dur * hr.bi(),
-                note.gain * (1.0 + voice.humanize * 0.15 * hr.bi()),
-            )
-        } else {
-            (0.0, note.gain)
-        };
-        let gain = gain.clamp(0.0, 1.0);
-        let start = (note.step as f32 * step_dur + swing_delay + human_delay).max(0.0) as usize;
+        let (start, gain) = groove_note(note, voice, step_dur);
         if start >= n {
             continue;
         }
@@ -1244,6 +1264,8 @@ fn seq_note_signal(
             }
         }
         SeqWave::Kit => out = kit_drum(f, note, sr, rng),
+        // Handled wholesale in sampler_seq (shared synthesizer, polyphony).
+        SeqWave::Sampler => unreachable!("sampler renders via sampler_seq"),
         SeqWave::Cowbell => {
             for (i, &fi) in f.iter().enumerate() {
                 let t = i as f32 / srf;
@@ -1261,6 +1283,90 @@ fn cowbell_sample(f: f32, t: f32) -> f32 {
     let a = (2.5 * (TAU * f * t).sin()).tanh();
     let b = (2.5 * (TAU * f * 1.565 * t).sin()).tanh();
     0.5 * (a + b) * (-t / 0.09).exp()
+}
+
+/// Render a whole sampler seq through rustysynth: real recorded instruments
+/// from a SoundFont. All notes share one synthesizer so polyphony, voice
+/// stealing, and per-preset envelopes behave like a real MIDI instrument.
+/// Output is the stereo render downmixed to the graph's mono bus (doc-level
+/// `stereo` adds width back at the output stage).
+fn sampler_seq(voice: &SeqVoice, notes: &[SeqNote], step_dur: f32, n: usize, sr: u32) -> Signal {
+    use rustysynth::{Synthesizer, SynthesizerSettings};
+
+    let font = match load_soundfont(voice.sf2) {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!("sampler: cannot load '{}': {e}", voice.sf2);
+            return vec![0.0; n];
+        }
+    };
+    let mut settings = SynthesizerSettings::new(sr as i32);
+    // Our graph supplies reverb/chorus as explicit processors; the synth's
+    // built-ins stay off so renders are lean and deterministic.
+    settings.enable_reverb_and_chorus = false;
+    let mut synth = match Synthesizer::new(&font, &settings) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("sampler: synthesizer init failed: {e:?}");
+            return vec![0.0; n];
+        }
+    };
+    // Channel 9 is percussion by MIDI convention; bank 128 selects it.
+    let ch = if voice.sf2_bank == 128 { 9 } else { 0 };
+    synth.process_midi_message(ch, 0xC0, voice.sf2_preset.min(127) as i32, 0);
+
+    // Schedule note on/offs on the sample timeline (groove applied).
+    let mut events: Vec<(usize, bool, i32, i32)> = Vec::with_capacity(notes.len() * 2);
+    for note in notes {
+        let (start, gain) = groove_note(note, voice, step_dur);
+        if start >= n {
+            continue;
+        }
+        let len = ((note.len as f32 * step_dur).min(n as f32) as usize).max(1);
+        let hz = eval_value(&note.pitch, 1, sr)[0].max(8.0);
+        let key = (69.0 + 12.0 * (hz / 440.0).log2()).round() as i32;
+        let vel = ((gain * 127.0) as i32).clamp(1, 127);
+        events.push((start, true, key.clamp(0, 127), vel));
+        events.push(((start + len).min(n), false, key.clamp(0, 127), 0));
+    }
+    // Offs before ons at the same instant, so retriggers restart the voice.
+    events.sort_by_key(|&(at, is_on, ..)| (at, is_on));
+
+    let (mut left, mut right) = (vec![0.0f32; n], vec![0.0f32; n]);
+    let mut pos = 0usize;
+    for (at, is_on, key, vel) in events {
+        if at > pos {
+            let (lh, rh) = (&mut left[pos..at], &mut right[pos..at]);
+            synth.render(lh, rh);
+            pos = at;
+        }
+        if is_on {
+            synth.note_on(ch, key, vel);
+        } else {
+            synth.note_off(ch, key);
+        }
+    }
+    if pos < n {
+        synth.render(&mut left[pos..], &mut right[pos..]);
+    }
+    left.iter().zip(right).map(|(l, r)| 0.5 * (l + r)).collect()
+}
+
+/// SoundFonts are large; load each file once per process and share it.
+fn load_soundfont(path: &str) -> anyhow::Result<std::sync::Arc<rustysynth::SoundFont>> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, Arc<rustysynth::SoundFont>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(f) = cache.lock().unwrap().get(path) {
+        return Ok(f.clone());
+    }
+    let mut file = std::fs::File::open(path)?;
+    let font = Arc::new(
+        rustysynth::SoundFont::new(&mut file).map_err(|e| anyhow::anyhow!("parse: {e:?}"))?,
+    );
+    cache.lock().unwrap().insert(path.to_string(), font.clone());
+    Ok(font)
 }
 
 /// One General-MIDI-mapped drum hit: the note's onset pitch picks the voice.
@@ -1700,6 +1806,51 @@ mod tests {
             brightness(&b) < brightness(&saw) * 0.5,
             "bass is filtered dark"
         );
+    }
+
+    #[test]
+    fn sampler_requires_a_real_soundfont_path() {
+        let d = doc(r#"{ "name": "n", "duration": 0.5, "root": { "type": "seq",
+                 "bpm": 120, "wave": "sampler", "sf2": "/no/such/font.sf2",
+                 "env": { "s": 1 },
+                 "notes": [ { "step": 0, "len": 2, "pitch": "C4" } ] } }"#);
+        assert!(d.validate().unwrap_err().contains("no such file"));
+        let d = doc(r#"{ "name": "n", "duration": 0.5, "root": { "type": "seq",
+                 "bpm": 120, "wave": "sampler",
+                 "env": { "s": 1 },
+                 "notes": [ { "step": 0, "len": 2, "pitch": "C4" } ] } }"#);
+        assert!(d.validate().unwrap_err().contains("sf2"));
+    }
+
+    /// Full sampler audio check — needs a real SoundFont. Set
+    /// SONARIUM_TEST_SF2=/path/to/any_gm_bank.sf2 to enable; skipped (and
+    /// printed as such) otherwise so CI stays hermetic.
+    #[test]
+    fn sampler_renders_real_instruments_deterministically() {
+        let Some(sf2) = std::env::var_os("SONARIUM_TEST_SF2") else {
+            eprintln!("skipping sampler audio test: SONARIUM_TEST_SF2 not set");
+            return;
+        };
+        let sf2 = sf2.to_string_lossy().replace('"', "");
+        let d = doc(&format!(
+            r#"{{ "name": "n", "duration": 2.0, "root": {{ "type": "seq",
+                 "bpm": 120, "wave": "sampler", "sf2": "{sf2}", "sf2_preset": 0,
+                 "env": {{ "s": 1 }},
+                 "notes": [ {{ "step": 0, "len": 2, "pitch": "C4" }},
+                            {{ "step": 2, "len": 2, "pitch": "E4" }},
+                            {{ "step": 4, "len": 4, "pitch": "G4" }} ] }} }}"#
+        ));
+        let s = render(&d);
+        assert!(rms(&s) > 0.01, "sampled piano audible");
+        assert_eq!(s, render(&d), "sampler render is deterministic");
+        // Percussion bank: a GM kick on channel 9.
+        let k = doc(&format!(
+            r#"{{ "name": "n", "duration": 1.0, "root": {{ "type": "seq",
+                 "bpm": 120, "wave": "sampler", "sf2": "{sf2}", "sf2_bank": 128,
+                 "env": {{ "s": 1 }},
+                 "notes": [ {{ "step": 0, "len": 2, "pitch": "midi:36" }} ] }} }}"#
+        ));
+        assert!(rms(&render(&k)[..8820]) > 0.01, "sampled kick audible");
     }
 
     #[test]
