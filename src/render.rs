@@ -970,98 +970,141 @@ fn render_seq(
         let envb = adsr(voice.env, len, sr);
         let f = eval_value(&note.pitch, len, sr);
         let d = eval_value(voice.duty, len, sr);
-        let mut phase = 0.0f32;
-        let mut tri = 0.0f32; // band-limited triangle integrator state (per note)
-        let (mut cph, mut mph) = (0.0f32, 0.0f32); // fm phases (reset per note)
-        let (mut cph2, mut mph2) = (0.0f32, 0.0f32); // piano's second (detuned) string
-        // Piano: natural decay time falls with pitch — bass strings ring for
-        // seconds, treble dies in under one.
-        let piano_decay = (8.0 / (1.0 + f[0].max(20.0) / 110.0)).clamp(0.25, 6.0);
-        // Karplus-Strong string: a noise burst in a tuned delay line. Tuned to
-        // the note's onset pitch (a plucked string cannot glide).
-        let mut string: Vec<f32> = if voice.wave == SeqWave::Pluck {
-            let period = (srf / f[0].clamp(20.0, srf / 2.0)).round() as usize;
-            let period = period.max(2);
-            (0..period).map(|_| rng.bi()).collect()
-        } else {
-            Vec::new()
-        };
-        let mut spos = 0usize;
-        for i in 0..avail {
-            let dt = f[i].max(0.0) / srf;
-            let s = match voice.wave {
-                SeqWave::Square => {
-                    let duty = d[i].clamp(0.01, 0.99);
-                    let mut v = if phase < duty { 1.0 } else { -1.0 };
-                    v += poly_blep(phase, dt);
-                    v -= poly_blep((phase - duty + 1.0).fract(), dt);
-                    v
-                }
-                SeqWave::Triangle => {
-                    let mut sq = if phase < 0.5 { 1.0 } else { -1.0 };
-                    sq += poly_blep(phase, dt);
-                    sq -= poly_blep((phase + 0.5).fract(), dt);
-                    tri = tri * 0.9995 + 4.0 * dt * sq;
-                    tri
-                }
-                SeqWave::Sawtooth => (2.0 * phase - 1.0) - poly_blep(phase, dt),
-                SeqWave::Sine => osc(Shape::Sine, phase),
-                SeqWave::Noise => rng.bi(),
-                SeqWave::Fm => {
-                    // Hammer strike: the modulation index (brightness) decays
-                    // from the attack; louder notes strike brighter.
-                    let t = i as f32 / srf;
-                    let idx = voice.fm_index
-                        * (0.4 + 0.6 * note.gain)
-                        * (-t / voice.fm_strike.max(1e-3)).exp();
-                    let m = idx * (TAU * mph).sin();
-                    let v = (TAU * cph + m).sin();
-                    cph += dt;
-                    cph -= cph.floor();
-                    mph += dt * voice.fm_ratio;
-                    mph -= mph.floor();
-                    v
-                }
-                SeqWave::Pluck => {
-                    // Average-and-feed-back: the loop's lowpass damps highs
-                    // faster than lows, exactly like a real string.
-                    let y = string[spos];
-                    let next = string[(spos + 1) % string.len()];
-                    string[spos] = voice.pluck_decay * 0.5 * (y + next);
-                    spos = (spos + 1) % string.len();
-                    y
-                }
-                SeqWave::Piano => {
-                    let t = i as f32 / srf;
-                    // Hammer-strike brightness: louder keys strike brighter
-                    // and the shimmer fades within ~80 ms.
-                    let idx = (1.2 + 2.3 * note.gain) * (-t / 0.08).exp();
-                    // Two strings detuned ±1.6 cents beat slowly against each
-                    // other — the chorusing shimmer of a real unison pair.
-                    let a = (TAU * cph + idx * (TAU * mph).sin()).sin();
-                    let b = (TAU * cph2 + idx * (TAU * mph2).sin()).sin();
-                    let detune = 1.000_92; // 2^(1.6/1200)
-                    cph += dt / detune;
-                    cph -= cph.floor();
-                    mph += dt / detune;
-                    mph -= mph.floor();
-                    cph2 += dt * detune;
-                    cph2 -= cph2.floor();
-                    mph2 += dt * detune;
-                    mph2 -= mph2.floor();
-                    // Felt-hammer thump: 4 ms of soft noise on the attack.
-                    let thump = if t < 0.004 {
-                        rng.bi() * 0.25 * (1.0 - t / 0.004)
-                    } else {
-                        0.0
-                    };
-                    // Natural decay on top of (gated by) the seq envelope.
-                    (0.5 * (a + b) + thump) * (-t / piano_decay).exp()
-                }
-            };
+        let sig = seq_note_signal(voice, note, &f[..avail], &d[..avail], sr, rng);
+        for (i, s) in sig.into_iter().enumerate() {
             out[start + i] += s * envb[i] * note.gain;
-            phase += dt;
-            phase -= phase.floor();
+        }
+    }
+    out
+}
+
+/// Render one note of a seq instrument: `f`/`d` are the per-sample pitch and
+/// duty buffers (already truncated to the audible window). Each instrument
+/// owns its per-note state; instruments that consume the PRNG (noise, pluck,
+/// piano's thump, the kit) draw in sample order, keeping renders byte-exact.
+fn seq_note_signal(
+    voice: &SeqVoice,
+    note: &SeqNote,
+    f: &[f32],
+    d: &[f32],
+    sr: u32,
+    rng: &mut Rng,
+) -> Signal {
+    let srf = sr as f32;
+    let n = f.len();
+    let mut out = Vec::with_capacity(n);
+    match voice.wave {
+        SeqWave::Square => {
+            let mut phase = 0.0f32;
+            for i in 0..n {
+                let dt = f[i].max(0.0) / srf;
+                let duty = d[i].clamp(0.01, 0.99);
+                let mut v = if phase < duty { 1.0 } else { -1.0 };
+                v += poly_blep(phase, dt);
+                v -= poly_blep((phase - duty + 1.0).fract(), dt);
+                out.push(v);
+                phase += dt;
+                phase -= phase.floor();
+            }
+        }
+        SeqWave::Triangle => {
+            let (mut phase, mut tri) = (0.0f32, 0.0f32);
+            for &fi in f {
+                let dt = fi.max(0.0) / srf;
+                let mut sq = if phase < 0.5 { 1.0 } else { -1.0 };
+                sq += poly_blep(phase, dt);
+                sq -= poly_blep((phase + 0.5).fract(), dt);
+                tri = tri * 0.9995 + 4.0 * dt * sq;
+                out.push(tri);
+                phase += dt;
+                phase -= phase.floor();
+            }
+        }
+        SeqWave::Sawtooth => {
+            let mut phase = 0.0f32;
+            for &fi in f {
+                let dt = fi.max(0.0) / srf;
+                out.push((2.0 * phase - 1.0) - poly_blep(phase, dt));
+                phase += dt;
+                phase -= phase.floor();
+            }
+        }
+        SeqWave::Sine => {
+            let mut phase = 0.0f32;
+            for &fi in f {
+                out.push(osc(Shape::Sine, phase));
+                phase += fi.max(0.0) / srf;
+                phase -= phase.floor();
+            }
+        }
+        SeqWave::Noise => out.extend((0..n).map(|_| rng.bi())),
+        SeqWave::Fm => {
+            let (mut cph, mut mph) = (0.0f32, 0.0f32);
+            for i in 0..n {
+                let dt = f[i].max(0.0) / srf;
+                // Hammer strike: the modulation index (brightness) decays
+                // from the attack; louder notes strike brighter.
+                let t = i as f32 / srf;
+                let idx = voice.fm_index
+                    * (0.4 + 0.6 * note.gain)
+                    * (-t / voice.fm_strike.max(1e-3)).exp();
+                let m = idx * (TAU * mph).sin();
+                out.push((TAU * cph + m).sin());
+                cph += dt;
+                cph -= cph.floor();
+                mph += dt * voice.fm_ratio;
+                mph -= mph.floor();
+            }
+        }
+        SeqWave::Pluck => {
+            // Karplus-Strong: a noise burst in a delay line tuned to the
+            // note's onset pitch (a plucked string cannot glide). The
+            // average-and-feed-back lowpass damps highs faster than lows,
+            // exactly like a real string.
+            let period = ((srf / f[0].clamp(20.0, srf / 2.0)).round() as usize).max(2);
+            let mut string: Vec<f32> = (0..period).map(|_| rng.bi()).collect();
+            let mut spos = 0usize;
+            for _ in 0..n {
+                let y = string[spos];
+                let next = string[(spos + 1) % string.len()];
+                string[spos] = voice.pluck_decay * 0.5 * (y + next);
+                spos = (spos + 1) % string.len();
+                out.push(y);
+            }
+        }
+        SeqWave::Piano => {
+            // Two strings detuned ±1.6 cents beat slowly against each other —
+            // the chorusing shimmer of a real unison pair. Natural decay time
+            // falls with pitch: bass strings ring for seconds, treble dies
+            // in under one.
+            let decay = (8.0 / (1.0 + f[0].max(20.0) / 110.0)).clamp(0.25, 6.0);
+            let detune = 1.000_92; // 2^(1.6/1200)
+            let (mut cph, mut mph) = (0.0f32, 0.0f32);
+            let (mut cph2, mut mph2) = (0.0f32, 0.0f32);
+            for i in 0..n {
+                let dt = f[i].max(0.0) / srf;
+                let t = i as f32 / srf;
+                // Hammer-strike brightness: louder keys strike brighter and
+                // the shimmer fades within ~80 ms.
+                let idx = (1.2 + 2.3 * note.gain) * (-t / 0.08).exp();
+                let a = (TAU * cph + idx * (TAU * mph).sin()).sin();
+                let b = (TAU * cph2 + idx * (TAU * mph2).sin()).sin();
+                cph += dt / detune;
+                cph -= cph.floor();
+                mph += dt / detune;
+                mph -= mph.floor();
+                cph2 += dt * detune;
+                cph2 -= cph2.floor();
+                mph2 += dt * detune;
+                mph2 -= mph2.floor();
+                // Felt-hammer thump: 4 ms of soft noise on the attack.
+                let thump = if t < 0.004 {
+                    rng.bi() * 0.25 * (1.0 - t / 0.004)
+                } else {
+                    0.0
+                };
+                out.push((0.5 * (a + b) + thump) * (-t / decay).exp());
+            }
         }
     }
     out
