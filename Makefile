@@ -1,0 +1,48 @@
+# Sonarium — sound-engineering MCP server.
+#
+# Bare `make` builds release and runs the HTTP MCP server (the default).
+# `make help` lists everything.
+
+BIN     := target/release/sonarium
+BIND    ?= 127.0.0.1:8787
+WORKDIR ?= ./sounds
+
+.DEFAULT_GOAL := run
+.PHONY: help run serve stdio build release test fmt lint check clean install
+
+help: ## List available targets
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
+
+run: serve ## Default: release build, then run the HTTP MCP server
+
+serve: release ## Run the streamable HTTP MCP server (BIND, WORKDIR overridable)
+	@echo "sonarium HTTP MCP → http://$(BIND)/mcp   (workdir: $(WORKDIR))"
+	SONARIUM_WORKDIR=$(WORKDIR) $(BIN) --http $(BIND)
+
+stdio: release ## Run the stdio MCP server (client spawns the binary)
+	SONARIUM_WORKDIR=$(WORKDIR) $(BIN)
+
+build: ## Debug build
+	cargo build
+
+release: ## Optimized release build → target/release/sonarium
+	cargo build --release
+
+test: ## Run the test suite
+	cargo test
+
+fmt: ## Format all sources
+	cargo fmt --all
+
+lint: ## Clippy with warnings denied
+	cargo clippy --all-targets -- -D warnings
+
+check: fmt lint test ## Pre-commit gate: format + clippy + tests
+
+clean: ## Remove build artifacts
+	cargo clean
+
+install: release ## Print the command to register with Claude Code over HTTP
+	@echo "1) start the server:  make serve"
+	@echo "2) register client:   claude mcp add --transport http sonarium http://$(BIND)/mcp"
