@@ -83,6 +83,20 @@ fn default_voices() -> u32 {
 fn default_detune() -> f32 {
     15.0
 }
+// Seq instrument defaults: ratio 1 + decaying index ≈ an FM piano strike;
+// pluck decay 0.996 rings ~1 s in the mid register.
+fn default_seq_fm_ratio() -> f32 {
+    1.0
+}
+fn default_seq_fm_index() -> f32 {
+    5.0
+}
+fn default_seq_fm_strike() -> f32 {
+    0.2
+}
+fn default_pluck_decay() -> f32 {
+    0.996
+}
 
 /// A complete sound: metadata plus a single root node.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -407,11 +421,28 @@ pub enum Node {
         /// Grid resolution: steps per beat (4 = sixteenth notes).
         #[serde(default = "default_steps_per_beat")]
         steps_per_beat: u32,
-        /// Oscillator used for every note.
+        /// Instrument used for every note.
         wave: SeqWave,
         /// Duty cycle when `wave` is `square` (may be modulated for PWM).
         #[serde(default = "default_duty")]
         duty: Value,
+        /// Modulator frequency ratio when `wave` is `fm` (1 = e-piano/piano,
+        /// 3.5 = bell, 14 = tine).
+        #[serde(default = "default_seq_fm_ratio")]
+        fm_ratio: f32,
+        /// FM modulation index at the strike when `wave` is `fm` (brightness;
+        /// also scaled by each note's velocity, so louder notes ring brighter).
+        #[serde(default = "default_seq_fm_index")]
+        fm_index: f32,
+        /// Strike decay in seconds when `wave` is `fm`: how fast the index
+        /// (brightness) fades after each note's attack. Short = percussive
+        /// e-piano, long = sustained bell shimmer.
+        #[serde(default = "default_seq_fm_strike")]
+        fm_strike: f32,
+        /// String feedback decay when `wave` is `pluck`, 0.8..1 (higher rings
+        /// longer; low notes naturally ring longer than high ones).
+        #[serde(default = "default_pluck_decay")]
+        pluck_decay: f32,
         /// Per-note amplitude envelope.
         env: Adsr,
         /// The notes to play.
@@ -670,6 +701,15 @@ pub enum SeqWave {
     Sine,
     /// White noise (for drums / percussion).
     Noise,
+    /// Two-operator FM struck per note (uses the seq's `fm_ratio` /
+    /// `fm_index` / `fm_strike`): the modulation index starts bright at the
+    /// attack and decays, like a hammer strike — e-piano, piano, bells,
+    /// mallets. Louder notes (higher `gain`) ring brighter.
+    Fm,
+    /// Karplus-Strong plucked string (uses the seq's `pluck_decay`): a noise
+    /// burst rings through a tuned feedback loop — guitar, harp, koto. Pitch
+    /// is fixed per note (slides are ignored).
+    Pluck,
 }
 
 /// An ADSR amplitude envelope. One shape, used in three places: the [`Node::Env`]
@@ -907,6 +947,10 @@ fn validate_node(node: &Node) -> Result<(), String> {
             bpm,
             steps_per_beat,
             duty,
+            fm_ratio,
+            fm_index,
+            fm_strike,
+            pluck_decay,
             env,
             notes,
             ..
@@ -921,6 +965,20 @@ fn validate_node(node: &Node) -> Result<(), String> {
                 return Err("seq.notes must be non-empty".into());
             }
             validate_unit_value(duty, "seq.duty")?;
+            if *fm_ratio <= 0.0 {
+                return Err(format!("seq.fm_ratio must be > 0, got {fm_ratio}"));
+            }
+            if !(0.0..=20.0).contains(fm_index) {
+                return Err(format!("seq.fm_index must be in [0, 20], got {fm_index}"));
+            }
+            if *fm_strike <= 0.0 {
+                return Err(format!("seq.fm_strike must be > 0, got {fm_strike}"));
+            }
+            if !(0.8..1.0).contains(pluck_decay) {
+                return Err(format!(
+                    "seq.pluck_decay must be in [0.8, 1), got {pluck_decay}"
+                ));
+            }
             env.validate("seq.env")?;
             for note in notes {
                 if note.len < 1 {

@@ -319,9 +319,24 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
             steps_per_beat,
             wave,
             duty,
+            fm_ratio,
+            fm_index,
+            fm_strike,
+            pluck_decay,
             env,
             notes,
-        } => render_seq(*bpm, *steps_per_beat, *wave, duty, env, notes, n, sr, rng),
+        } => {
+            let voice = SeqVoice {
+                wave: *wave,
+                duty,
+                fm_ratio: *fm_ratio,
+                fm_index: *fm_index,
+                fm_strike: *fm_strike,
+                pluck_decay: *pluck_decay,
+                env,
+            };
+            render_seq(*bpm, *steps_per_beat, &voice, notes, n, sr, rng)
+        }
         Node::Env { adsr: env } => adsr(env, n, sr),
         Node::Mix { inputs } => {
             let mut acc = vec![0.0f32; n];
@@ -916,15 +931,24 @@ fn fm_signal(freq: &Value, ratio: f32, index: &Value, n: usize, sr: u32) -> Sign
     out
 }
 
-/// Render a note sequence: each note is an oscillator with its own pitch,
-/// length, and the shared per-note ADSR, summed into the output (polyphonic).
-#[allow(clippy::too_many_arguments)]
+/// The per-seq instrument settings shared by every note.
+struct SeqVoice<'a> {
+    wave: SeqWave,
+    duty: &'a Value,
+    fm_ratio: f32,
+    fm_index: f32,
+    fm_strike: f32,
+    pluck_decay: f32,
+    env: &'a Adsr,
+}
+
+/// Render a note sequence: each note is an instrument voice with its own
+/// pitch, length, and the shared per-note ADSR, summed into the output
+/// (polyphonic).
 fn render_seq(
     bpm: f32,
     steps_per_beat: u32,
-    wave: SeqWave,
-    duty: &Value,
-    env: &Adsr,
+    voice: &SeqVoice,
     notes: &[SeqNote],
     n: usize,
     sr: u32,
@@ -943,14 +967,25 @@ fn render_seq(
         // (f32→usize saturates, so even an inf product stays capped by n.)
         let len = ((note.len as f32 * step_dur).min(n as f32) as usize).max(1);
         let avail = (n - start).min(len);
-        let envb = adsr(env, len, sr);
+        let envb = adsr(voice.env, len, sr);
         let f = eval_value(&note.pitch, len, sr);
-        let d = eval_value(duty, len, sr);
+        let d = eval_value(voice.duty, len, sr);
         let mut phase = 0.0f32;
         let mut tri = 0.0f32; // band-limited triangle integrator state (per note)
+        let (mut cph, mut mph) = (0.0f32, 0.0f32); // fm phases (reset per note)
+        // Karplus-Strong string: a noise burst in a tuned delay line. Tuned to
+        // the note's onset pitch (a plucked string cannot glide).
+        let mut string: Vec<f32> = if voice.wave == SeqWave::Pluck {
+            let period = (srf / f[0].clamp(20.0, srf / 2.0)).round() as usize;
+            let period = period.max(2);
+            (0..period).map(|_| rng.bi()).collect()
+        } else {
+            Vec::new()
+        };
+        let mut spos = 0usize;
         for i in 0..avail {
             let dt = f[i].max(0.0) / srf;
-            let s = match wave {
+            let s = match voice.wave {
                 SeqWave::Square => {
                     let duty = d[i].clamp(0.01, 0.99);
                     let mut v = if phase < duty { 1.0 } else { -1.0 };
@@ -968,6 +1003,30 @@ fn render_seq(
                 SeqWave::Sawtooth => (2.0 * phase - 1.0) - poly_blep(phase, dt),
                 SeqWave::Sine => osc(Shape::Sine, phase),
                 SeqWave::Noise => rng.bi(),
+                SeqWave::Fm => {
+                    // Hammer strike: the modulation index (brightness) decays
+                    // from the attack; louder notes strike brighter.
+                    let t = i as f32 / srf;
+                    let idx = voice.fm_index
+                        * (0.4 + 0.6 * note.gain)
+                        * (-t / voice.fm_strike.max(1e-3)).exp();
+                    let m = idx * (TAU * mph).sin();
+                    let v = (TAU * cph + m).sin();
+                    cph += dt;
+                    cph -= cph.floor();
+                    mph += dt * voice.fm_ratio;
+                    mph -= mph.floor();
+                    v
+                }
+                SeqWave::Pluck => {
+                    // Average-and-feed-back: the loop's lowpass damps highs
+                    // faster than lows, exactly like a real string.
+                    let y = string[spos];
+                    let next = string[(spos + 1) % string.len()];
+                    string[spos] = voice.pluck_decay * 0.5 * (y + next);
+                    spos = (spos + 1) % string.len();
+                    y
+                }
             };
             out[start + i] += s * envb[i] * note.gain;
             phase += dt;
@@ -1239,6 +1298,44 @@ mod tests {
         let delay = (0.010 * 44_100.0) as usize;
         assert_eq!(l[delay..delay + 100], mono[..100]); // left trails by 10 ms
         assert_eq!(r[..100], mono[..100]); // right leads
+    }
+
+    #[test]
+    fn fm_seq_strikes_bright_then_mellows() {
+        // One sustained fm note: the decaying modulation index makes the
+        // attack brighter than the tail — the hammer-strike signature.
+        let d = doc(r#"{ "name": "n", "duration": 1.0, "root": { "type": "seq",
+                 "bpm": 60, "steps_per_beat": 1, "wave": "fm",
+                 "fm_ratio": 1.0, "fm_index": 6, "fm_strike": 0.15,
+                 "env": { "d": 0.9, "s": 0.5 },
+                 "notes": [ { "step": 0, "len": 1, "pitch": "A3" } ] } }"#);
+        let s = render(&d);
+        assert!(rms(&s) > 0.05, "fm note audible");
+        let third = s.len() / 3;
+        assert!(
+            brightness(&s[..third]) > brightness(&s[2 * third..]) * 1.5,
+            "strike should be brighter than the tail"
+        );
+    }
+
+    #[test]
+    fn pluck_seq_rings_and_decays_deterministically() {
+        let json = r#"{ "name": "n", "duration": 1.2, "seed": 9, "root": { "type": "seq",
+            "bpm": 60, "steps_per_beat": 1, "wave": "pluck", "pluck_decay": 0.995,
+            "env": { "d": 0.1, "s": 1.0 },
+            "notes": [ { "step": 0, "len": 1, "pitch": "A3" } ] } }"#;
+        let s = render(&doc(json));
+        let half = s.len() / 2;
+        assert!(rms(&s[..half]) > 0.05, "pluck audible");
+        assert!(
+            rms(&s[half..]) < rms(&s[..half]) * 0.5,
+            "string decays naturally"
+        );
+        // Same seed ⇒ identical string; different seed ⇒ different noise burst.
+        assert_eq!(s, render(&doc(json)));
+        let mut other = doc(json);
+        other.seed = 10;
+        assert_ne!(s, render(&other));
     }
 
     #[test]

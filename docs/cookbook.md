@@ -98,6 +98,38 @@ Layer voices with `mix` (lead `seq` + bass `seq` + drum `seq`).
 ```
 Use `wave: "noise"` for snares/hats (pitch ignored).
 
+### Seq instruments: `fm` and `pluck`
+
+Beyond the raw chiptune waves, `seq` has two physical-feeling instruments:
+
+- **`fm`** — a two-operator FM voice struck per note: the modulation index
+  (brightness) starts at `fm_index` and decays over `fm_strike` seconds, like
+  a hammer strike, and louder notes (`gain`) ring brighter. `fm_ratio` picks
+  the timbre family: `1` = e-piano / piano, `2` = hollow / clav, `3.5` = bell,
+  `14` = tine.
+  ```json
+  { "type": "seq", "bpm": 65, "wave": "fm",
+    "fm_ratio": 1.0, "fm_index": 5, "fm_strike": 0.25,
+    "env": { "a": 0.002, "d": 1.2, "s": 0.0, "r": 0.3 },
+    "notes": [ { "step": 0, "len": 4, "pitch": "A4", "gain": 0.9 },
+               { "step": 4, "len": 4, "pitch": "C#5", "gain": 0.7 } ] }
+  ```
+- **`pluck`** — a Karplus-Strong string: a noise burst rings through a tuned
+  feedback loop whose lowpass damps highs faster than lows, exactly like a
+  real string — guitar, harp, koto. `pluck_decay` (0.8..1) sets ring time;
+  low notes naturally ring longer. Pitch is fixed per note (no glides).
+  ```json
+  { "type": "seq", "bpm": 90, "wave": "pluck", "pluck_decay": 0.996,
+    "env": { "a": 0.0, "d": 0.3, "s": 1.0, "r": 0.2 },
+    "notes": [ { "step": 0, "len": 4, "pitch": "E3" },
+               { "step": 4, "len": 4, "pitch": "A3" },
+               { "step": 8, "len": 8, "pitch": "C#4" } ] }
+  ```
+
+Layer them: `fm` melody + soft `triangle` doubling + `pluck` arpeggio is a
+full band. The pluck's noise burst comes from the doc's `seed`, so takes are
+reproducible.
+
 ## More timbres
 
 - **PWM lead:** `square` with a modulated `duty` — `{ "lfo": { "shape": "sine", "rate": 5, "depth": 0.3, "center": 0.5 } }`.
