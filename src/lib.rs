@@ -10,3 +10,4 @@
 //! and finally the MCP tool surface.
 
 pub mod dsl;
+pub mod dsp;
