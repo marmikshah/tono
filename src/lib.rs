@@ -17,4 +17,5 @@ pub mod dsp;
 pub mod edit;
 pub mod engines;
 pub mod render;
+pub mod session;
 pub mod vary;
