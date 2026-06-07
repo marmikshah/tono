@@ -178,7 +178,7 @@ it is parsed and validated by the test suite.
 
 [`examples/river_flows_in_you.jsonl`](examples/river_flows_in_you.jsonl) is a
 session file that renders the intro + main theme of Yiruma's *River Flows in
-You*: a MIDI transcription converted into two polyphonic `seq` layers (melody
+You*: a MIDI transcription converted into two polyphonic FM-piano `seq` layers (melody
 + accompaniment, 104 notes) with reverb, stereo width, and a −14 LUFS master —
 authored entirely through `author_sound` and replayable with one
 `replay_session` call. [`examples/midi_to_seq.py`](examples/midi_to_seq.py) is
