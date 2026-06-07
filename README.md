@@ -103,13 +103,24 @@ file** — JSON that replays identically every time:
 sonarium replay docs/examples/band-demo.json --workdir /tmp/sonarium-demo
 ```
 
-Four annotated examples live in [docs/examples/](docs/examples/): the
-canonical SFX workflow (laser → variants → bank), a four-instrument band on
-the mixing console, the complete *River Flows in You* on the piano instrument
-(800 notes converted from MIDI with rubato and sustain pedal intact —
+Nine annotated examples live in [docs/examples/](docs/examples/), every one
+replayed in CI. The deep cuts: the canonical SFX workflow (laser → variants →
+bank), a four-instrument band on the mixing console, the complete *River
+Flows in You* on the piano instrument (800 notes converted from MIDI with
+rubato and sustain pedal intact —
 [docs/examples/midi_to_seq.py](docs/examples/midi_to_seq.py) converts any
-MIDI), and its phonk remix (cowbell lead, driven 808, lo-fi piano). They
-double as integration tests and as documentation.
+MIDI), and its phonk remix (cowbell lead, driven 808, lo-fi piano).
+
+And an **iconic-sounds pack** — recognizable classics rebuilt from scratch,
+with playable renders in [docs/examples/audio/](docs/examples/audio/):
+
+| Recipe | Listen | The trick |
+|---|---|---|
+| [retro-coin](docs/examples/retro-coin.json) | [ogg](docs/examples/audio/retro-coin.ogg) | B5 grace note into a held E6 — the interval *is* the sound |
+| [jump-8bit](docs/examples/jump-8bit.json) | [ogg](docs/examples/audio/jump-8bit.ogg) | exponential square sweep, gone at sustain 0 |
+| [waka](docs/examples/waka.json) | [ogg](docs/examples/audio/waka.ogg) | per-note pitch slides alternating up/down — the chomp drawn into the note list |
+| [nokia-tune](docs/examples/nokia-tune.json) | [ogg](docs/examples/audio/nokia-tune.ogg) | 13 notes of Gran Vals on the Karplus-Strong pluck |
+| [deep-note](docs/examples/deep-note.json) | [ogg](docs/examples/audio/deep-note.ogg) | 8 supersaw mixer tracks gliding from a scattered cluster onto a five-octave D chord |
 
 ## Works with atelier
 

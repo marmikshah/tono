@@ -331,6 +331,35 @@ async fn river_phonk_remix_session_replays() {
 }
 
 #[tokio::test]
+async fn every_example_recipe_replays() {
+    // The whole docs/examples library is executable documentation: every
+    // recipe must replay clean into a fresh session. (Individual showcases
+    // also have focused assertions in their own tests above.)
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/examples");
+    let mut count = 0;
+    for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let stem = path.file_stem().unwrap().to_string_lossy().to_string();
+        let (srv, _d) = fresh(&format!("sweep_{stem}"));
+        let res = srv
+            .replay_session(Parameters(ReplaySessionReq {
+                path: path.to_string_lossy().into_owned(),
+            }))
+            .await
+            .unwrap_or_else(|e| panic!("{stem} failed to replay: {e}"));
+        assert!(res.0.applied >= 1, "{stem} applied no steps");
+        count += 1;
+    }
+    assert!(
+        count >= 9,
+        "expected the full recipe library, found {count}"
+    );
+}
+
+#[tokio::test]
 async fn replayed_session_reproduces_audio_byte_for_byte() {
     // Session A: author, surgically edit, mutate (explicit seed), bank it.
     let (a, dir_a) = fresh("replay_a");

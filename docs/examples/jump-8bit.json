@@ -1,0 +1,41 @@
+{
+  "name": "jump-8bit",
+  "description": "The platformer jump: a square wave swept exponentially upward and gated by a fast-decay envelope. Replay with: sonarium replay docs/examples/jump-8bit.json",
+  "steps": [
+    {
+      "tool": "author_sound",
+      "args": {
+        "graph": {
+          "name": "jump_8bit",
+          "duration": 0.35,
+          "root": {
+            "type": "mul",
+            "inputs": [
+              {
+                "type": "square",
+                "duty": 0.5,
+                "freq": {
+                  "slide": {
+                    "from": 160,
+                    "to": 720,
+                    "secs": 0.22,
+                    "curve": "exp"
+                  }
+                }
+              },
+              {
+                "type": "env",
+                "a": 0.0,
+                "d": 0.28,
+                "s": 0.0,
+                "r": 0.05,
+                "punch": 0.25
+              }
+            ]
+          }
+        }
+      },
+      "note": "An exponential 160 to 720 Hz sweep reads as effort-then-liftoff; linear sweeps sound like sirens. punch gives the takeoff a click; sustain 0 means the sound is gone the moment the character leaves the ground."
+    }
+  ]
+}
