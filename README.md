@@ -7,6 +7,12 @@
 
 <p align="center"><strong>A headless sound studio for AI agents — GarageBand-as-API, over MCP.</strong></p>
 
+<p align="center">
+  <a href="https://github.com/marmikshah/sonarium/actions/workflows/ci.yml"><img src="https://github.com/marmikshah/sonarium/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/marmikshah/sonarium/releases/latest"><img src="https://img.shields.io/github/v/release/marmikshah/sonarium" alt="release"></a>
+  <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-8c6ee6" alt="license">
+</p>
+
 <p align="center"><a href="https://marmikshah.github.io/sonarium/listen.html"><strong>▶ Listen to everything in your browser</strong></a></p>
 
 <p align="center">

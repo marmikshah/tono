@@ -1,6 +1,6 @@
 [package]
 name = "sonarium"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.88"
 description = "An MCP server that turns an AI agent into a sound engineer — instruments, effects, and sequencing driven by tool calls, rendered deterministically to audio."

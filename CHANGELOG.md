@@ -1,26 +1,49 @@
 # Changelog
 
-## 0.1.0 — unreleased
+## 1.0.0 — 2026-06-07
 
-Initial public release.
+First release. A headless sound studio for AI agents, driven over MCP.
 
-- **Synthesis-graph DSL** (`SoundDoc`): band-limited square/saw/triangle, sine,
-  FM, supersaw, three noise colours, a polyphonic `seq` note-sequencer with
-  note-name pitches (`"C4"`, `"midi:60"`); ADSR envelopes; `mix`/`mul`/`chain`
-  combinators; filters + EQ, drive, ringmod, chorus/flanger/phaser, compressor,
-  bitcrush/downsample, delay, reverb; `slide`/`lfo`/`arp`/`env` modulators on
-  any numeric parameter. Semantic validation with agent-actionable errors.
-- **Deterministic rendering**: a sound is a pure function of
-  `(graph, seed, sample_rate)` — same input, identical bytes. Seamless loop
-  bodies (equal-power crossfade + WAV `smpl` chunk), Haas/wide stereo, and an
-  opt-in LUFS-targeted, true-peak-limited output stage.
-- **Analysis feedback**: peak/true-peak/RMS/crest, ≈LUFS, spectral centroid,
-  attack/decay/onset/silence descriptors, plus spectrogram and waveform PNGs.
-- **MCP tool surface** (25 tools): author/refine, path-addressed surgical
-  editing with describe/undo/redo, variation tools (mutate, variants, humanize,
-  morph), compare, loops, WAV/FLAC/OGG export, banks with `sounds.json`
-  manifests and engine files (Godot/Unity/Bevy).
-- **Reproducible sessions**: every mutating tool call is journaled;
-  `save_session` / `replay_session` reproduce a whole project byte-for-byte.
-- **Transports & ops**: stdio, streamable HTTP, and a self-managing background
-  daemon (launchd / systemd --user).
+### Instruments & synthesis
+- Polyphonic sequencer (`seq`) with a core instrument set: **piano** (detuned
+  string pair, velocity brightness, pitch-dependent decay), **e-piano**
+  (Rhodes tine), **organ** (tonewheel drawbars + percussion), **strings**
+  (ensemble swell), **bass** (filtered + sub), **kit** (full drum kit on the
+  General MIDI map), pitched **cowbell**, **pluck** (Karplus-Strong), tunable
+  **fm** mallets/bells — plus raw band-limited square/saw/triangle, sine, FM,
+  supersaw and three noise colours.
+- **`sampler`**: real recorded instruments from any SoundFont (`sf2` path +
+  GM program; bank 128 = drum map), rendered deterministically via rustysynth.
+- Note-name pitches (`"C4"`, `"midi:60"`), per-parameter modulators
+  (`slide`/`lfo`/`arp`/`env`), `swing` + `humanize` groove.
+
+### Production
+- **`tracks` mixing console**: per-track equal-power pan and fader onto a true
+  stereo bus, master processor chain, decorrelated (Freeverb-spread) reverb
+  tails; sampler tracks keep their native stereo.
+- Effects: filters + EQ, drive, ringmod, chorus/flanger/phaser, compressor,
+  **`duck` sidechain pumping**, bitcrush/downsample, delay, reverb.
+- Output stage: LUFS-targeted soft-knee limiting to a true-peak ceiling;
+  seamless loops (equal-power crossfade + WAV `smpl` chunk); WAV/FLAC/OGG.
+
+### The agent loop
+- Every render returns analysis (peak/true-peak/RMS/crest, ≈LUFS, spectral
+  centroid, transients) plus **spectrogram and waveform images**;
+  `compare_sounds` reports deltas + similarity.
+- Surgical editing by JSON path (`describe_sound` → `set_param` /
+  `edit_sound`), 20-deep undo/redo, persistent slug-id library.
+- Variations on agent-made sounds: `mutate_sound`, `generate_variants`,
+  `humanize`, `morph_sounds`.
+- Banks → `sounds.json` manifests + engine files (Godot/Unity/Bevy).
+
+### Sessions
+- Every mutating call journaled; `save_session` / `replay_session` (and the
+  `sonarium replay` CLI) reproduce a project **byte-for-byte** in a fresh
+  directory. Annotated recipe files double as tutorials; nine showcases —
+  including the complete *River Flows in You*, its phonk remix, and an
+  iconic-sounds pack — replay in CI, with playable renders committed.
+
+### Ops
+- stdio + streamable-HTTP transports; self-managing launchd/systemd daemon;
+  one-line installer; tagged binary releases (macOS arm64, Linux x86_64,
+  Windows); dual-licensed MIT/Apache-2.0.
