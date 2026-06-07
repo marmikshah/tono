@@ -717,6 +717,26 @@ pub enum SeqWave {
     /// `{a:0.002, s:1, r:0.2}` and let the instrument shape each note;
     /// `len` works like holding the key (with the pedal, longer).
     Piano,
+    /// Electric piano (Rhodes-style): a soft FM body plus a bright metal
+    /// tine that pings on the attack and fades fast. Velocity opens the
+    /// tine — dig in for bark, play soft for bell-like warmth.
+    Epiano,
+    /// Tonewheel organ: drawbar harmonics (16′ 8′ 4′ 2⅔′ 2′) with a touch of
+    /// percussion on the attack. Sustains at full level while the key is
+    /// held — pair with env `{s:1}` and let `len` do the phrasing.
+    Organ,
+    /// String ensemble: three detuned band-limited saws per note with a slow
+    /// bow swell and a mellowing lowpass — pads, sustained chords, swells.
+    /// Notes bloom ~150 ms after the attack; write them slightly early.
+    Strings,
+    /// Fingered bass: a filtered saw whose cutoff snaps open with velocity
+    /// and settles, over a solid sine sub. Punchy, dark, sits under a mix.
+    Bass,
+    /// Drum kit on the General MIDI map — the note's pitch picks the drum,
+    /// not a frequency: `"midi:36"` kick, `38` snare, `42` closed hat,
+    /// `46` open hat, `41..50` toms, `49` crash, `51` ride, `39` clap.
+    /// Velocity (`gain`) sets the hit level.
+    Kit,
 }
 
 /// An ADSR amplitude envelope. One shape, used in three places: the [`Node::Env`]

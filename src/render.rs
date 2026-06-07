@@ -1040,8 +1040,8 @@ fn seq_note_signal(
         SeqWave::Noise => out.extend((0..n).map(|_| rng.bi())),
         SeqWave::Fm => {
             let (mut cph, mut mph) = (0.0f32, 0.0f32);
-            for i in 0..n {
-                let dt = f[i].max(0.0) / srf;
+            for (i, &fi) in f.iter().enumerate() {
+                let dt = fi.max(0.0) / srf;
                 // Hammer strike: the modulation index (brightness) decays
                 // from the attack; louder notes strike brighter.
                 let t = i as f32 / srf;
@@ -1081,8 +1081,8 @@ fn seq_note_signal(
             let detune = 1.000_92; // 2^(1.6/1200)
             let (mut cph, mut mph) = (0.0f32, 0.0f32);
             let (mut cph2, mut mph2) = (0.0f32, 0.0f32);
-            for i in 0..n {
-                let dt = f[i].max(0.0) / srf;
+            for (i, &fi) in f.iter().enumerate() {
+                let dt = fi.max(0.0) / srf;
                 let t = i as f32 / srf;
                 // Hammer-strike brightness: louder keys strike brighter and
                 // the shimmer fades within ~80 ms.
@@ -1106,6 +1106,154 @@ fn seq_note_signal(
                 out.push((0.5 * (a + b) + thump) * (-t / decay).exp());
             }
         }
+        SeqWave::Epiano => {
+            // Rhodes-style: a soft FM body (1:1) under a metal tine (14:1)
+            // that pings on the attack. Velocity opens the tine.
+            let decay = (5.0 / (1.0 + f[0].max(20.0) / 250.0)).clamp(0.3, 4.0);
+            let (mut cph, mut mph, mut tph) = (0.0f32, 0.0f32, 0.0f32);
+            for (i, &fi) in f.iter().enumerate() {
+                let dt = fi.max(0.0) / srf;
+                let t = i as f32 / srf;
+                let body_idx = (0.5 + 1.0 * note.gain) * (-t / 0.5).exp();
+                let tine_idx = (0.8 + 1.4 * note.gain) * (-t / 0.035).exp();
+                let body = (TAU * cph + body_idx * (TAU * mph).sin()).sin();
+                let tine = (TAU * cph + tine_idx * (TAU * tph).sin()).sin();
+                cph += dt;
+                cph -= cph.floor();
+                mph += dt;
+                mph -= mph.floor();
+                tph += dt * 14.0;
+                tph -= tph.floor();
+                out.push((0.75 * body + 0.25 * tine) * (-t / decay).exp());
+            }
+        }
+        SeqWave::Organ => {
+            // Tonewheel drawbars over half the fundamental (so the 16′ bar is
+            // an integer partial and every phase wraps cleanly): 16′ 8′ 4′
+            // 2⅔′ 2′, plus the classic percussion ping on the attack.
+            const BARS: [(f32, f32); 5] = [
+                (1.0, 0.45),
+                (2.0, 1.0),
+                (4.0, 0.45),
+                (6.0, 0.3),
+                (8.0, 0.22),
+            ];
+            let norm = 1.0 / BARS.iter().map(|(_, g)| g).sum::<f32>();
+            let mut phase = 0.0f32; // at f/2
+            for (i, &fi) in f.iter().enumerate() {
+                let t = i as f32 / srf;
+                let mut s = 0.0;
+                for (k, g) in BARS {
+                    s += g * (TAU * phase * k).sin();
+                }
+                // Percussion: a 3rd-harmonic ping that fades in 200 ms.
+                s += 0.5 * (-t / 0.2).exp() * (TAU * phase * 6.0).sin();
+                out.push(s * norm);
+                phase += fi.max(0.0) / 2.0 / srf;
+                // Wrap on the full drawbar cycle to keep precision.
+                phase -= phase.floor();
+            }
+        }
+        SeqWave::Strings => {
+            // Ensemble: three saws detuned ±8 cents, phase-spread, swelling
+            // in like a bow stroke, mellowed by a one-pole lowpass.
+            let detunes = [0.995_39f32, 1.0, 1.004_63]; // ∓8 cents
+            let mut phases = [0.0f32, 0.33, 0.67];
+            let lp_a = 1.0 - (-TAU * 3_000.0 / srf).exp();
+            let mut lp = 0.0f32;
+            for (i, &fi) in f.iter().enumerate() {
+                let t = i as f32 / srf;
+                let mut s = 0.0;
+                for (p, det) in phases.iter_mut().zip(detunes) {
+                    let dt = fi.max(0.0) * det / srf;
+                    s += (2.0 * *p - 1.0) - poly_blep(*p, dt);
+                    *p += dt;
+                    *p -= p.floor();
+                }
+                lp += lp_a * (s / 3.0 - lp);
+                let swell = 1.0 - (-t / 0.12).exp();
+                out.push(lp * swell);
+            }
+        }
+        SeqWave::Bass => {
+            // Fingered bass: a saw through a one-pole lowpass whose cutoff
+            // snaps open with velocity and settles, over a sine sub.
+            let mut phase = 0.0f32;
+            let mut lp = 0.0f32;
+            for (i, &fi) in f.iter().enumerate() {
+                let dt = fi.max(0.0) / srf;
+                let t = i as f32 / srf;
+                let saw = (2.0 * phase - 1.0) - poly_blep(phase, dt);
+                let cutoff = 250.0 + (700.0 + 1_100.0 * note.gain) * (-t / 0.15).exp();
+                let a = 1.0 - (-TAU * cutoff / srf).exp();
+                lp += a * (saw - lp);
+                let sub = (TAU * phase).sin();
+                out.push((0.7 * lp + 0.45 * sub) * (-t / 2.0).exp());
+                phase += dt;
+                phase -= phase.floor();
+            }
+        }
+        SeqWave::Kit => out = kit_drum(f, note, sr, rng),
+    }
+    out
+}
+
+/// One General-MIDI-mapped drum hit: the note's onset pitch picks the voice.
+fn kit_drum(f: &[f32], _note: &SeqNote, sr: u32, rng: &mut Rng) -> Signal {
+    let srf = sr as f32;
+    let n = f.len();
+    // Recover the MIDI number from the onset frequency (pitch is wire-encoded
+    // as Hz; "midi:36" round-trips exactly).
+    let midi = (69.0 + 12.0 * (f[0].max(8.0) / 440.0).log2()).round() as i32;
+    let mut out = Vec::with_capacity(n);
+
+    // One-pole highpass state for cymbal/snare noise.
+    let (mut lp, hp_a) = (0.0f32, 1.0 - (-TAU * 5_500.0 / srf).exp());
+    let hp = |x: f32, lp: &mut f32| {
+        *lp += hp_a * (x - *lp);
+        x - *lp
+    };
+    let mut phase = 0.0f32;
+
+    for i in 0..n {
+        let t = i as f32 / srf;
+        let s = match midi {
+            // Kick: a fast downward pitch thump plus a 2 ms beater click.
+            35 | 36 => {
+                let fk = 45.0 + 105.0 * (-t / 0.04).exp();
+                phase += fk / srf;
+                phase -= phase.floor();
+                let click = if t < 0.002 { rng.bi() * 0.4 } else { 0.0 };
+                (TAU * phase).sin() * (-t / 0.13).exp() + click
+            }
+            // Snare / rimshot / clap: tone crack + noise body.
+            38 | 40 => {
+                let tone = (TAU * 190.0 * t).sin() * 0.4 * (-t / 0.06).exp();
+                tone + rng.bi() * 0.8 * (-t / 0.11).exp()
+            }
+            37 => (TAU * 800.0 * t).sin() * 0.3 * (-t / 0.03).exp() + rng.bi() * (-t / 0.025).exp(),
+            39 => rng.bi() * (-t / 0.09).exp(),
+            // Hats: highpassed noise, closed dies fast, open rings.
+            42 | 44 => hp(rng.bi(), &mut lp) * (-t / 0.035).exp(),
+            46 => hp(rng.bi(), &mut lp) * (-t / 0.22).exp(),
+            // Toms: pitched thumps falling with the GM map.
+            41 | 43 | 45 | 47 | 48 | 50 => {
+                let base = 80.0 + 24.0 * (midi - 41) as f32;
+                let ft = base * (1.0 - 0.15 * (t / 0.2).min(1.0));
+                phase += ft / srf;
+                phase -= phase.floor();
+                (TAU * phase).sin() * (-t / 0.18).exp() + rng.bi() * 0.1 * (-t / 0.03).exp()
+            }
+            // Crash / ride.
+            49 | 55 | 57 => hp(rng.bi(), &mut lp) * (-t / 0.7).exp(),
+            51 | 53 | 59 => {
+                hp(rng.bi(), &mut lp) * 0.5 * (-t / 0.45).exp()
+                    + (TAU * 5_200.0 * t).sin() * 0.25 * (-t / 0.25).exp()
+            }
+            // Anything unmapped: a generic percussive hit.
+            _ => rng.bi() * (-t / 0.08).exp(),
+        };
+        out.push(s);
     }
     out
 }
@@ -1436,6 +1584,74 @@ mod tests {
             tail_ratio(&bass),
             tail_ratio(&treble)
         );
+    }
+
+    fn one_note(wave: &str, pitch: &str, secs: f32) -> Vec<f32> {
+        let d = doc(&format!(
+            r#"{{ "name": "n", "duration": {secs}, "root": {{ "type": "seq",
+                 "bpm": 60, "steps_per_beat": 1, "wave": "{wave}",
+                 "env": {{ "a": 0.002, "s": 1.0, "r": 0.05 }},
+                 "notes": [ {{ "step": 0, "len": {len}, "pitch": "{pitch}" }} ] }} }}"#,
+            len = secs.ceil() as u32,
+        ));
+        render(&d)
+    }
+
+    #[test]
+    fn epiano_tine_pings_then_mellows() {
+        let s = one_note("epiano", "A3", 1.0);
+        assert!(rms(&s) > 0.05, "epiano audible");
+        let q = s.len() / 4;
+        assert!(brightness(&s[..q]) > brightness(&s[3 * q..]) * 1.3);
+    }
+
+    #[test]
+    fn organ_sustains_while_held() {
+        let s = one_note("organ", "C3", 1.0);
+        assert!(rms(&s) > 0.1, "organ audible");
+        let q = s.len() / 4;
+        // No natural decay: the last quarter holds level with the second.
+        let (mid, tail) = (rms(&s[q..2 * q]), rms(&s[3 * q..]));
+        assert!(tail > mid * 0.7, "organ holds: {mid} -> {tail}");
+    }
+
+    #[test]
+    fn strings_swell_in_slowly() {
+        let s = one_note("strings", "A3", 1.0);
+        assert!(rms(&s) > 0.05, "strings audible");
+        let ms50 = 44_100 / 20;
+        // The bow swell: the first 50 ms is much quieter than the body.
+        assert!(rms(&s[..ms50]) < rms(&s[ms50 * 6..ms50 * 8]) * 0.6);
+    }
+
+    #[test]
+    fn bass_is_darker_than_a_raw_saw() {
+        let b = one_note("bass", "E2", 0.5);
+        let saw = one_note("sawtooth", "E2", 0.5);
+        assert!(rms(&b) > 0.05, "bass audible");
+        assert!(
+            brightness(&b) < brightness(&saw) * 0.5,
+            "bass is filtered dark"
+        );
+    }
+
+    #[test]
+    fn kit_maps_pitches_to_distinct_drums() {
+        let kick = one_note("kit", "midi:36", 0.4);
+        let snare = one_note("kit", "midi:38", 0.4);
+        let hat = one_note("kit", "midi:42", 0.4);
+        for (name, s) in [("kick", &kick), ("snare", &snare), ("hat", &hat)] {
+            assert!(rms(s) > 0.01, "{name} audible");
+        }
+        // Spectral ordering: kick < snare < hat.
+        assert!(brightness(&kick) < brightness(&snare));
+        assert!(brightness(&snare) < brightness(&hat));
+        // Hat dies fast; open hat (midi:46) rings longer.
+        let open = one_note("kit", "midi:46", 0.4);
+        let q = hat.len() / 4;
+        assert!(rms(&open[q..2 * q]) > rms(&hat[q..2 * q]) * 2.0);
+        // Noise-based drums stay deterministic.
+        assert_eq!(snare, one_note("kit", "midi:38", 0.4));
     }
 
     #[test]

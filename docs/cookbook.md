@@ -98,9 +98,51 @@ Layer voices with `mix` (lead `seq` + bass `seq` + drum `seq`).
 ```
 Use `wave: "noise"` for snares/hats (pitch ignored).
 
-### Seq instruments: `fm` and `pluck`
+### Seq instruments
 
-Beyond the raw chiptune waves, `seq` has two physical-feeling instruments:
+Beyond the raw chiptune waves (`square`/`triangle`/`sawtooth`/`sine`/`noise`),
+`seq` ships a core instrument list — pick one per seq and layer seqs like
+tracks in a DAW:
+
+| wave | sound | notes |
+|------|-------|-------|
+| `piano` | acoustic piano | detuned string pair, velocity brightness, bass rings/treble dies. Parameter-free. |
+| `epiano` | Rhodes e-piano | soft FM body + metal tine ping; velocity opens the tine. Parameter-free. |
+| `organ` | tonewheel organ | drawbar harmonics + attack percussion; sustains while held (`env {s:1}`). |
+| `strings` | string ensemble | 3 detuned saws, slow bow swell (~150 ms — write notes slightly early), mellowing lowpass. |
+| `bass` | fingered bass | filtered saw + sine sub; velocity snaps the filter open. |
+| `kit` | drum kit | General MIDI map: pitch picks the drum (see below). |
+| `fm` | FM mallets/bells | tunable: `fm_ratio` 1 = piano-ish, 3.5 = bell, 14 = tine; `fm_index`/`fm_strike`. |
+| `pluck` | plucked string | Karplus-Strong guitar/harp/koto; `pluck_decay` sets ring. |
+
+**A drum groove** — `kit` reads the note pitch as a GM drum number, not a
+frequency: `midi:36` kick, `38` snare, `42` closed hat, `46` open hat,
+`41-50` toms, `49` crash, `51` ride, `39` clap:
+
+```json
+{ "type": "seq", "bpm": 100, "steps_per_beat": 4, "wave": "kit",
+  "env": { "s": 1.0 },
+  "notes": [
+    { "step": 0,  "len": 2, "pitch": "midi:36" },
+    { "step": 4,  "len": 2, "pitch": "midi:38", "gain": 0.9 },
+    { "step": 8,  "len": 2, "pitch": "midi:36" },
+    { "step": 10, "len": 2, "pitch": "midi:36", "gain": 0.7 },
+    { "step": 12, "len": 2, "pitch": "midi:38", "gain": 0.9 },
+    { "step": 0,  "len": 1, "pitch": "midi:42", "gain": 0.5 },
+    { "step": 2,  "len": 1, "pitch": "midi:42", "gain": 0.4 },
+    { "step": 4,  "len": 1, "pitch": "midi:42", "gain": 0.5 },
+    { "step": 6,  "len": 1, "pitch": "midi:42", "gain": 0.4 },
+    { "step": 8,  "len": 1, "pitch": "midi:42", "gain": 0.5 },
+    { "step": 10, "len": 1, "pitch": "midi:42", "gain": 0.4 },
+    { "step": 12, "len": 1, "pitch": "midi:42", "gain": 0.5 },
+    { "step": 14, "len": 2, "pitch": "midi:46", "gain": 0.6 }
+  ] }
+```
+
+**A band** is a `mix` of seqs — drums + bass + epiano chords + strings pad —
+through shared processors (`compress`, `reverb`) like a mix bus.
+
+Two tunable instruments in detail:
 
 - **`fm`** — a two-operator FM voice struck per note: the modulation index
   (brightness) starts at `fm_index` and decays over `fm_strike` seconds, like
