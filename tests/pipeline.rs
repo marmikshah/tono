@@ -260,6 +260,32 @@ async fn shipped_example_session_replays_clean() {
 }
 
 #[tokio::test]
+async fn river_flows_showcase_session_replays() {
+    // A real piece of music — Yiruma's "River Flows in You" intro + theme,
+    // converted from MIDI to two polyphonic seq layers — replays from its
+    // session file alone.
+    let (srv, dir) = fresh("river");
+    let example =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/river_flows_in_you.jsonl");
+    let res = srv
+        .replay_session(Parameters(ReplaySessionReq {
+            path: example.to_string_lossy().into_owned(),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(res.0.applied, 1);
+    let g = graph_json(&srv, "river_flows_in_you").await;
+    // Two layers, 104 notes between them, ~48 s of stereo, level-matched audio.
+    let layers = g["root"]["stages"][0]["inputs"].as_array().unwrap();
+    let notes: usize = layers
+        .iter()
+        .map(|l| l["notes"].as_array().unwrap().len())
+        .sum();
+    assert_eq!(notes, 104);
+    assert!(dir.join("river_flows_in_you.wav").exists());
+}
+
+#[tokio::test]
 async fn replayed_session_reproduces_audio_byte_for_byte() {
     // Session A: author, surgically edit, mutate (explicit seed), bank it.
     let (a, dir_a) = fresh("replay_a");
