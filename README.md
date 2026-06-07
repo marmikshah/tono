@@ -1,235 +1,126 @@
-<h1 align="center">Sonarium</h1>
+<h1 align="center">sonarium</h1>
 
-<p align="center"><em>An MCP server that turns an AI agent into a sound engineer.</em></p>
+<p align="center"><strong>A headless sound studio for AI agents — GarageBand-as-API, over MCP.</strong></p>
 
-Sonarium is an **orchestrator, not a generator** — think GarageBand for
-agents. It provides **instruments** — a SoundFont **sampler** for real recorded
-instruments (point it at any free GM bank), plus synthesized piano, e-piano,
-organ, strings, bass, a GM-mapped drum kit, pitched cowbell, plucked string,
-and FM mallets in a polyphonic sequencer with swing/humanize groove, **effects** (filters, EQ, drive, mod
-fx, dynamics, delay, reverb), and mixing / mastering tools — and an agent
-composes with them through MCP tool calls. There is no canned content; the
-agent does the sound design and arranging, the server does the DSP.
+<p align="center">
+  <img src="docs/river-flows-spectrogram.png" width="640" alt="spectrogram of River Flows in You, 800 notes on the sampled piano">
+</p>
+<p align="center">
+  <img src="docs/river-flows-waveform.png" width="320" alt="waveform of the piano piece">
+  <img src="docs/band-demo-waveform.png" width="320" alt="waveform of the band demo groove">
+</p>
 
-The agent authors a **symbolic synthesis graph** (oscillators → envelopes →
-filters → modulation → mix). Sonarium renders it **deterministically** — the
-same graph and seed always produce identical audio — and feeds back analysis:
-levels, loudness, spectral centroid, transient descriptors, plus a
-**spectrogram and a waveform image**. The agent iterates by inspection, like a
-sound designer at a DAW, then exports game-ready WAV / FLAC / OGG.
+<p align="center"><em>Every sound behind these images — a complete piano piece,
+a four-instrument band, a phonk remix — was composed, mixed and mastered by
+agents through the MCP tools, and every one replays byte-identically from a
+session file in this repo.</em></p>
 
-Pure Rust, local, offline. No GPU, no API keys.
+## What it is
 
-## Quick start
+Agents are good at *describing* sound and bad at *hearing* it. sonarium closes
+the loop: every synth, instrument, and mixer move is a tool call, and every
+render hands back analysis — levels, loudness, spectral centroid, transients —
+plus a **spectrogram and a waveform image** the agent can actually look at,
+judge, and correct. The same listen-and-fix loop a human runs in a DAW. One
+Rust binary; no API keys, no network, fully deterministic.
 
-```bash
-make daemon     # release build + install & start the background service (launchd / systemd)
-# or foreground: make
+- **A real studio, headless** — a polyphonic sequencer with a core instrument
+  set (piano, e-piano, organ, strings, bass, a GM-mapped drum kit, pitched
+  cowbell, plucked string, FM mallets) plus raw band-limited oscillators, FM,
+  supersaw and three noise colours for synthesis and SFX.
+- **Real recorded instruments** — the `sampler` voice plays any SoundFont
+  (point it at a free GM bank): sampled grands, basses, string ensembles, GM
+  drums. Renders stay deterministic.
+- **A mixing console** — per-track pan/gain onto a true stereo bus, a master
+  processor chain, decorrelated reverb tails, sidechain ducking, swing and
+  humanize groove.
+- **An ear for critique** — peak/true-peak/RMS/crest, ≈LUFS, spectral
+  centroid, attack/decay/onset/silence descriptors, `compare_sounds` deltas:
+  "does it sound right?" becomes numbers an agent can act on.
+- **Deterministic, replayable music** — a session file is the ordered journal
+  of tool calls; replaying it reproduces the project **byte-for-byte**.
+  Annotated example recipes double as tutorials and CI tests.
+- **Game-ready output** — WAV/FLAC/OGG, seamless loops with `smpl` chunks,
+  loudness-matched packs with `sounds.json` manifests, and engine files for
+  Godot / Unity / Bevy.
+
+The full tool surface (25 tools) is documented in [docs/TOOLS.md](docs/TOOLS.md).
+
+## Quickstart
+
+```sh
+curl -fsSL https://marmikshah.github.io/sonarium/install.sh | sh
 ```
 
-Then point a client at it:
+The installer sets sonarium up as stdio (your MCP client spawns it) or as a
+shared background HTTP daemon, and prints the matching registration line —
+e.g. `claude mcp add --scope user sonarium -- sonarium`. Re-run it to update,
+or append `-s -- uninstall` to remove.
 
-```bash
-claude mcp add --transport http sonarium http://127.0.0.1:8787/mcp
+Prebuilt binaries cover macOS (Apple Silicon), Linux x86_64 and Windows
+(grab the `.zip` from [releases](https://github.com/marmikshah/sonarium/releases/latest));
+anything else builds from source with `cargo install --path .`.
+
+Restart your session (MCP tools load at session start), then ask your agent
+for sound — *"make me a punchy laser zap"*, *"write a 30-second battle
+theme"*. The agent drives the loop:
+
+```
+author_sound → analyze (look!) → set_param / edit_sound → export
 ```
 
-`make help` lists every target. Common ones: `make serve` (foreground HTTP),
-`make stdio`, `make test`, `make check` (fmt + clippy + tests — the pre-commit
-gate). Override host / output dir: `make serve BIND=127.0.0.1:9000
-WORKDIR=./game/assets/audio`.
+Sounds live under `~/.sonarium/sounds` (override with `SONARIUM_WORKDIR` —
+point it at your game's assets folder to drop renders straight in).
 
-### stdio (client spawns the binary)
+### Server modes
 
-```bash
-claude mcp add sonarium -e SONARIUM_WORKDIR=/path/to/game/assets/sfx -- /path/to/sonarium
+```sh
+sonarium                        # stdio MCP server (default — the client spawns it)
+sonarium --http 127.0.0.1:8787  # streamable HTTP at /mcp
+make daemon                     # background HTTP server via launchd / systemd --user
 ```
-
-Claude Desktop (`claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "sonarium": {
-      "command": "/path/to/sonarium",
-      "env": { "SONARIUM_WORKDIR": "/path/to/game/assets/sfx" }
-    }
-  }
-}
-```
-
-Renders and exports land in `SONARIUM_WORKDIR` (default `~/.sonarium/sounds`)
-— point it at your game's assets folder to drop sounds straight in.
-
-## What it does
-
-- **Author & surgically edit.** `author_sound` renders a graph;
-  `describe_sound` → `set_param` / `edit_sound` change one parameter or node by
-  path (`root.inputs[0].freq`) without re-sending the graph; `undo_sound` /
-  `redo_sound` step a 20-deep per-sound history. Sounds **persist across
-  restarts** under stable slug ids (`laser_zap`) usable directly as engine
-  asset keys.
-- **Hear with eyes.** Every render returns numeric analysis (peak, true peak,
-  RMS, crest, ≈LUFS, spectral centroid, attack/decay/onset/silence times) plus
-  a **spectrogram and a waveform image**. `compare_sounds` gives metric deltas
-  + a similarity score to converge on a reference.
-- **Reproducible sessions.** Every mutating tool call is journaled to
-  `session.jsonl`. `save_session` snapshots it; `replay_session` re-applies a
-  saved journal into a fresh working directory (enforced) — same calls, same
-  seeds, **byte-identical audio**. A session file is a portable, diffable
-  project file ([example](docs/examples/laser-session.json), replayed in CI).
-- **Variations, not presets.** `mutate_sound` nudges parameters;
-  `generate_variants` makes N level-matched round-robin takes; `humanize`
-  applies one coherent pitch + level shift per take; `morph_sounds`
-  interpolates two same-shaped designs (charge tiers, damage levels).
-- **Ship-ready output.** Top-level `normalize { target_lufs, ceiling_dbtp }`
-  loudness-matches through a soft-knee true-peak limiter. `playback: loop`
-  renders **seamless loops** (equal-power crossfade; WAV carries a `smpl` loop
-  chunk). Export WAV / FLAC / OGG Vorbis.
-- **Packs, not files.** Banks with categories + round-robin groups;
-  `export_bank` / `export_all` write every member plus a `sounds.json`
-  manifest, and optionally **engine files**: Godot `.import` sidecars, Unity
-  `.meta` (stable GUIDs), or a generated Bevy `sonarium_sounds.rs`.
-
-## Tools
-
-| Tool | Input | Output |
-|------|-------|--------|
-| `author_sound` | `{ graph, name? }` | summary + spectrogram/waveform images + `{ id, wav_path, analysis }` |
-| `refine_sound` | `{ id, graph }` | same — replaces a sound's graph and re-renders |
-| `describe_sound` | `{ id }` | every node's editable `path`, `type`, and params |
-| `set_param` | `{ id, path, value }` | change one param/node by path and re-render |
-| `edit_sound` | `{ id, ops }` | many `set` / `insert` / `remove` ops in one re-render |
-| `undo_sound` / `redo_sound` | `{ id }` | step through the 20-deep edit history |
-| `history` | `{ id }` | `{ undo_depth, redo_depth }` |
-| `get_sound` / `list_sounds` | `{ id }` / `{}` | graph + analysis / inventory |
-| `analyze` | `{ id }` | stats + both images |
-| `compare_sounds` | `{ a, b }` | metric deltas (b−a) + 0..1 similarity |
-| `export` | `{ id, format, bit_depth?, sample_rate?, dest?, target_lufs?, quality? }` | WAV / FLAC / OGG, optional loudness target |
-| `mutate_sound` | `{ id, amount?, seed? }` | a perturbed variant |
-| `generate_variants` | `{ id, count, amount?, seed?, target_lufs? }` | N level-matched round-robin takes |
-| `humanize` | `{ id, count?, pitch_cents?, gain_db?, seed? }` | coherent performer-style takes |
-| `morph_sounds` | `{ a, b, steps? }` | in-betweens of two same-shaped graphs |
-| `make_loop` | `{ id, crossfade_secs?, start_secs?, end_secs? }` | seamless loop + seam dB |
-| `create_bank` / `add_to_bank` / `list_banks` | — | sound packs with categories + rr groups |
-| `export_bank` / `export_all` | `{ dest, format?, target_lufs?, engine?, ... }` | files + `sounds.json` + engine files |
-| `save_session` | `{ dest? }` | snapshot the session journal |
-| `replay_session` | `{ path }` | re-apply a saved session deterministically |
-
-### Resources
-
-- `sonarium://schema/sounddoc` — the `SoundDoc` JSON Schema.
-- `sonarium://cookbook` — example graphs and authoring tips
-  (single-sourced from [`docs/cookbook.md`](docs/cookbook.md)).
-
-## The synthesis-graph DSL
-
-A sound is one `SoundDoc`:
-
-```json
-{ "name": "laser_zap", "duration": 0.22, "sample_rate": 44100, "seed": 0, "root": { ... } }
-```
-
-`root` is a single node; every node evaluates to a mono signal. Add optional
-top-level `stereo` (wide / Haas) for BGM and ambience, `playback` for seamless
-loops, and `normalize` for loudness-matched output.
-
-**Sources** — `square{freq,duty}` (duty modulatable ⇒ PWM), `triangle`,
-`sawtooth`, `sine`, `noise{color: white|pink|brown}`, `fm{freq,ratio,index}`,
-`super{wave,freq,voices,detune_cents}`, and `seq{bpm,steps_per_beat,wave,duty,
-env,notes}` for melodies, basslines, and drum patterns — pitches read musically
-(`"C4"`, `"F#3"`, `"midi:60"`).
-**Envelope** — `env{a,d,s,r,punch}`.
-**Combinators** — `mix` (sum), `mul` (source × envelope), `chain` (source →
-processors).
-**Processors** — `lowpass`/`highpass`/`bandpass`/`notch{cutoff,q}`,
-`peak{cutoff,q,gain_db}`, `lowshelf`/`highshelf{cutoff,gain_db}`, `gain`,
-`drive{amount,shape}`, `ringmod`, `chorus`, `flanger`, `phaser`, `compress`,
-`bitcrush`, `downsample`, `delay`, `reverb`.
-**Modulators** (any numeric param) — `slide`, `lfo`, `arp`, and
-`env{a,d,s,r,from,to}` (an ADSR mapped onto a range ⇒ filter / pitch
-envelopes).
 
 ### Real instruments
 
-Download any free General MIDI SoundFont once (FluidR3 GM, GeneralUser GS),
-then `wave: "sampler", sf2: "/path/to/gm.sf2", sf2_preset: 0` plays the notes
-on a real recorded grand (32 = bass, 48 = strings; `sf2_bank: 128` = the GM
-drum map). Renders stay deterministic. The `duck` processor adds sidechain
-pumping, and every seq takes `swing` / `humanize` for groove.
+The synth instruments need nothing. For sampled ones, download any free
+General MIDI SoundFont once (FluidR3 GM, GeneralUser GS) and point the seq at
+it: `wave: "sampler", sf2: "/path/to/gm.sf2", sf2_preset: 0` (0 grand piano,
+32 bass, 48 strings; `sf2_bank: 128` = the GM drum map).
 
-### Example — laser zap
+## Sessions: deterministic, replayable music
 
-```json
-{
-  "name": "laser_zap",
-  "duration": 0.22,
-  "root": {
-    "type": "mix",
-    "inputs": [
-      { "type": "mul", "inputs": [
-        { "type": "square", "duty": 0.25,
-          "freq": { "slide": { "from": 880, "to": 180, "secs": 0.18, "curve": "exp" } } },
-        { "type": "env", "a": 0.0, "d": 0.18, "s": 0.0, "r": 0.02, "punch": 0.3 }
-      ]},
-      { "type": "mul", "inputs": [
-        { "type": "noise" },
-        { "type": "env", "a": 0.0, "d": 0.04, "s": 0.0, "r": 0.0 }
-      ]}
-    ]
-  }
-}
+Every mutating tool call is journaled, so a piece of music is a **session
+file** — JSON that replays identically every time:
+
+```sh
+sonarium replay docs/examples/band-demo.json --workdir /tmp/sonarium-demo
 ```
 
-The [cookbook](docs/cookbook.md) has many more — sequenced melodies, FM bells,
-filter envelopes, layered impacts, looping ambience beds. Every JSON example in
-it is parsed and validated by the test suite.
+Four annotated examples live in [docs/examples/](docs/examples/): the
+canonical SFX workflow (laser → variants → bank), a four-instrument band on
+the mixing console, the complete *River Flows in You* on the piano instrument
+(800 notes converted from MIDI with rubato and sustain pedal intact —
+[docs/examples/midi_to_seq.py](docs/examples/midi_to_seq.py) converts any
+MIDI), and its phonk remix (cowbell lead, driven 808, lo-fi piano). They
+double as integration tests and as documentation.
 
-### Showcase — a real piece of music
+## Works with atelier
 
-[`docs/examples/river-flows-in-you.json`](docs/examples/river-flows-in-you.json) is a
-session file that renders the **complete** *River Flows in You* (Yiruma):
-800 notes played on the built-in `piano` instrument, with the performance's
-tempo map (rubato) and sustain pedal intact, through reverb, stereo width,
-and a −14 LUFS master — authored as one `author_sound` call and replayable
-with one `replay_session` call.
-[`docs/examples/midi_to_seq.py`](docs/examples/midi_to_seq.py) is the converter that
-turns any MIDI file into `seq` notes (tempo-map-aware, pedal-aware), so real
-scores can drive Sonarium.
+sonarium is the audio half of a pair:
+[**atelier**](https://github.com/marmikshah/atelier) is the same idea for
+pixel art — a headless Aseprite-as-API over MCP. Side by side, one agent
+session produces a game's art *and* audio: atelier draws the sprites, tiles
+and animations; sonarium scores the SFX, ambience and music; both export
+engine-ready packs with manifests, and both record replayable recipes.
 
-[`docs/examples/band-demo.json`](docs/examples/band-demo.json) is the instrument set
-on the **mixing console**: drum kit + bass + e-piano + string pad over an
-Am–F–C–G groove, each on its own panned track, glued by a master-bus
-compressor and stereo-spread reverb — a true stereo production from one
-`author_sound` call.
+## More
 
-[`docs/examples/river-phonk.json`](docs/examples/river-phonk.json) is the remix
-proof: the same River hook re-gridded to a rigid 140 bpm and rebuilt as
-phonk — pitched **cowbell** lead, tanh-driven 808 sub, bitcrushed lo-fi
-piano, hat rolls, drop/break/drop arrangement, slammed through the bus
-compressor to −12 LUFS.
-
-## Build
-
-```bash
-make release        # → target/release/sonarium   (or: cargo build --release)
-make test           # the full unit + integration suite
-make check          # fmt + clippy -D warnings + test  (pre-commit gate)
-```
-
-Rust 1.88+ (edition 2024). OGG encoding builds vendored libvorbis, so a C
-toolchain is required. CI runs the same fmt + clippy + test gate on pushes to
-`main` and on pull requests.
-
-## Production notes
-
-- **Stay on loopback.** The HTTP server is meant for same-machine clients;
-  don't expose it to a network.
-- **Deterministic by contract.** A sound is fully determined by its graph +
-  seed; the graph JSON is written next to each WAV, so renders are
-  re-creatable and version-controllable. The PRNG is pinned to reference
-  vectors by tests.
-- Logs go to stderr (`RUST_LOG=debug` for more); the stdio JSON-RPC stream
-  stays clean.
+- [docs/TOOLS.md](docs/TOOLS.md) — the complete MCP tool reference.
+- [docs/cookbook.md](docs/cookbook.md) — the DSL, the instrument table, and
+  worked recipes (also served to agents as the `sonarium://cookbook` resource;
+  every example in it is validated by the test suite).
+- [ROADMAP.md](ROADMAP.md) — the backlog.
+- `make help` — build/serve/test targets; `make check` is the pre-commit gate.
 
 ## License
 
