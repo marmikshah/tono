@@ -207,6 +207,55 @@ pub enum Value {
     Modulated(Modulator),
 }
 
+/// Parse a musical pitch into Hz: a note name (`"A4"`, `"C#3"`, `"Gb5"`,
+/// `"F#-1"`; octave defaults to 4) or a MIDI number (`"midi:69"` / `"m69"`).
+/// A4 = 440 Hz, 12-tone equal temperament. Returns `None` if unparseable.
+pub fn note_to_hz(s: &str) -> Option<f32> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    // MIDI forms: "midi:69" or "m69".
+    if let Some(num) = s
+        .strip_prefix("midi:")
+        .or_else(|| s.strip_prefix(['m', 'M']))
+        && let Ok(n) = num.trim().parse::<f32>()
+    {
+        return Some(midi_to_hz(n));
+    }
+    // Note name: letter, optional #/b accidentals, optional octave (default 4).
+    let mut chars = s.chars().peekable();
+    let mut semis: i32 = match chars.next()?.to_ascii_uppercase() {
+        'C' => 0,
+        'D' => 2,
+        'E' => 4,
+        'F' => 5,
+        'G' => 7,
+        'A' => 9,
+        'B' => 11,
+        _ => return None,
+    };
+    loop {
+        match chars.peek() {
+            Some('#') => semis += 1,
+            Some('b') => semis -= 1,
+            _ => break,
+        }
+        chars.next();
+    }
+    let rest: String = chars.collect();
+    let octave: i32 = if rest.is_empty() {
+        4
+    } else {
+        rest.parse().ok()?
+    };
+    Some(midi_to_hz(((octave + 1) * 12 + semis) as f32))
+}
+
+fn midi_to_hz(m: f32) -> f32 {
+    440.0 * 2f32.powf((m - 69.0) / 12.0)
+}
+
 /// Interpolation curve for a [`Modulator::Slide`].
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -785,6 +834,24 @@ mod tests {
         );
         assert_eq!(v["stereo"]["mode"], "haas");
         assert_eq!(v["stereo"]["ms"], 12.0); // default filled in
+    }
+
+    #[test]
+    fn note_names_resolve_to_hz() {
+        assert_eq!(note_to_hz("A4"), Some(440.0));
+        assert_eq!(note_to_hz("midi:69"), Some(440.0));
+        assert_eq!(note_to_hz("m69"), Some(440.0));
+        // C#3 = midi 49 ≈ 138.59 Hz; Gb5 = midi 78 ≈ 739.99 Hz.
+        assert!((note_to_hz("C#3").unwrap() - 138.591).abs() < 0.01);
+        assert!((note_to_hz("Gb5").unwrap() - 739.989).abs() < 0.01);
+        // Octave defaults to 4; accidentals stack; case-insensitive letter.
+        assert_eq!(note_to_hz("A"), Some(440.0));
+        assert_eq!(note_to_hz("a4"), Some(440.0));
+        assert!((note_to_hz("F#-1").unwrap() - 11.562).abs() < 0.01);
+        // Garbage stays unparsed.
+        assert_eq!(note_to_hz(""), None);
+        assert_eq!(note_to_hz("H4"), None);
+        assert_eq!(note_to_hz("A4x"), None);
     }
 
     #[test]
