@@ -177,13 +177,14 @@ it is parsed and validated by the test suite.
 ### Showcase — a real piece of music
 
 [`examples/river_flows_in_you.jsonl`](examples/river_flows_in_you.jsonl) is a
-session file that renders the intro + main theme of Yiruma's *River Flows in
-You*: a MIDI transcription converted into two polyphonic FM-piano `seq` layers (melody
-+ accompaniment, 104 notes) with reverb, stereo width, and a −14 LUFS master —
-authored entirely through `author_sound` and replayable with one
-`replay_session` call. [`examples/midi_to_seq.py`](examples/midi_to_seq.py) is
-the small converter that turns any MIDI file into `seq` notes, so you can feed
-Sonarium real scores.
+session file that renders the **complete** *River Flows in You* (Yiruma):
+800 notes played on the built-in `piano` instrument, with the performance's
+tempo map (rubato) and sustain pedal intact, through reverb, stereo width,
+and a −14 LUFS master — authored as one `author_sound` call and replayable
+with one `replay_session` call.
+[`examples/midi_to_seq.py`](examples/midi_to_seq.py) is the converter that
+turns any MIDI file into `seq` notes (tempo-map-aware, pedal-aware), so real
+scores can drive Sonarium.
 
 ## Build
 
