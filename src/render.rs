@@ -938,11 +938,14 @@ fn render_seq(
         if start >= n {
             continue;
         }
-        let len = ((note.len as f32 * step_dur) as usize).max(1);
+        // Bound the note length by the render window BEFORE allocating: a huge
+        // note.len (or tiny bpm) must not size buffers beyond what's audible.
+        // (f32→usize saturates, so even an inf product stays capped by n.)
+        let len = ((note.len as f32 * step_dur).min(n as f32) as usize).max(1);
+        let avail = (n - start).min(len);
         let envb = adsr(env, len, sr);
         let f = eval_value(&note.pitch, len, sr);
         let d = eval_value(duty, len, sr);
-        let avail = (n - start).min(len);
         let mut phase = 0.0f32;
         let mut tri = 0.0f32; // band-limited triangle integrator state (per note)
         for i in 0..avail {
@@ -1236,6 +1239,20 @@ mod tests {
         let delay = (0.010 * 44_100.0) as usize;
         assert_eq!(l[delay..delay + 100], mono[..100]); // left trails by 10 ms
         assert_eq!(r[..100], mono[..100]); // right leads
+    }
+
+    #[test]
+    fn seq_with_absurd_note_lengths_stays_bounded() {
+        // A 4-billion-step note and a near-zero bpm must not allocate
+        // note-length buffers beyond the render window (OOM guard).
+        let d = doc(r#"{ "name": "n", "duration": 0.1, "root": { "type": "seq",
+                 "bpm": 120, "wave": "square", "env": { "d": 0.05 },
+                 "notes": [ { "step": 0, "len": 4000000000, "pitch": 440 } ] } }"#);
+        assert_eq!(render(&d).len(), 4410);
+        let d = doc(r#"{ "name": "n", "duration": 0.1, "root": { "type": "seq",
+                 "bpm": 0.0001, "wave": "sine", "env": { "d": 0.05 },
+                 "notes": [ { "step": 0, "len": 1, "pitch": 440 } ] } }"#);
+        assert_eq!(render(&d).len(), 4410);
     }
 
     #[test]

@@ -868,6 +868,15 @@ fn in_unit(name: &str, v: f32) -> Result<(), String> {
     Ok(())
 }
 
+/// EQ gain bound: ±24 dB covers any musical boost/cut; far beyond that the
+/// biquad coefficients overflow to inf/NaN and render silent garbage.
+fn validate_gain_db(name: &str, v: f32) -> Result<(), String> {
+    if !(-24.0..=24.0).contains(&v) {
+        return Err(format!("{name} must be in [-24, 24] dB, got {v}"));
+    }
+    Ok(())
+}
+
 /// Validate a `Value` whose constant form must lie in [0, 1] (modulated forms
 /// are clamped at render time).
 fn validate_unit_value(v: &Value, what: &str) -> Result<(), String> {
@@ -945,15 +954,16 @@ fn validate_node(node: &Node) -> Result<(), String> {
             }
             Ok(())
         }
-        Node::Peak { cutoff, q, .. } => {
+        Node::Peak { cutoff, q, gain_db } => {
             validate_value(cutoff, "peak.cutoff")?;
             if *q <= 0.0 {
                 return Err(format!("peak.q must be > 0, got {q}"));
             }
-            Ok(())
+            validate_gain_db("peak.gain_db", *gain_db)
         }
-        Node::Lowshelf { cutoff, .. } | Node::Highshelf { cutoff, .. } => {
-            validate_value(cutoff, "shelf.cutoff")
+        Node::Lowshelf { cutoff, gain_db } | Node::Highshelf { cutoff, gain_db } => {
+            validate_value(cutoff, "shelf.cutoff")?;
+            validate_gain_db("shelf.gain_db", *gain_db)
         }
         Node::Super {
             freq,
@@ -1208,6 +1218,19 @@ mod tests {
         assert!(d.validate().unwrap_err().contains("reverb.mix"));
         let d = doc(r#"{ "name": "n", "root": { "type": "env", "s": 2 } }"#);
         assert!(d.validate().unwrap_err().contains("env.s"));
+    }
+
+    #[test]
+    fn validate_rejects_extreme_eq_gain() {
+        // Beyond ±24 dB the biquad coefficients blow up to inf/NaN.
+        let d = doc(r#"{ "name": "n", "root": { "type": "chain", "stages": [
+                { "type": "noise" }, { "type": "peak", "cutoff": 1000, "gain_db": 2000 }
+            ] } }"#);
+        assert!(d.validate().unwrap_err().contains("peak.gain_db"));
+        let d = doc(r#"{ "name": "n", "root": { "type": "chain", "stages": [
+                { "type": "noise" }, { "type": "lowshelf", "cutoff": 200, "gain_db": -100 }
+            ] } }"#);
+        assert!(d.validate().unwrap_err().contains("shelf.gain_db"));
     }
 
     #[test]
