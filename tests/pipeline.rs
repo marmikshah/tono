@@ -305,6 +305,28 @@ async fn band_demo_session_replays_with_four_instruments() {
 }
 
 #[tokio::test]
+async fn river_phonk_remix_session_replays() {
+    // The remix showcase: River's hook re-gridded to 140 bpm phonk — cowbell
+    // lead, driven 808, lo-fi bitcrushed piano, kit, pads — one call.
+    let (srv, dir) = fresh("phonk");
+    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/river_phonk.jsonl");
+    srv.replay_session(Parameters(ReplaySessionReq {
+        path: example.to_string_lossy().into_owned(),
+    }))
+    .await
+    .unwrap();
+    let g = graph_json(&srv, "river_phonk").await;
+    let layers = g["root"]["stages"][0]["inputs"].as_array().unwrap();
+    // The cowbell lead and the driven-808 chain are both present.
+    let has_cowbell = layers.iter().any(|l| l["wave"] == "cowbell");
+    let has_808 = layers
+        .iter()
+        .any(|l| l["type"] == "chain" && l["stages"][1]["type"] == "drive");
+    assert!(has_cowbell && has_808);
+    assert!(dir.join("river_phonk.wav").exists());
+}
+
+#[tokio::test]
 async fn replayed_session_reproduces_audio_byte_for_byte() {
     // Session A: author, surgically edit, mutate (explicit seed), bank it.
     let (a, dir_a) = fresh("replay_a");

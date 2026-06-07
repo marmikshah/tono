@@ -192,6 +192,12 @@ playing together: drum kit + bass + e-piano comping + string pad over an
 Am–F–C–G groove, mixed through a compressor and reverb — a band from one
 `author_sound` call.
 
+[`examples/river_phonk.jsonl`](examples/river_phonk.jsonl) is the remix
+proof: the same River hook re-gridded to a rigid 140 bpm and rebuilt as
+phonk — pitched **cowbell** lead, tanh-driven 808 sub, bitcrushed lo-fi
+piano, hat rolls, drop/break/drop arrangement, slammed through the bus
+compressor to −12 LUFS.
+
 ## Build
 
 ```bash
