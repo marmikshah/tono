@@ -2,12 +2,13 @@
 
 <p align="center"><em>An MCP server that turns an AI agent into a sound engineer.</em></p>
 
-Sonarium is an **orchestrator, not a generator**: it provides instruments
-(band-limited oscillators, FM, supersaw, noise, a polyphonic sequencer),
-effects (filters, EQ, drive, mod fx, dynamics, delay, reverb), and mixing /
-mastering tools — and an agent composes with them through MCP tool calls.
-There are no canned presets; the agent does the sound design, the server does
-the DSP.
+Sonarium is an **orchestrator, not a generator** — think GarageBand for
+agents. It provides **instruments** (piano, e-piano, organ, strings, bass, a
+GM-mapped drum kit, plucked string, FM mallets, plus raw band-limited
+oscillators in a polyphonic sequencer), **effects** (filters, EQ, drive, mod
+fx, dynamics, delay, reverb), and mixing / mastering tools — and an agent
+composes with them through MCP tool calls. There is no canned content; the
+agent does the sound design and arranging, the server does the DSP.
 
 The agent authors a **symbolic synthesis graph** (oscillators → envelopes →
 filters → modulation → mix). Sonarium renders it **deterministically** — the
@@ -185,6 +186,11 @@ with one `replay_session` call.
 [`examples/midi_to_seq.py`](examples/midi_to_seq.py) is the converter that
 turns any MIDI file into `seq` notes (tempo-map-aware, pedal-aware), so real
 scores can drive Sonarium.
+
+[`examples/band_demo.jsonl`](examples/band_demo.jsonl) is the instrument set
+playing together: drum kit + bass + e-piano comping + string pad over an
+Am–F–C–G groove, mixed through a compressor and reverb — a band from one
+`author_sound` call.
 
 ## Build
 

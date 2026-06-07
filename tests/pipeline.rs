@@ -283,6 +283,28 @@ async fn river_flows_showcase_session_replays() {
 }
 
 #[tokio::test]
+async fn band_demo_session_replays_with_four_instruments() {
+    // The instrument set playing together: kit + bass + epiano + strings
+    // through a compressor and reverb — a band from one author_sound call.
+    let (srv, dir) = fresh("band");
+    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/band_demo.jsonl");
+    srv.replay_session(Parameters(ReplaySessionReq {
+        path: example.to_string_lossy().into_owned(),
+    }))
+    .await
+    .unwrap();
+    let g = graph_json(&srv, "band_demo").await;
+    let waves: Vec<&str> = g["root"]["stages"][0]["inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["wave"].as_str().unwrap())
+        .collect();
+    assert_eq!(waves, vec!["kit", "bass", "epiano", "strings"]);
+    assert!(dir.join("band_demo.wav").exists());
+}
+
+#[tokio::test]
 async fn replayed_session_reproduces_audio_byte_for_byte() {
     // Session A: author, surgically edit, mutate (explicit seed), bank it.
     let (a, dir_a) = fresh("replay_a");
