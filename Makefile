@@ -8,7 +8,7 @@ BIND    ?= 127.0.0.1:8787
 WORKDIR ?= ./sounds
 
 .DEFAULT_GOAL := run
-.PHONY: help run serve stdio build release test fmt lint check clean install daemon daemon-status daemon-uninstall
+.PHONY: help run serve stdio build release test fmt lint check verify hooks clean install daemon daemon-status daemon-uninstall
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -39,6 +39,15 @@ lint: ## Clippy with warnings denied
 	cargo clippy --all-targets -- -D warnings
 
 check: fmt lint test ## Pre-commit gate: format + clippy + tests
+
+verify: ## Exactly what CI runs (fmt --check + clippy + test) - non-mutating
+	cargo fmt --all -- --check
+	cargo clippy --all-targets -- -D warnings
+	cargo test
+
+hooks: ## Enable the pre-push gate (runs 'make verify' before every push)
+	git config core.hooksPath .githooks
+	@echo "pre-push hook enabled"
 
 clean: ## Remove build artifacts
 	cargo clean

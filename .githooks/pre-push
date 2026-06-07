@@ -1,0 +1,10 @@
+#!/bin/sh
+# Pre-push gate: run the exact CI steps locally so a push can never burn a
+# failing Actions run. Enable once per clone with:
+#   git config core.hooksPath .githooks
+set -e
+echo "pre-push: verifying (fmt --check, clippy, test)..."
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test --quiet
+echo "pre-push: clean."

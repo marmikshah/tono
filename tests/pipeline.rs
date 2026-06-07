@@ -242,7 +242,8 @@ async fn restart_rehydrates_the_library() {
 #[tokio::test]
 async fn shipped_example_session_replays_clean() {
     let (srv, dir) = fresh("example");
-    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/examples/laser-session.json");
+    let example =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/examples/laser-session.json");
     let res = srv
         .replay_session(Parameters(ReplaySessionReq {
             path: example.to_string_lossy().into_owned(),
