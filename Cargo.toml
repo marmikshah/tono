@@ -11,3 +11,6 @@ keywords = ["mcp", "audio", "synthesis", "chiptune", "gamedev"]
 categories = ["multimedia::audio", "game-development"]
 
 [dependencies]
+schemars = "1.2.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"

@@ -8,3 +8,5 @@
 //! The crate is a library plus a thin binary (`src/main.rs`). Modules are
 //! added bottom-up: the DSL data model first, then DSP, rendering, state,
 //! and finally the MCP tool surface.
+
+pub mod dsl;
