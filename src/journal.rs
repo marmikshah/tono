@@ -78,12 +78,49 @@ impl Journal {
     }
 }
 
-/// Read every step from a journal file (the live journal or a saved copy).
+/// An annotated, shareable session: the documentation-friendly form of a
+/// journal. `steps[].note` is for human/agent readers and is ignored on
+/// replay; everything else replays exactly like a raw journal.
+#[derive(Debug, Deserialize)]
+struct Recipe {
+    #[allow(dead_code)]
+    #[serde(default)]
+    name: String,
+    #[allow(dead_code)]
+    #[serde(default)]
+    description: String,
+    steps: Vec<RecipeStep>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RecipeStep {
+    tool: String,
+    args: Json,
+    #[allow(dead_code)]
+    #[serde(default)]
+    note: String,
+}
+
+/// Read every step from a session file: either the raw journal (JSON lines)
+/// or an annotated recipe (`{ name, description, steps: [{tool, args, note}] }`).
 /// A malformed line is an error, not a skip: a journal that cannot be read in
 /// full cannot promise a faithful replay.
 pub fn read_steps(path: &Path) -> anyhow::Result<Vec<Step>> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("cannot read session file {}: {e}", path.display()))?;
+    // Annotated recipe: one JSON object with a `steps` array.
+    if text.trim_start().starts_with('{') && text.contains("\"steps\"") {
+        let recipe: Recipe = serde_json::from_str(&text)
+            .map_err(|e| anyhow::anyhow!("recipe file {}: {e}", path.display()))?;
+        return Ok(recipe
+            .steps
+            .into_iter()
+            .map(|s| Step {
+                tool: s.tool,
+                args: s.args,
+            })
+            .collect());
+    }
     text.lines()
         .filter(|l| !l.trim().is_empty())
         .enumerate()
@@ -143,6 +180,26 @@ mod tests {
         .unwrap();
         let err = read_steps(j.path()).unwrap_err().to_string();
         assert!(err.contains("line 2"), "{err}");
+    }
+
+    #[test]
+    fn annotated_recipes_read_like_journals() {
+        let dir = tmp_dir("recipe");
+        let path = dir.join("recipe.json");
+        std::fs::write(
+            &path,
+            r#"{ "name": "demo", "description": "two steps",
+                 "steps": [
+                   { "tool": "author_sound", "args": { "graph": { "name": "a" } },
+                     "note": "notes are documentation, ignored on replay" },
+                   { "tool": "set_param", "args": { "id": "a" } }
+                 ] }"#,
+        )
+        .unwrap();
+        let steps = read_steps(&path).unwrap();
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0].tool, "author_sound");
+        assert_eq!(steps[1].args["id"], "a");
     }
 
     #[test]

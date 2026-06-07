@@ -70,6 +70,8 @@ const HELP: &str = "sonarium — a sound-engineering MCP server driven by tool c
 USAGE:
     sonarium                       run the MCP server over stdio (for clients that spawn it)
     sonarium --http [ADDR]         run the streamable-HTTP MCP server (default 127.0.0.1:8787, endpoint /mcp)
+    sonarium replay FILE           replay a session file / recipe into a fresh working directory
+            [--workdir DIR]        (default: ./sonarium-replay)
     sonarium service install       install + start the background daemon (launchd / systemd --user)
              [--bind ADDR] [--workdir DIR]
     sonarium service status        show daemon state and log locations
@@ -87,6 +89,7 @@ async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(|s| s.as_str()) {
         Some("service") => std::process::exit(service::run(&args[2..])),
+        Some("replay") => return replay_cli(&args[2..]).await,
         Some("--version") | Some("-V") => {
             println!("sonarium {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
@@ -119,6 +122,45 @@ async fn main() -> anyhow::Result<()> {
             service.waiting().await?;
         }
         Transport::Http(addr) => serve_http(store, &addr).await?,
+    }
+    Ok(())
+}
+
+/// `sonarium replay FILE [--workdir DIR]` — reproduce a saved session without
+/// an MCP client: render every recorded tool call into a fresh directory.
+async fn replay_cli(args: &[String]) -> anyhow::Result<()> {
+    use rmcp::handler::server::wrapper::Parameters;
+    let Some(file) = args.first().filter(|a| !a.starts_with('-')) else {
+        anyhow::bail!("usage: sonarium replay FILE [--workdir DIR]");
+    };
+    let workdir = args
+        .iter()
+        .position(|a| a == "--workdir")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("./sonarium-replay"));
+
+    let store = Arc::new(Store::new(workdir.clone())?);
+    let server = Sonarium::new(store.clone());
+    let resp = server
+        .replay_session(Parameters(sonarium::server::ReplaySessionReq {
+            path: file.clone(),
+        }))
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    println!(
+        "replayed {} step(s) into {}",
+        resp.0.applied,
+        workdir.display()
+    );
+    for rec in store.list() {
+        println!(
+            "  {}  {:.2}s  {}",
+            rec.id,
+            rec.graph.duration,
+            rec.wav_path.display()
+        );
     }
     Ok(())
 }
