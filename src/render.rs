@@ -1194,8 +1194,23 @@ fn seq_note_signal(
             }
         }
         SeqWave::Kit => out = kit_drum(f, note, sr, rng),
+        SeqWave::Cowbell => {
+            for (i, &fi) in f.iter().enumerate() {
+                let t = i as f32 / srf;
+                out.push(cowbell_sample(fi.max(20.0), t));
+            }
+        }
     }
     out
+}
+
+/// One sample of cowbell at fundamental `f`: two clashing partials (the
+/// classic ~1.56 ratio of an 808 cowbell), saturated square-ish, with a fast
+/// knock decay.
+fn cowbell_sample(f: f32, t: f32) -> f32 {
+    let a = (2.5 * (TAU * f * t).sin()).tanh();
+    let b = (2.5 * (TAU * f * 1.565 * t).sin()).tanh();
+    0.5 * (a + b) * (-t / 0.09).exp()
 }
 
 /// One General-MIDI-mapped drum hit: the note's onset pitch picks the voice.
@@ -1244,6 +1259,8 @@ fn kit_drum(f: &[f32], _note: &SeqNote, sr: u32, rng: &mut Rng) -> Signal {
                 phase -= phase.floor();
                 (TAU * phase).sin() * (-t / 0.18).exp() + rng.bi() * 0.1 * (-t / 0.03).exp()
             }
+            // Cowbell (more cowbell).
+            56 => cowbell_sample(540.0, t),
             // Crash / ride.
             49 | 55 | 57 => hp(rng.bi(), &mut lp) * (-t / 0.7).exp(),
             51 | 53 | 59 => {
@@ -1633,6 +1650,19 @@ mod tests {
             brightness(&b) < brightness(&saw) * 0.5,
             "bass is filtered dark"
         );
+    }
+
+    #[test]
+    fn cowbell_knocks_and_tracks_pitch() {
+        let lo = one_note("cowbell", "A4", 1.0);
+        let hi = one_note("cowbell", "A5", 1.0);
+        assert!(rms(&lo[..4410]) > 0.1, "cowbell knocks");
+        assert!(brightness(&hi) > brightness(&lo), "pitch tracks the note");
+        // Fast knock decay: the tail is near-silent.
+        assert!(rms(&lo[lo.len() / 2..]) < 0.01);
+        // And the kit's fixed cowbell (GM 56) responds too.
+        let kit = one_note("kit", "midi:56", 0.3);
+        assert!(rms(&kit[..4410]) > 0.05, "kit cowbell audible");
     }
 
     #[test]

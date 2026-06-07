@@ -734,9 +734,13 @@ pub enum SeqWave {
     Bass,
     /// Drum kit on the General MIDI map — the note's pitch picks the drum,
     /// not a frequency: `"midi:36"` kick, `38` snare, `42` closed hat,
-    /// `46` open hat, `41..50` toms, `49` crash, `51` ride, `39` clap.
-    /// Velocity (`gain`) sets the hit level.
+    /// `46` open hat, `41..50` toms, `49` crash, `51` ride, `39` clap,
+    /// `56` cowbell. Velocity (`gain`) sets the hit level.
     Kit,
+    /// Pitched cowbell: two clashing saturated partials with a fast knock
+    /// decay — played melodically it is THE phonk / Memphis lead. More
+    /// cowbell.
+    Cowbell,
 }
 
 /// An ADSR amplitude envelope. One shape, used in three places: the [`Node::Env`]
