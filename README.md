@@ -3,9 +3,10 @@
 <p align="center"><em>An MCP server that turns an AI agent into a sound engineer.</em></p>
 
 Sonarium is an **orchestrator, not a generator** — think GarageBand for
-agents. It provides **instruments** (piano, e-piano, organ, strings, bass, a
-GM-mapped drum kit, plucked string, FM mallets, plus raw band-limited
-oscillators in a polyphonic sequencer), **effects** (filters, EQ, drive, mod
+agents. It provides **instruments** — a SoundFont **sampler** for real recorded
+instruments (point it at any free GM bank), plus synthesized piano, e-piano,
+organ, strings, bass, a GM-mapped drum kit, pitched cowbell, plucked string,
+and FM mallets in a polyphonic sequencer with swing/humanize groove, **effects** (filters, EQ, drive, mod
 fx, dynamics, delay, reverb), and mixing / mastering tools — and an agent
 composes with them through MCP tool calls. There is no canned content; the
 agent does the sound design and arranging, the server does the DSP.
@@ -147,6 +148,14 @@ processors).
 **Modulators** (any numeric param) — `slide`, `lfo`, `arp`, and
 `env{a,d,s,r,from,to}` (an ADSR mapped onto a range ⇒ filter / pitch
 envelopes).
+
+### Real instruments
+
+Download any free General MIDI SoundFont once (FluidR3 GM, GeneralUser GS),
+then `wave: "sampler", sf2: "/path/to/gm.sf2", sf2_preset: 0` plays the notes
+on a real recorded grand (32 = bass, 48 = strings; `sf2_bank: 128` = the GM
+drum map). Renders stay deterministic. The `duck` processor adds sidechain
+pumping, and every seq takes `swing` / `humanize` for groove.
 
 ### Example — laser zap
 
