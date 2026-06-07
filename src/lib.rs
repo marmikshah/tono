@@ -9,5 +9,6 @@
 //! added bottom-up: the DSL data model first, then DSP, rendering, state,
 //! and finally the MCP tool surface.
 
+pub mod bank;
 pub mod dsl;
 pub mod dsp;
