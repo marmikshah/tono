@@ -367,7 +367,7 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
             for stage in stages {
                 buf = Some(match (&buf, stage.is_processor()) {
                     // A processor transforms the running signal.
-                    (Some(input), true) => apply_processor(stage, input, sr),
+                    (Some(input), true) => apply_processor(stage, input, sr, rng),
                     // A source/combinator as a later stage replaces the signal.
                     (_, _) => render_node(stage, n, sr, rng),
                 });
@@ -382,9 +382,34 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
     }
 }
 
-/// Apply a processor node to an incoming signal.
-fn apply_processor(node: &Node, input: &[f32], sr: u32) -> Signal {
+/// Apply a processor node to an incoming signal. (`rng` feeds processors that
+/// render an internal side signal, e.g. `duck`'s trigger.)
+fn apply_processor(node: &Node, input: &[f32], sr: u32, rng: &mut Rng) -> Signal {
     match node {
+        Node::Duck {
+            trigger,
+            amount,
+            attack,
+            release,
+        } => {
+            // Render the trigger silently; its loudness envelope steers a
+            // gain dip on the chained signal — the sidechain pump.
+            let trig = render_node(trigger, input.len(), sr, rng);
+            let srf = sr as f32;
+            let at = (-1.0 / (attack.max(1e-4) * srf)).exp();
+            let rt = (-1.0 / (release.max(1e-4) * srf)).exp();
+            let mut env = 0.0f32;
+            input
+                .iter()
+                .zip(trig)
+                .map(|(&x, t)| {
+                    let rect = t.abs().min(1.0);
+                    let coeff = if rect > env { at } else { rt };
+                    env = rect + coeff * (env - rect);
+                    x * (1.0 - amount * env)
+                })
+                .collect()
+        }
         Node::Lowpass { cutoff, q } => biquad(input, cutoff, *q, sr, FilterKind::Low),
         Node::Highpass { cutoff, q } => biquad(input, cutoff, *q, sr, FilterKind::High),
         Node::Bandpass { cutoff, q } => biquad(input, cutoff, *q, sr, FilterKind::Band),
@@ -1674,6 +1699,31 @@ mod tests {
         assert!(
             brightness(&b) < brightness(&saw) * 0.5,
             "bass is filtered dark"
+        );
+    }
+
+    #[test]
+    fn duck_pumps_a_pad_under_its_trigger() {
+        // A steady pad ducked by a kick pattern: rms right after each kick is
+        // lower than between kicks.
+        let d = doc(
+            r#"{ "name": "n", "duration": 1.0, "root": { "type": "chain", "stages": [
+                { "type": "sine", "freq": 220 },
+                { "type": "duck", "amount": 0.9, "release": 0.2,
+                  "trigger": { "type": "seq", "bpm": 120, "steps_per_beat": 1,
+                    "wave": "kit", "env": { "s": 1 },
+                    "notes": [ { "step": 0, "len": 1, "pitch": "midi:36" },
+                               { "step": 1, "len": 1, "pitch": "midi:36" } ] } }
+            ] } }"#,
+        );
+        let s = render(&d);
+        let sr = 44_100;
+        // 60 ms right after the kick at t=0 vs the recovered region ~0.4 s.
+        let after_kick = rms(&s[..sr * 6 / 100]);
+        let recovered = rms(&s[sr * 2 / 5..sr * 45 / 100]);
+        assert!(
+            after_kick < recovered * 0.65,
+            "pumped {after_kick} vs recovered {recovered}"
         );
     }
 

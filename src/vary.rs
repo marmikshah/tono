@@ -247,6 +247,14 @@ fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
             *mix = jitter_unit(*mix, amount, rng);
         }
         Node::Compress { .. } => {}
+        Node::Duck {
+            trigger,
+            amount: amt,
+            ..
+        } => {
+            *amt = jitter_unit(*amt, amount, rng);
+            mutate_node(trigger, amount, rng);
+        }
     }
 }
 

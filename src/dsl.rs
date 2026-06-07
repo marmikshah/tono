@@ -97,6 +97,15 @@ fn default_seq_fm_strike() -> f32 {
 fn default_pluck_decay() -> f32 {
     0.996
 }
+fn default_duck_amount() -> f32 {
+    0.8
+}
+fn default_duck_attack() -> f32 {
+    0.005
+}
+fn default_duck_release() -> f32 {
+    0.25
+}
 
 /// A complete sound: metadata plus a single root node.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -639,6 +648,23 @@ pub enum Node {
         #[serde(default = "default_mod_mix")]
         mix: f32,
     },
+    /// Sidechain duck: gain-reduces the chained signal whenever `trigger` is
+    /// loud — the pumping that glues a bass or pad to the kick. The trigger
+    /// is rendered silently (it only steers the gain); chain the audible
+    /// kick separately in the mix.
+    Duck {
+        /// The signal whose loudness drives the ducking (e.g. the kick seq).
+        trigger: Box<Node>,
+        /// Duck depth, 0..1 (1 = fully silent at the trigger's peak).
+        #[serde(default = "default_duck_amount")]
+        amount: f32,
+        /// Gain-reduction attack in seconds.
+        #[serde(default = "default_duck_attack")]
+        attack: f32,
+        /// Recovery time in seconds (the "pump" length).
+        #[serde(default = "default_duck_release")]
+        release: f32,
+    },
     /// Dynamic-range compressor: tames peaks above `threshold` (dBFS) by `ratio`,
     /// with `attack`/`release` ballistics, then applies `makeup` gain (dB). The
     /// glue behind loud, punchy game audio.
@@ -814,6 +840,7 @@ impl Node {
                 | Node::Flanger { .. }
                 | Node::Phaser { .. }
                 | Node::Compress { .. }
+                | Node::Duck { .. }
         )
     }
 }
@@ -1136,6 +1163,18 @@ fn validate_node(node: &Node) -> Result<(), String> {
             in_unit("flanger/phaser.depth", *depth)?;
             in_unit("flanger/phaser.feedback", *feedback)?;
             in_unit("flanger/phaser.mix", *mix)
+        }
+        Node::Duck {
+            trigger,
+            amount,
+            attack,
+            release,
+        } => {
+            in_unit("duck.amount", *amount)?;
+            if *attack < 0.0 || *release < 0.0 {
+                return Err("duck.attack/release must be >= 0".into());
+            }
+            validate_node(trigger)
         }
         Node::Compress {
             ratio,
