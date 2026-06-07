@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    # action-gh-release creates the GitHub Release; the default GITHUB_TOKEN is
+    # read-only, so grant write access to repository contents (releases).
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          # One macOS build: Apple Silicon on the latest runner. Intel users
+          # build from source (cargo install --path .).
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Archive (unix)
+        if: runner.os != 'Windows'
+        run: tar -czf sonarium-${{ github.ref_name }}-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release sonarium
+      - name: Archive (windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path target/${{ matrix.target }}/release/sonarium.exe -DestinationPath sonarium-${{ github.ref_name }}-${{ matrix.target }}.zip
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: sonarium-${{ github.ref_name }}-${{ matrix.target }}.*
+
+  # Silently skips when CARGO_REGISTRY_TOKEN is unset (secrets can't be read in
+  # `if:` directly, so route it through env — the documented indirection).
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      HAS_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
+    if: ${{ needs.build.result == 'success' }}
+    steps:
+      - uses: actions/checkout@v5
+        if: env.HAS_TOKEN == 'true'
+      - uses: dtolnay/rust-toolchain@stable
+        if: env.HAS_TOKEN == 'true'
+      - run: cargo publish --locked
+        if: env.HAS_TOKEN == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
