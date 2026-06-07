@@ -737,6 +737,309 @@ impl Node {
     }
 }
 
+impl Adsr {
+    /// Range-check the envelope shape. `what` prefixes error messages
+    /// (e.g. `"env"` ⇒ `"env.a must be >= 0"`).
+    fn validate(&self, what: &str) -> Result<(), String> {
+        for (n, v) in [("a", self.a), ("d", self.d), ("r", self.r)] {
+            if v < 0.0 {
+                return Err(format!("{what}.{n} must be >= 0, got {v}"));
+            }
+        }
+        in_unit(&format!("{what}.s"), self.s)?;
+        in_unit(&format!("{what}.punch"), self.punch)
+    }
+}
+
+impl SoundDoc {
+    /// Validate ranges and structure beyond what serde already enforces.
+    /// Returns a human-readable message the agent can act on.
+    pub fn validate(&self) -> Result<(), String> {
+        if !(self.duration > 0.0 && self.duration <= 60.0) {
+            return Err(format!(
+                "duration must be in (0, 60] seconds, got {}",
+                self.duration
+            ));
+        }
+        if !(8_000..=192_000).contains(&self.sample_rate) {
+            return Err(format!(
+                "sample_rate must be in [8000, 192000] Hz, got {}",
+                self.sample_rate
+            ));
+        }
+        match self.stereo {
+            Stereo::Mono => {}
+            Stereo::Haas { ms, pan } => {
+                if !(0.5..=40.0).contains(&ms) {
+                    return Err(format!("stereo.haas.ms must be in [0.5, 40], got {ms}"));
+                }
+                if !(-1.0..=1.0).contains(&pan) {
+                    return Err(format!("stereo.haas.pan must be in [-1, 1], got {pan}"));
+                }
+            }
+            Stereo::Wide { amount } => in_unit("stereo.wide.amount", amount)?,
+        }
+        if let Some(nz) = &self.normalize {
+            if let Some(t) = nz.target_lufs
+                && !(-60.0..=0.0).contains(&t)
+            {
+                return Err(format!(
+                    "normalize.target_lufs must be in [-60, 0] LUFS, got {t}"
+                ));
+            }
+            if !(-12.0..=0.0).contains(&nz.ceiling_dbtp) {
+                return Err(format!(
+                    "normalize.ceiling_dbtp must be in [-12, 0] dBTP, got {}",
+                    nz.ceiling_dbtp
+                ));
+            }
+        }
+        if let Playback::Loop {
+            start_secs,
+            end_secs,
+            crossfade_secs,
+        } = self.playback
+        {
+            if start_secs < 0.0 || start_secs >= self.duration {
+                return Err(format!(
+                    "playback.loop.start_secs must be in [0, duration), got {start_secs}"
+                ));
+            }
+            if let Some(end) = end_secs {
+                if end <= start_secs {
+                    return Err(format!(
+                        "playback.loop.end_secs ({end}) must be > start_secs ({start_secs})"
+                    ));
+                }
+                if end > self.duration {
+                    return Err(format!(
+                        "playback.loop.end_secs ({end}) must be <= duration ({})",
+                        self.duration
+                    ));
+                }
+            }
+            if crossfade_secs < 0.0 {
+                return Err(format!(
+                    "playback.loop.crossfade_secs must be >= 0, got {crossfade_secs}"
+                ));
+            }
+        }
+        validate_node(&self.root)
+    }
+}
+
+fn validate_value(v: &Value, what: &str) -> Result<(), String> {
+    match v {
+        Value::Const(_) => Ok(()),
+        Value::Note(s) => note_to_hz(s).map(|_| ()).ok_or_else(|| {
+            format!("{what}: '{s}' is not a valid note (e.g. \"A4\", \"C#3\", \"midi:69\")")
+        }),
+        Value::Modulated(m) => match m {
+            Modulator::Slide { secs, .. } => {
+                if *secs <= 0.0 {
+                    return Err(format!("{what}: slide.secs must be > 0, got {secs}"));
+                }
+                Ok(())
+            }
+            Modulator::Lfo { rate, .. } => {
+                if *rate <= 0.0 {
+                    return Err(format!("{what}: lfo.rate must be > 0, got {rate}"));
+                }
+                Ok(())
+            }
+            Modulator::Arp { steps, rate } => {
+                if steps.is_empty() {
+                    return Err(format!("{what}: arp.steps must be non-empty"));
+                }
+                if *rate <= 0.0 {
+                    return Err(format!("{what}: arp.rate must be > 0, got {rate}"));
+                }
+                Ok(())
+            }
+            Modulator::EnvMod { adsr, .. } => adsr.validate(&format!("{what}: env")),
+        },
+    }
+}
+
+fn in_unit(name: &str, v: f32) -> Result<(), String> {
+    if !(0.0..=1.0).contains(&v) {
+        return Err(format!("{name} must be in [0, 1], got {v}"));
+    }
+    Ok(())
+}
+
+/// Validate a `Value` whose constant form must lie in [0, 1] (modulated forms
+/// are clamped at render time).
+fn validate_unit_value(v: &Value, what: &str) -> Result<(), String> {
+    if let Value::Const(c) = v {
+        in_unit(what, *c)?;
+    }
+    validate_value(v, what)
+}
+
+fn validate_node(node: &Node) -> Result<(), String> {
+    match node {
+        Node::Square { freq, duty } => {
+            validate_value(freq, "square.freq")?;
+            validate_unit_value(duty, "square.duty")
+        }
+        Node::Triangle { freq } => validate_value(freq, "triangle.freq"),
+        Node::Sawtooth { freq } => validate_value(freq, "sawtooth.freq"),
+        Node::Sine { freq } => validate_value(freq, "sine.freq"),
+        Node::Noise { .. } => Ok(()),
+        Node::Fm { freq, ratio, index } => {
+            validate_value(freq, "fm.freq")?;
+            if *ratio <= 0.0 {
+                return Err(format!("fm.ratio must be > 0, got {ratio}"));
+            }
+            validate_value(index, "fm.index")
+        }
+        Node::Seq {
+            bpm,
+            steps_per_beat,
+            duty,
+            env,
+            notes,
+            ..
+        } => {
+            if *bpm <= 0.0 {
+                return Err(format!("seq.bpm must be > 0, got {bpm}"));
+            }
+            if *steps_per_beat < 1 {
+                return Err("seq.steps_per_beat must be >= 1".into());
+            }
+            if notes.is_empty() {
+                return Err("seq.notes must be non-empty".into());
+            }
+            validate_unit_value(duty, "seq.duty")?;
+            env.validate("seq.env")?;
+            for note in notes {
+                if note.len < 1 {
+                    return Err("seq note.len must be >= 1".into());
+                }
+                in_unit("seq note.gain", note.gain)?;
+                validate_value(&note.pitch, "seq note.pitch")?;
+            }
+            Ok(())
+        }
+        Node::Env { adsr } => adsr.validate("env"),
+        Node::Mix { inputs } | Node::Mul { inputs } => {
+            if inputs.is_empty() {
+                return Err("mix/mul requires at least one input".into());
+            }
+            inputs.iter().try_for_each(validate_node)
+        }
+        Node::Chain { stages } => {
+            if stages.is_empty() {
+                return Err("chain requires at least one stage".into());
+            }
+            stages.iter().try_for_each(validate_node)
+        }
+        Node::Lowpass { cutoff, q }
+        | Node::Highpass { cutoff, q }
+        | Node::Bandpass { cutoff, q }
+        | Node::Notch { cutoff, q } => {
+            validate_value(cutoff, "filter.cutoff")?;
+            if *q <= 0.0 {
+                return Err(format!("filter.q must be > 0, got {q}"));
+            }
+            Ok(())
+        }
+        Node::Peak { cutoff, q, .. } => {
+            validate_value(cutoff, "peak.cutoff")?;
+            if *q <= 0.0 {
+                return Err(format!("peak.q must be > 0, got {q}"));
+            }
+            Ok(())
+        }
+        Node::Lowshelf { cutoff, .. } | Node::Highshelf { cutoff, .. } => {
+            validate_value(cutoff, "shelf.cutoff")
+        }
+        Node::Super {
+            freq,
+            voices,
+            detune_cents,
+            ..
+        } => {
+            validate_value(freq, "super.freq")?;
+            if !(1..=16).contains(voices) {
+                return Err(format!("super.voices must be in [1, 16], got {voices}"));
+            }
+            if *detune_cents < 0.0 {
+                return Err(format!(
+                    "super.detune_cents must be >= 0, got {detune_cents}"
+                ));
+            }
+            Ok(())
+        }
+        Node::Gain { amount } => validate_value(amount, "gain.amount"),
+        Node::Bitcrush { bits } => {
+            if !(1..=16).contains(bits) {
+                return Err(format!("bitcrush.bits must be in [1, 16], got {bits}"));
+            }
+            Ok(())
+        }
+        Node::Downsample { factor } => {
+            if *factor < 1 {
+                return Err("downsample.factor must be >= 1".into());
+            }
+            Ok(())
+        }
+        Node::Delay { secs, feedback } => {
+            if *secs <= 0.0 {
+                return Err(format!("delay.secs must be > 0, got {secs}"));
+            }
+            in_unit("delay.feedback", *feedback)
+        }
+        Node::Reverb { room, mix } => {
+            in_unit("reverb.room", *room)?;
+            in_unit("reverb.mix", *mix)
+        }
+        Node::Drive { amount, .. } => validate_value(amount, "drive.amount"),
+        Node::RingMod { freq } => validate_value(freq, "ringmod.freq"),
+        Node::Chorus { rate, depth, mix } => {
+            if *rate <= 0.0 {
+                return Err(format!("chorus.rate must be > 0, got {rate}"));
+            }
+            in_unit("chorus.depth", *depth)?;
+            in_unit("chorus.mix", *mix)
+        }
+        Node::Flanger {
+            rate,
+            depth,
+            feedback,
+            mix,
+        }
+        | Node::Phaser {
+            rate,
+            depth,
+            feedback,
+            mix,
+        } => {
+            if *rate <= 0.0 {
+                return Err(format!("flanger/phaser.rate must be > 0, got {rate}"));
+            }
+            in_unit("flanger/phaser.depth", *depth)?;
+            in_unit("flanger/phaser.feedback", *feedback)?;
+            in_unit("flanger/phaser.mix", *mix)
+        }
+        Node::Compress {
+            ratio,
+            attack,
+            release,
+            ..
+        } => {
+            if *ratio < 1.0 {
+                return Err(format!("compress.ratio must be >= 1, got {ratio}"));
+            }
+            if *attack < 0.0 || *release < 0.0 {
+                return Err("compress.attack/release must be >= 0".into());
+            }
+            Ok(())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -860,5 +1163,58 @@ mod tests {
         assert!(p.is_processor());
         let s: Node = serde_json::from_str(r#"{ "type": "sine", "freq": 440 }"#).unwrap();
         assert!(!s.is_processor());
+    }
+
+    fn doc(json: &str) -> SoundDoc {
+        serde_json::from_str(json).expect("deserialize")
+    }
+
+    #[test]
+    fn validate_accepts_a_sane_doc() {
+        let d = doc(
+            r#"{ "name": "zap", "duration": 0.2, "root": { "type": "mul", "inputs": [
+                { "type": "square", "freq": { "slide": { "from": 880, "to": 180, "secs": 0.18 } } },
+                { "type": "env", "d": 0.18, "punch": 0.3 }
+            ] } }"#,
+        );
+        assert_eq!(d.validate(), Ok(()));
+    }
+
+    #[test]
+    fn validate_rejects_out_of_range_metadata() {
+        let d = doc(r#"{ "name": "n", "duration": 0, "root": { "type": "noise" } }"#);
+        assert!(d.validate().unwrap_err().contains("duration"));
+        let d = doc(r#"{ "name": "n", "sample_rate": 1000, "root": { "type": "noise" } }"#);
+        assert!(d.validate().unwrap_err().contains("sample_rate"));
+        let d = doc(
+            r#"{ "name": "n", "normalize": { "target_lufs": 5 }, "root": { "type": "noise" } }"#,
+        );
+        assert!(d.validate().unwrap_err().contains("target_lufs"));
+    }
+
+    #[test]
+    fn validate_rejects_bad_loop_region() {
+        let d = doc(r#"{ "name": "n", "duration": 1,
+                 "playback": { "mode": "loop", "start_secs": 0.8, "end_secs": 0.5 },
+                 "root": { "type": "noise" } }"#);
+        assert!(d.validate().unwrap_err().contains("end_secs"));
+    }
+
+    #[test]
+    fn validate_rejects_unit_range_violations() {
+        let d = doc(r#"{ "name": "n", "root": { "type": "chain", "stages": [
+                { "type": "noise" }, { "type": "reverb", "mix": 1.5 }
+            ] } }"#);
+        assert!(d.validate().unwrap_err().contains("reverb.mix"));
+        let d = doc(r#"{ "name": "n", "root": { "type": "env", "s": 2 } }"#);
+        assert!(d.validate().unwrap_err().contains("env.s"));
+    }
+
+    #[test]
+    fn validate_rejects_empty_combinators_and_bad_notes() {
+        let d = doc(r#"{ "name": "n", "root": { "type": "mix", "inputs": [] } }"#);
+        assert!(d.validate().unwrap_err().contains("mix/mul"));
+        let d = doc(r#"{ "name": "n", "root": { "type": "sine", "freq": "H9" } }"#);
+        assert!(d.validate().unwrap_err().contains("not a valid note"));
     }
 }
