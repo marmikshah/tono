@@ -1,0 +1,20 @@
+{
+  "count": 1,
+  "frame_h": 256,
+  "frame_w": 256,
+  "frames": [
+    {
+      "duration_ms": 100,
+      "pivot": null,
+      "rect": [
+        0,
+        0,
+        256,
+        256
+      ]
+    }
+  ],
+  "palette": [],
+  "path": "/Users/marmikshah/Workspace/sonarium/docs/logo.png",
+  "tags": []
+}

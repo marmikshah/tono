@@ -1,4 +1,9 @@
-<h1 align="center">sonarium</h1>
+<p align="center">
+  <img src="docs/logo.png" width="112" alt="sonarium — a pluck waveform on a dark tile">
+</p>
+<p align="center">
+  <img src="docs/logo-wordmark.png" width="384" alt="sonarium">
+</p>
 
 <p align="center"><strong>A headless sound studio for AI agents — GarageBand-as-API, over MCP.</strong></p>
 
@@ -13,7 +18,9 @@
 <p align="center"><em>Every sound behind these images — a complete piano piece,
 a four-instrument band, a phonk remix — was composed, mixed and mastered by
 agents through the MCP tools, and every one replays byte-identically from a
-session file in this repo.</em></p>
+session file in this repo. The logo and wordmark were drawn by an agent with
+<a href="https://github.com/marmikshah/atelier">atelier</a>, sonarium's
+pixel-art sibling.</em></p>
 
 ## What it is
 
