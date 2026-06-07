@@ -14,4 +14,5 @@ pub mod audio;
 pub mod bank;
 pub mod dsl;
 pub mod dsp;
+pub mod engines;
 pub mod render;
