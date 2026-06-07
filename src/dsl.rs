@@ -802,9 +802,10 @@ impl SoundDoc {
     /// Validate ranges and structure beyond what serde already enforces.
     /// Returns a human-readable message the agent can act on.
     pub fn validate(&self) -> Result<(), String> {
-        if !(self.duration > 0.0 && self.duration <= 60.0) {
+        // 600 s covers full songs; the cap exists only to bound render memory.
+        if !(self.duration > 0.0 && self.duration <= 600.0) {
             return Err(format!(
-                "duration must be in (0, 60] seconds, got {}",
+                "duration must be in (0, 600] seconds, got {}",
                 self.duration
             ));
         }
