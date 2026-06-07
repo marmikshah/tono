@@ -12,8 +12,11 @@ categories = ["multimedia::audio", "game-development"]
 
 [dependencies]
 anyhow = "1.0.102"
+flacenc = { version = "0.4", default-features = false }
+hound = "3.5.1"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 rustfft = "6.4.1"
 schemars = "1.2.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+vorbis_rs = "0.5.5"

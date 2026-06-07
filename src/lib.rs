@@ -10,6 +10,7 @@
 //! and finally the MCP tool surface.
 
 pub mod analysis;
+pub mod audio;
 pub mod bank;
 pub mod dsl;
 pub mod dsp;
