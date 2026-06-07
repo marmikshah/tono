@@ -487,6 +487,19 @@ pub enum Node {
     },
 
     // --- Combinators ---
+    /// The mixing console — only valid as the document root. Each track is a
+    /// mono graph placed on the stereo stage with its own pan and gain
+    /// (sampler tracks keep their native stereo); `master` is a processor
+    /// chain applied to the stereo bus (compressor glue, reverb — the reverb
+    /// runs with decorrelated left/right tails). This is how multi-
+    /// instrument music gets a real stereo image instead of a mono sum.
+    Tracks {
+        /// The mixer channels.
+        tracks: Vec<Track>,
+        /// Processors applied to the stereo master bus, in order.
+        #[serde(default)]
+        master: Vec<Node>,
+    },
     /// Sum (layer) all inputs.
     Mix {
         /// Branches to add together.
@@ -818,6 +831,19 @@ pub struct Adsr {
     pub punch: f32,
 }
 
+/// One mixer channel in a [`Node::Tracks`] root.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Track {
+    /// The track's signal graph (usually a `seq` or a `chain`).
+    pub node: Node,
+    /// Stereo position, −1 (hard left) .. 1 (hard right). Equal-power law.
+    #[serde(default)]
+    pub pan: f32,
+    /// Channel fader, 0..2 (1 = unity).
+    #[serde(default = "default_gain")]
+    pub gain: f32,
+}
+
 /// One note in a [`Node::Seq`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SeqNote {
@@ -950,7 +976,50 @@ impl SoundDoc {
                 ));
             }
         }
+        if let Node::Tracks { tracks, master } = &self.root {
+            if tracks.is_empty() {
+                return Err("tracks must be non-empty".into());
+            }
+            for (i, t) in tracks.iter().enumerate() {
+                if !(-1.0..=1.0).contains(&t.pan) {
+                    return Err(format!("tracks[{i}].pan must be in [-1, 1], got {}", t.pan));
+                }
+                if !(0.0..=2.0).contains(&t.gain) {
+                    return Err(format!(
+                        "tracks[{i}].gain must be in [0, 2], got {}",
+                        t.gain
+                    ));
+                }
+                if contains_tracks(&t.node) {
+                    return Err("tracks cannot nest inside a track".into());
+                }
+                validate_node(&t.node)?;
+            }
+            for (i, m) in master.iter().enumerate() {
+                if !m.is_processor() {
+                    return Err(format!(
+                        "master[{i}] must be a processor (filter/eq/dynamics/fx)"
+                    ));
+                }
+                validate_node(m)?;
+            }
+            return Ok(());
+        }
+        if contains_tracks(&self.root) {
+            return Err("tracks is the mixing console: it must be the document's root node".into());
+        }
         validate_node(&self.root)
+    }
+}
+
+/// True if a `tracks` node appears anywhere in this subtree.
+fn contains_tracks(node: &Node) -> bool {
+    match node {
+        Node::Tracks { .. } => true,
+        Node::Mix { inputs } | Node::Mul { inputs } => inputs.iter().any(contains_tracks),
+        Node::Chain { stages } => stages.iter().any(contains_tracks),
+        Node::Duck { trigger, .. } => contains_tracks(trigger),
+        _ => false,
     }
 }
 
@@ -1099,6 +1168,8 @@ fn validate_node(node: &Node) -> Result<(), String> {
             Ok(())
         }
         Node::Env { adsr } => adsr.validate("env"),
+        // Nested mixers are rejected earlier; this guards direct calls.
+        Node::Tracks { .. } => Err("tracks must be the document's root node".into()),
         Node::Mix { inputs } | Node::Mul { inputs } => {
             if inputs.is_empty() {
                 return Err("mix/mul requires at least one input".into());

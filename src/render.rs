@@ -15,8 +15,112 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 /// A block of mono audio samples.
 type Signal = Vec<f32>;
 
+/// Render a `tracks` document to a finished stereo pair: each track is
+/// rendered mono and equal-power panned onto the bus (sampler tracks keep
+/// their native stereo), the master chain runs per channel (the reverb with
+/// decorrelated tails), then loop/normalize apply jointly.
+pub fn render_tracks(doc: &SoundDoc) -> Option<(Signal, Signal)> {
+    let Node::Tracks { tracks, master } = &doc.root else {
+        return None;
+    };
+    let sr = doc.sample_rate;
+    let n = ((doc.duration * sr as f32).ceil() as usize).max(1);
+    let mut rng = Rng::new(doc.seed);
+    let (mut left, mut right) = (vec![0.0f32; n], vec![0.0f32; n]);
+    for t in tracks {
+        // Equal-power pan law.
+        let theta = (t.pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
+        let (gl, gr) = (theta.cos() * t.gain, theta.sin() * t.gain);
+        if let Some((l, r)) = track_native_stereo(&t.node, n, sr) {
+            // A sampler track keeps its recorded stereo image; pan biases it.
+            for i in 0..n {
+                left[i] += l[i] * gl * std::f32::consts::SQRT_2;
+                right[i] += r[i] * gr * std::f32::consts::SQRT_2;
+            }
+        } else {
+            let mono = render_node(&t.node, n, sr, &mut rng);
+            for (i, x) in mono.into_iter().enumerate() {
+                left[i] += x * gl;
+                right[i] += x * gr;
+            }
+        }
+    }
+    // Master bus: run each processor on both channels with identical state
+    // seeds (the rng is cloned so e.g. a duck trigger fires identically), and
+    // give the reverb the classic Freeverb stereo spread for a wide tail.
+    for m in master {
+        if let Node::Reverb { room, mix } = m {
+            left = reverb(&left, *room, *mix, sr, 0);
+            right = reverb(&right, *room, *mix, sr, 23);
+        } else {
+            let mut rl = rng.clone();
+            left = apply_processor(m, &left, sr, &mut rl);
+            right = apply_processor(m, &right, sr, &mut rng);
+        }
+    }
+    if let Playback::Loop {
+        start_secs,
+        end_secs,
+        crossfade_secs,
+    } = doc.playback
+    {
+        left = make_loop_buffer(&left, sr, start_secs, end_secs, crossfade_secs);
+        right = make_loop_buffer(&right, sr, start_secs, end_secs, crossfade_secs);
+    }
+    if let Some(nz) = &doc.normalize {
+        normalize_output(&mut left, nz);
+        normalize_output(&mut right, nz);
+    }
+    peak_limit(&mut [&mut left, &mut right]);
+    Some((left, right))
+}
+
+/// A track whose node is directly a sampler seq renders in native stereo.
+fn track_native_stereo(node: &Node, n: usize, sr: u32) -> Option<(Signal, Signal)> {
+    if let Node::Seq {
+        bpm,
+        steps_per_beat,
+        wave: SeqWave::Sampler,
+        duty,
+        fm_ratio,
+        fm_index,
+        fm_strike,
+        pluck_decay,
+        sf2,
+        sf2_preset,
+        sf2_bank,
+        swing,
+        humanize,
+        env,
+        notes,
+    } = node
+    {
+        let voice = SeqVoice {
+            wave: SeqWave::Sampler,
+            duty,
+            fm_ratio: *fm_ratio,
+            fm_index: *fm_index,
+            fm_strike: *fm_strike,
+            pluck_decay: *pluck_decay,
+            sf2,
+            sf2_preset: *sf2_preset,
+            sf2_bank: *sf2_bank,
+            swing: *swing,
+            humanize: *humanize,
+            env,
+        };
+        let step_dur = sr as f32 * 60.0 / bpm / (*steps_per_beat).max(1) as f32;
+        return sampler_seq_stereo(&voice, notes, step_dur, n, sr);
+    }
+    None
+}
+
 /// Render a sound document to normalized mono samples in [-1, 1].
 pub fn render(doc: &SoundDoc) -> Signal {
+    if let Some((l, r)) = render_tracks(doc) {
+        // Mono consumers (analysis, mono export) get the mid signal.
+        return l.iter().zip(r).map(|(a, b)| 0.5 * (a + b)).collect();
+    }
     let sr = doc.sample_rate;
     let n = ((doc.duration * sr as f32).ceil() as usize).max(1);
     let mut rng = Rng::new(doc.seed);
@@ -348,6 +452,17 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
             render_seq(*bpm, *steps_per_beat, &voice, notes, n, sr, rng)
         }
         Node::Env { adsr: env } => adsr(env, n, sr),
+        // Validation rejects nested mixers; render defensively as a plain sum.
+        Node::Tracks { tracks, .. } => {
+            let mut acc = vec![0.0f32; n];
+            for t in tracks {
+                let sig = render_node(&t.node, n, sr, rng);
+                for (o, v) in acc.iter_mut().zip(sig) {
+                    *o += v * t.gain;
+                }
+            }
+            acc
+        }
         Node::Mix { inputs } => {
             let mut acc = vec![0.0f32; n];
             for input in inputs {
@@ -467,7 +582,7 @@ fn apply_processor(node: &Node, input: &[f32], sr: u32, rng: &mut Rng) -> Signal
             }
             out
         }
-        Node::Reverb { room, mix } => reverb(input, *room, *mix, sr),
+        Node::Reverb { room, mix } => reverb(input, *room, *mix, sr, 0),
         Node::Drive { amount, shape } => {
             let a = eval_value(amount, input.len(), sr);
             input
@@ -611,10 +726,17 @@ fn biquad(input: &[f32], cutoff: &Value, q: f32, sr: u32, kind: FilterKind) -> S
 
 /// Schroeder reverb: parallel feedback combs into series allpasses. Tunings are
 /// the classic Freeverb values, scaled to the sample rate.
-fn reverb(input: &[f32], room: f32, mix: f32, sr: u32) -> Signal {
+fn reverb(input: &[f32], room: f32, mix: f32, sr: u32, spread: usize) -> Signal {
     let scale = sr as f32 / 44_100.0;
-    let comb_tunings = [1116, 1188, 1277, 1356, 1422, 1491];
-    let allpass_tunings = [556, 441, 341, 225];
+    let comb_tunings = [
+        1116 + spread,
+        1188 + spread,
+        1277 + spread,
+        1356 + spread,
+        1422 + spread,
+        1491 + spread,
+    ];
+    let allpass_tunings = [556 + spread, 441 + spread, 341 + spread, 225 + spread];
     let feedback = 0.7 + 0.28 * room.clamp(0.0, 1.0);
     let damp = 0.2;
 
@@ -1291,13 +1413,27 @@ fn cowbell_sample(f: f32, t: f32) -> f32 {
 /// Output is the stereo render downmixed to the graph's mono bus (doc-level
 /// `stereo` adds width back at the output stage).
 fn sampler_seq(voice: &SeqVoice, notes: &[SeqNote], step_dur: f32, n: usize, sr: u32) -> Signal {
+    match sampler_seq_stereo(voice, notes, step_dur, n, sr) {
+        Some((l, r)) => l.iter().zip(r).map(|(a, b)| 0.5 * (a + b)).collect(),
+        None => vec![0.0; n],
+    }
+}
+
+/// The sampler's native stereo render (used directly by mixer tracks).
+fn sampler_seq_stereo(
+    voice: &SeqVoice,
+    notes: &[SeqNote],
+    step_dur: f32,
+    n: usize,
+    sr: u32,
+) -> Option<(Signal, Signal)> {
     use rustysynth::{Synthesizer, SynthesizerSettings};
 
     let font = match load_soundfont(voice.sf2) {
         Ok(f) => f,
         Err(e) => {
             tracing::warn!("sampler: cannot load '{}': {e}", voice.sf2);
-            return vec![0.0; n];
+            return None;
         }
     };
     let mut settings = SynthesizerSettings::new(sr as i32);
@@ -1308,7 +1444,7 @@ fn sampler_seq(voice: &SeqVoice, notes: &[SeqNote], step_dur: f32, n: usize, sr:
         Ok(s) => s,
         Err(e) => {
             tracing::warn!("sampler: synthesizer init failed: {e:?}");
-            return vec![0.0; n];
+            return None;
         }
     };
     // Channel 9 is percussion by MIDI convention; bank 128 selects it.
@@ -1349,7 +1485,7 @@ fn sampler_seq(voice: &SeqVoice, notes: &[SeqNote], step_dur: f32, n: usize, sr:
     if pos < n {
         synth.render(&mut left[pos..], &mut right[pos..]);
     }
-    left.iter().zip(right).map(|(l, r)| 0.5 * (l + r)).collect()
+    Some((left, right))
 }
 
 /// SoundFonts are large; load each file once per process and share it.
@@ -1806,6 +1942,71 @@ mod tests {
             brightness(&b) < brightness(&saw) * 0.5,
             "bass is filtered dark"
         );
+    }
+
+    #[test]
+    fn tracks_pan_places_instruments_on_the_stage() {
+        let d = doc(
+            r#"{ "name": "n", "duration": 0.2, "root": { "type": "tracks", "tracks": [
+                { "pan": -1.0, "node": { "type": "sine", "freq": 440 } },
+                { "pan":  1.0, "gain": 0.5, "node": { "type": "sine", "freq": 660 } }
+            ] } }"#,
+        );
+        assert_eq!(d.validate(), Ok(()));
+        let (l, r) = render_tracks(&d).unwrap();
+        // Hard-left 440 dominates L; hard-right (at half gain) is alone on R.
+        assert!(
+            rms(&l) > rms(&r) * 1.5,
+            "left louder: {} vs {}",
+            rms(&l),
+            rms(&r)
+        );
+        let zero_crossings = |s: &[f32]| s.windows(2).filter(|w| w[0] * w[1] < 0.0).count();
+        // R carries only the 660 Hz track ⇒ more crossings per second.
+        assert!(zero_crossings(&r) > zero_crossings(&l));
+        // The public mono render is the mid of the same bus.
+        let mid = render(&d);
+        assert!((mid[1000] - 0.5 * (l[1000] + r[1000])).abs() < 1e-6);
+    }
+
+    #[test]
+    fn tracks_master_reverb_decorrelates_the_channels() {
+        let d = doc(
+            r#"{ "name": "n", "duration": 0.5, "root": { "type": "tracks",
+                 "tracks": [ { "node": { "type": "mul", "inputs": [
+                     { "type": "sine", "freq": 440 },
+                     { "type": "env", "d": 0.1 } ] } } ],
+                 "master": [ { "type": "reverb", "room": 0.6, "mix": 0.4 } ] } }"#,
+        );
+        let (l, r) = render_tracks(&d).unwrap();
+        assert_ne!(l, r, "spread reverb gives each side its own tail");
+        // And with a duck in the master, both channels stay deterministic.
+        let d2 = doc(
+            r#"{ "name": "n", "duration": 0.5, "seed": 3, "root": { "type": "tracks",
+                 "tracks": [ { "node": { "type": "noise" } } ],
+                 "master": [ { "type": "duck", "amount": 0.7,
+                   "trigger": { "type": "seq", "bpm": 120, "steps_per_beat": 1,
+                     "wave": "kit", "env": { "s": 1 },
+                     "notes": [ { "step": 0, "len": 1, "pitch": "midi:36" } ] } } ] } }"#,
+        );
+        let a = render_tracks(&d2).unwrap();
+        let b = render_tracks(&d2).unwrap();
+        assert_eq!(a, b, "stereo master bus renders are byte-stable");
+    }
+
+    #[test]
+    fn tracks_validation_guards_the_console() {
+        let nested = doc(r#"{ "name": "n", "root": { "type": "mix", "inputs": [
+                { "type": "tracks", "tracks": [ { "node": { "type": "noise" } } ] }
+            ] } }"#);
+        assert!(nested.validate().unwrap_err().contains("root"));
+        let bad_master = doc(r#"{ "name": "n", "root": { "type": "tracks",
+                 "tracks": [ { "node": { "type": "noise" } } ],
+                 "master": [ { "type": "sine", "freq": 440 } ] } }"#);
+        assert!(bad_master.validate().unwrap_err().contains("master"));
+        let bad_pan = doc(r#"{ "name": "n", "root": { "type": "tracks",
+                 "tracks": [ { "pan": 2.0, "node": { "type": "noise" } } ] } }"#);
+        assert!(bad_pan.validate().unwrap_err().contains("pan"));
     }
 
     #[test]

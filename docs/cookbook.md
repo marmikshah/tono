@@ -141,8 +141,36 @@ frequency: `midi:36` kick, `38` snare, `42` closed hat, `46` open hat,
   ] }
 ```
 
-**A band** is a `mix` of seqs — drums + bass + epiano chords + strings pad —
-through shared processors (`compress`, `reverb`) like a mix bus.
+**A band** is a `tracks` root — the mixing console. Each track has its own
+`pan` (−1..1, equal-power) and `gain`; `master` is the stereo bus chain. The
+reverb on the master runs with decorrelated left/right tails, and sampler
+tracks keep their native recorded stereo:
+
+```json
+{ "name": "song", "duration": 4.0, "normalize": { "target_lufs": -14 },
+  "root": { "type": "tracks",
+    "tracks": [
+      { "pan": 0.0, "node": { "type": "seq", "bpm": 100, "wave": "kit", "env": { "s": 1 },
+          "notes": [ { "step": 0, "len": 2, "pitch": "midi:36" },
+                     { "step": 4, "len": 2, "pitch": "midi:38" } ] } },
+      { "pan": 0.0, "gain": 1.1, "node": { "type": "seq", "bpm": 100, "wave": "bass",
+          "env": { "a": 0.002, "s": 1, "r": 0.05 },
+          "notes": [ { "step": 0, "len": 8, "pitch": "A1" } ] } },
+      { "pan": -0.3, "node": { "type": "seq", "bpm": 100, "wave": "epiano",
+          "env": { "a": 0.002, "s": 1, "r": 0.15 },
+          "notes": [ { "step": 0, "len": 8, "pitch": "A3" },
+                     { "step": 0, "len": 8, "pitch": "C#4" } ] } },
+      { "pan": 0.35, "node": { "type": "seq", "bpm": 100, "wave": "strings",
+          "env": { "a": 0.05, "s": 1, "r": 0.4 },
+          "notes": [ { "step": 0, "len": 16, "pitch": "E4" } ] } }
+    ],
+    "master": [
+      { "type": "compress", "threshold": -14, "ratio": 3, "makeup": 2 },
+      { "type": "reverb", "room": 0.4, "mix": 0.12 }
+    ] } }
+```
+
+(`mix` still works for mono layering inside one track.)
 
 **Sampler setup**: download any General MIDI SoundFont once (e.g. FluidR3 GM
 or GeneralUser GS, both free) and point `sf2` at it:

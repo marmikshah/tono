@@ -87,6 +87,9 @@ fn transpose_node(node: &mut Node, ratio: f32) {
             inputs.iter_mut().for_each(|n| transpose_node(n, ratio))
         }
         Node::Chain { stages } => stages.iter_mut().for_each(|n| transpose_node(n, ratio)),
+        Node::Tracks { tracks, .. } => tracks
+            .iter_mut()
+            .for_each(|t| transpose_node(&mut t.node, ratio)),
         _ => {}
     }
 }
@@ -247,6 +250,14 @@ fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
             *mix = jitter_unit(*mix, amount, rng);
         }
         Node::Compress { .. } => {}
+        Node::Tracks { tracks, master } => {
+            for t in tracks.iter_mut() {
+                mutate_node(&mut t.node, amount, rng);
+            }
+            for m in master.iter_mut() {
+                mutate_node(m, amount, rng);
+            }
+        }
         Node::Duck {
             trigger,
             amount: amt,

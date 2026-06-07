@@ -218,6 +218,21 @@ fn walk(json: &Json, path: &str, out: &mut Vec<NodeInfo>) {
     }
     // Recurse into child node arrays regardless (covers nested mix/chain).
     for (k, v) in obj {
+        if k == "tracks" {
+            // Mixer channels: each element wraps its graph in `node`.
+            if let Some(arr) = v.as_array() {
+                for (i, ch) in arr.iter().enumerate() {
+                    if let Some(node) = ch.get("node") {
+                        walk(node, &format!("{path}.tracks[{i}].node"), out);
+                    }
+                }
+            }
+            continue;
+        }
+        if k == "trigger" || k == "node" {
+            walk(v, &format!("{path}.{k}"), out);
+            continue;
+        }
         if !is_child_array(k) {
             continue;
         }

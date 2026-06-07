@@ -28,7 +28,7 @@ use serde_json::json;
 use crate::analysis::{self, Analysis};
 use crate::audio;
 use crate::bank::{Bank, BankMember, ManifestEntry};
-use crate::dsl::{Normalize, Playback, SoundDoc, Stereo};
+use crate::dsl::{Node, Normalize, Playback, SoundDoc, Stereo};
 use crate::dsp::dbfs;
 use crate::edit::{self, EditOp, NodeInfo};
 use crate::engines::{self, EngineTarget};
@@ -40,7 +40,7 @@ use crate::vary;
 
 const INSTRUCTIONS: &str = "Sonarium is a sound-engineering MCP server: you compose audio from instruments and effects by authoring a symbolic synthesis graph, and the server renders it deterministically, returning analysis (peak/true-peak/RMS, LUFS, spectral centroid, transients) plus two images — a spectrogram and a waveform — so you iterate by inspection, like a sound designer at a DAW.\n\
 Workflow: author_sound with a graph → read the stats, view the images → refine with set_param / edit_sound (surgical, path-addressed; call describe_sound first to see every editable path) or refine_sound (whole-graph replace) → export (wav/flac/ogg) when it matches. undo_sound / redo_sound step a 20-deep per-sound history; sounds persist across restarts under stable slug ids.\n\
-Graph vocabulary: root is one node; every node is a mono signal. Sources: square{freq,duty} (duty modulatable ⇒ PWM), triangle{freq}, sawtooth{freq}, sine{freq}, noise{color: white|pink|brown}, fm{freq,ratio,index} (bells / metallic), super{wave,freq,voices,detune_cents} (supersaw), and seq{bpm,steps_per_beat,wave,duty,env,notes} for melodies/basslines/drums — each note has its own pitch (a number, a NOTE NAME like \"C4\"/\"F#3\"/\"midi:60\", or a slide), a length in grid steps, and the shared per-note ADSR; gaps are rests; notes may overlap. Seq waves are square/triangle/sawtooth/sine/noise plus a core INSTRUMENT list: piano (acoustic — velocity brightness, bass rings/treble dies), epiano (Rhodes tine), organ (drawbars, sustains while held), strings (slow-swell ensemble — write notes slightly early), bass (filtered + sub), kit (drums on the General MIDI map — pitch picks the drum: midi:36 kick, 38 snare, 42/46 hats, 41-50 toms, 49 crash, 51 ride), fm (tunable mallets/bells via fm_ratio/fm_index/fm_strike), pluck (Karplus-Strong string via pluck_decay), cowbell (phonk lead), and sampler — REAL recorded instruments from any SoundFont: set sf2 to a .sf2 path and sf2_preset to the General MIDI program (0 piano, 32 bass, 48 strings; sf2_bank 128 = GM drum map). Every seq also takes swing (shuffle) and humanize (deterministic timing/velocity jitter), and the duck processor sidechain-pumps any chain to a trigger. Layer seqs like DAW tracks inside a mix. Envelope: env{a,d,s,r,punch}. Combinators: mix (sum), mul (source × env), chain (source → processors). Processors: lowpass/highpass/bandpass/notch{cutoff,q}, peak{cutoff,q,gain_db}, lowshelf/highshelf{cutoff,gain_db}, gain, drive{amount,shape}, ringmod, chorus, flanger, phaser, compress, bitcrush, downsample, delay, reverb. Any numeric param may be a modulator: {\"slide\":{from,to,secs,curve}}, {\"lfo\":{shape,rate,depth,center}}, {\"arp\":{steps,rate}}, {\"env\":{a,d,s,r,from,to}} (the key to filter/pitch envelopes).\n\
+Graph vocabulary: root is one node; every node is a mono signal. Sources: square{freq,duty} (duty modulatable ⇒ PWM), triangle{freq}, sawtooth{freq}, sine{freq}, noise{color: white|pink|brown}, fm{freq,ratio,index} (bells / metallic), super{wave,freq,voices,detune_cents} (supersaw), and seq{bpm,steps_per_beat,wave,duty,env,notes} for melodies/basslines/drums — each note has its own pitch (a number, a NOTE NAME like \"C4\"/\"F#3\"/\"midi:60\", or a slide), a length in grid steps, and the shared per-note ADSR; gaps are rests; notes may overlap. Seq waves are square/triangle/sawtooth/sine/noise plus a core INSTRUMENT list: piano (acoustic — velocity brightness, bass rings/treble dies), epiano (Rhodes tine), organ (drawbars, sustains while held), strings (slow-swell ensemble — write notes slightly early), bass (filtered + sub), kit (drums on the General MIDI map — pitch picks the drum: midi:36 kick, 38 snare, 42/46 hats, 41-50 toms, 49 crash, 51 ride), fm (tunable mallets/bells via fm_ratio/fm_index/fm_strike), pluck (Karplus-Strong string via pluck_decay), cowbell (phonk lead), and sampler — REAL recorded instruments from any SoundFont: set sf2 to a .sf2 path and sf2_preset to the General MIDI program (0 piano, 32 bass, 48 strings; sf2_bank 128 = GM drum map). Every seq also takes swing (shuffle) and humanize (deterministic timing/velocity jitter), and the duck processor sidechain-pumps any chain to a trigger. For full productions use a top-level tracks root — the mixing console: tracks:[{node, pan(-1..1), gain}] places every instrument on the stereo stage (sampler tracks keep native stereo) and master:[processors] is the stereo bus chain with decorrelated reverb tails. mix still layers mono inside one track. Envelope: env{a,d,s,r,punch}. Combinators: mix (sum), mul (source × env), chain (source → processors). Processors: lowpass/highpass/bandpass/notch{cutoff,q}, peak{cutoff,q,gain_db}, lowshelf/highshelf{cutoff,gain_db}, gain, drive{amount,shape}, ringmod, chorus, flanger, phaser, compress, bitcrush, downsample, delay, reverb. Any numeric param may be a modulator: {\"slide\":{from,to,secs,curve}}, {\"lfo\":{shape,rate,depth,center}}, {\"arp\":{steps,rate}}, {\"env\":{a,d,s,r,from,to}} (the key to filter/pitch envelopes).\n\
 Output shaping: add top-level stereo {\"mode\":\"wide\"|\"haas\"} for BGM/ambience width, playback {\"mode\":\"loop\",crossfade_secs} for a seamless loop (or call make_loop on an existing sound — the exported WAV carries a smpl loop chunk engines read), and normalize {target_lufs,ceiling_dbtp} for level-matched, click-safe renders. export also takes target_lufs.\n\
 Variations on sounds you made: mutate_sound nudges parameters; generate_variants makes N level-matched round-robin takes of a sound; humanize applies one coherent pitch shift + level trim per take (foley repeats); morph_sounds interpolates two same-shaped designs (charge tiers). compare_sounds reports metric deltas + a similarity score to converge on a reference.\n\
 Packs: create_bank / add_to_bank{category?,rr_group?} / list_banks, then export_bank or export_all write every member (wav/flac/ogg) plus a sounds.json manifest; pass engine:\"godot\"|\"unity\"|\"bevy\" to also emit engine integration files.\n\
@@ -1294,10 +1294,12 @@ impl Sonarium {
             write_export(&abs, &samples, &graph, format, 16, quality)
                 .map_err(|e| format!("write {}: {e}", abs.display()))?;
 
-            let channels = if matches!(graph.stereo, Stereo::Mono) {
-                1
-            } else {
+            let channels = if matches!(graph.root, Node::Tracks { .. })
+                || !matches!(graph.stereo, Stereo::Mono)
+            {
                 2
+            } else {
+                1
             };
             entries.push(ManifestEntry {
                 id: rec.id.clone(),
@@ -1474,6 +1476,16 @@ fn write_render(
     graph: &SoundDoc,
     bits: u16,
 ) -> anyhow::Result<()> {
+    // A mixer document is true stereo: write the panned bus, not the mid.
+    if matches!(graph.root, Node::Tracks { .. })
+        && let Some((l, r)) = render::render_tracks(graph)
+    {
+        audio::write_wav_stereo(path, &l, &r, graph.sample_rate, bits)?;
+        if matches!(graph.playback, Playback::Loop { .. }) && !mono.is_empty() {
+            audio::append_smpl_loop(path, graph.sample_rate, 0, mono.len() as u32 - 1)?;
+        }
+        return Ok(());
+    }
     if matches!(graph.stereo, Stereo::Mono) {
         audio::write_wav(path, mono, graph.sample_rate, bits)?;
     } else {
@@ -1490,6 +1502,9 @@ fn write_render(
 
 /// Per-channel buffers for a finished render (mono, or stereoized L/R).
 fn channels_for(samples: &[f32], graph: &SoundDoc) -> Vec<Vec<f32>> {
+    if let Some((l, r)) = render::render_tracks(graph) {
+        return vec![l, r];
+    }
     if matches!(graph.stereo, Stereo::Mono) {
         vec![samples.to_vec()]
     } else {

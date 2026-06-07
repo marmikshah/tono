@@ -4,7 +4,9 @@
 //! never fork per module.
 
 /// Deterministic PRNG (SplitMix64). Seeded from a sound's seed so the same
-/// graph + seed renders identical audio every time.
+/// graph + seed renders identical audio every time. `Clone` lets a stereo
+/// master bus run the same processor on both channels with identical draws.
+#[derive(Clone)]
 pub struct Rng(u64);
 
 impl Rng {
