@@ -213,7 +213,7 @@ manual setup.
 
 Every mutating tool call is journaled to `session.jsonl` in the working
 directory. `save_session { dest }` snapshots that journal; `replay_session
-{ path }` re-applies a saved journal into the current session — same tool
-calls, same seeds, byte-identical audio. Replay into a **fresh** working
-directory to reproduce a whole project exactly (ids derive from sound names,
-so a prior sound with the same name would shift them).
+{ path }` re-applies a saved journal — same tool calls, same seeds,
+byte-identical audio. Replay requires a **fresh** session (an empty working
+directory) and fails otherwise: ids derive from sound names, so replaying
+over existing content would silently edit the wrong sounds.

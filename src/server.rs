@@ -47,10 +47,17 @@ Packs: create_bank / add_to_bank{category?,rr_group?} / list_banks, then export_
 Sessions are reproducible: every mutating call is journaled to session.jsonl in the working directory; save_session snapshots it and replay_session re-applies a saved journal — same calls, same seeds, byte-identical audio. Read the resources (DSL JSON Schema + cookbook) for the full vocabulary and worked examples.";
 
 /// The Sonarium MCP server.
+///
+/// `Clone` shares all state (store, journal, replay flag): in HTTP mode one
+/// handler is built and cloned per session, so concurrent sessions append to
+/// the journal through ONE mutex instead of racing on the file.
 #[derive(Clone)]
 pub struct Sonarium {
     store: Arc<Store>,
     journal: Arc<Journal>,
+    /// True while `replay_session` runs: per-tool journaling is suppressed and
+    /// the replayed steps are copied into the journal verbatim instead.
+    replaying: Arc<std::sync::atomic::AtomicBool>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -490,6 +497,7 @@ impl Sonarium {
         Self {
             store,
             journal,
+            replaying: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tool_router: Self::tool_router(),
         }
     }
@@ -680,7 +688,10 @@ impl Sonarium {
         let base = self.require(&req.id)?.graph;
         let base_seed = req.seed.unwrap();
 
-        let mut variants = Vec::with_capacity(req.count as usize);
+        // Generate and validate the whole batch before committing any of it:
+        // the journal records this call only after every variant lands, so a
+        // rejected graph must not leave half a (journaled-as-whole) set behind.
+        let mut graphs = Vec::with_capacity(req.count as usize);
         for k in 0..req.count {
             // Distinct, reproducible per-variant seed.
             let vseed = base_seed
@@ -692,6 +703,11 @@ impl Sonarium {
                 target_lufs: Some(req.target_lufs),
                 ceiling_dbtp: -1.0,
             });
+            graph.validate()?;
+            graphs.push(graph);
+        }
+        let mut variants = Vec::with_capacity(graphs.len());
+        for graph in graphs {
             let new_id = self.store.unique_id(&graph.name);
             let rec = self.build(new_id, graph, now_secs())?;
             variants.push(variant_summary(&rec));
@@ -816,11 +832,17 @@ impl Sonarium {
         }
         let ra = self.require(&a)?;
         let rb = self.require(&b)?;
-        let mut variants = Vec::with_capacity(steps as usize);
+        // Morph (and validate) the whole series before committing any of it —
+        // a structural mismatch must not leave a partial, unjournaled set.
+        let mut graphs = Vec::with_capacity(steps as usize);
         for k in 1..=steps {
             let t = k as f32 / (steps + 1) as f32;
             let mut graph = edit::morph(&ra.graph, &rb.graph, t)?;
             graph.name = format!("{}_to_{}_{k}", ra.id, rb.id);
+            graphs.push(graph);
+        }
+        let mut variants = Vec::with_capacity(graphs.len());
+        for graph in graphs {
             let id = self.store.unique_id(&graph.name);
             let rec = self.build(id, graph, now_secs())?;
             variants.push(variant_summary(&rec));
@@ -858,12 +880,18 @@ impl Sonarium {
         }
         let rec = self.require(&req.id)?;
         let base_seed = req.seed.unwrap();
-        let mut variants = Vec::with_capacity(req.count as usize);
+        // Validate the whole batch of takes before committing any of it.
+        let mut graphs = Vec::with_capacity(req.count as usize);
         for k in 0..req.count {
             let vseed = base_seed
                 .wrapping_mul(0x9E37_79B9)
                 .wrapping_add(k as u64 + 1);
             let graph = vary::humanize(&rec.graph, req.pitch_cents, req.gain_db, vseed);
+            graph.validate()?;
+            graphs.push(graph);
+        }
+        let mut variants = Vec::with_capacity(graphs.len());
+        for graph in graphs {
             let new_id = self.store.unique_id(&graph.name);
             let nrec = self.build(new_id, graph, now_secs())?;
             variants.push(variant_summary(&nrec));
@@ -1146,19 +1174,44 @@ impl Sonarium {
     /// Re-apply a saved session file into the current session.
     #[tool(
         name = "replay_session",
-        description = "Replay a saved session file: re-apply its recorded tool calls in order (same seeds ⇒ byte-identical audio). Replay into a fresh working directory to reproduce a project exactly — existing sounds with the same names would shift the assigned ids."
+        description = "Replay a saved session file into a FRESH session: re-apply its recorded tool calls in order (same seeds ⇒ byte-identical audio). Fails if the working directory already holds sounds, banks, or a journal — ids derive from sound names, so replaying over existing content would silently edit the wrong sounds."
     )]
     pub async fn replay_session(
         &self,
         params: Parameters<ReplaySessionReq>,
     ) -> Result<Json<ReplaySessionResp>, String> {
+        use std::sync::atomic::Ordering;
         let path = std::path::PathBuf::from(params.0.path);
         let steps = journal::read_steps(&path).map_err(|e| e.to_string())?;
-        for (i, step) in steps.iter().enumerate() {
-            self.apply_step(step)
-                .await
-                .map_err(|e| format!("step {} ({}): {e}", i + 1, step.tool))?;
+        // Replay only into a pristine session. Ids derive from sound names, so
+        // an existing sound with the same name would shift the ids a replayed
+        // author_sound mints — and every later id-addressed step would then
+        // silently edit the pre-existing sound instead of the replayed copy.
+        if !self.store.list().is_empty()
+            || !self.store.list_banks().is_empty()
+            || !self.journal.is_empty()
+        {
+            return Err(
+                "replay_session requires a fresh session: the working directory already \
+                 contains sounds, banks, or a session journal. Start the server with an \
+                 empty SONARIUM_WORKDIR and replay there."
+                    .into(),
+            );
         }
+        // Suppress per-tool journaling and copy the replayed steps in verbatim
+        // instead: the live journal then exactly mirrors the applied steps, so
+        // a later save_session reproduces this session without duplication.
+        self.replaying.store(true, Ordering::SeqCst);
+        for (i, step) in steps.iter().enumerate() {
+            if let Err(e) = self.apply_step(step).await {
+                self.replaying.store(false, Ordering::SeqCst);
+                return Err(format!("step {} ({}): {e}", i + 1, step.tool));
+            }
+            if let Err(e) = self.journal.append(&step.tool, &step.args) {
+                tracing::warn!("session journal write failed during replay: {e}");
+            }
+        }
+        self.replaying.store(false, Ordering::SeqCst);
         Ok(Json(ReplaySessionResp {
             applied: steps.len() as u32,
         }))
@@ -1335,6 +1388,11 @@ impl Sonarium {
     /// the tool already succeeded, so a journal write failure is logged rather
     /// than turned into a tool error.
     fn jlog(&self, tool: &str, args: serde_json::Value) {
+        // During replay the steps are copied into the journal verbatim by
+        // replay_session itself — re-journaling here would double them.
+        if self.replaying.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
         if let Err(e) = self.journal.append(tool, &args) {
             tracing::warn!("session journal write failed for {tool}: {e}");
         }

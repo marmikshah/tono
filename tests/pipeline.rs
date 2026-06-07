@@ -309,4 +309,45 @@ async fn replayed_session_reproduces_audio_byte_for_byte() {
         assert_eq!(wav_a, wav_b, "{f} must replay byte-identically");
     }
     assert!(dir_b.join("bank_sfx.json").exists());
+
+    // The replayed session's journal mirrors the applied steps exactly (no
+    // re-journaling doubling) — saving it again yields the same 5 steps.
+    let resaved = b
+        .save_session(Parameters(SaveSessionReq { dest: None }))
+        .await
+        .unwrap();
+    assert_eq!(resaved.0.steps, 5);
+}
+
+#[tokio::test]
+async fn replay_refuses_a_non_fresh_session() {
+    // Build a session and save it.
+    let (a, _dir_a) = fresh("guard_src");
+    a.author_sound(author_req(LASER)).await.unwrap();
+    let saved = a
+        .save_session(Parameters(SaveSessionReq { dest: None }))
+        .await
+        .unwrap();
+
+    // A session that already has content must refuse the replay outright —
+    // ids derive from names, so replaying over existing sounds would silently
+    // edit the wrong targets.
+    let (b, _dir_b) = fresh("guard_dst");
+    b.author_sound(author_req(LASER)).await.unwrap();
+    let err = b
+        .replay_session(Parameters(ReplaySessionReq {
+            path: saved.0.path.clone(),
+        }))
+        .await
+        .err()
+        .expect("replay into a non-fresh session must be refused");
+    assert!(err.contains("fresh session"), "{err}");
+
+    // Replaying a session's own live journal is refused for the same reason.
+    let err = a
+        .replay_session(Parameters(ReplaySessionReq { path: saved.0.path }))
+        .await
+        .err()
+        .expect("self-replay must be refused");
+    assert!(err.contains("fresh session"), "{err}");
 }

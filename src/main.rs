@@ -124,11 +124,13 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Serve over streamable HTTP at `addr`, mounting the MCP endpoint at `/mcp`.
-/// A fresh handler is created per session; all sessions share the same on-disk
-/// store, so sounds authored in one connection are visible in another.
+/// ONE handler is built and cloned per session: every connection shares the
+/// same store, the same journal (one append mutex — concurrent sessions can't
+/// tear journal lines), and the same replay flag.
 async fn serve_http(store: Arc<Store>, addr: &str) -> anyhow::Result<()> {
+    let handler = Sonarium::new(store);
     let service = StreamableHttpService::new(
-        move || Ok(Sonarium::new(store.clone())),
+        move || Ok(handler.clone()),
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default(),
     );
