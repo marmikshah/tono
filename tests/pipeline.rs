@@ -242,7 +242,7 @@ async fn restart_rehydrates_the_library() {
 #[tokio::test]
 async fn shipped_example_session_replays_clean() {
     let (srv, dir) = fresh("example");
-    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/laser_session.jsonl");
+    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/examples/laser-session.json");
     let res = srv
         .replay_session(Parameters(ReplaySessionReq {
             path: example.to_string_lossy().into_owned(),
@@ -266,7 +266,7 @@ async fn river_flows_showcase_session_replays() {
     // piano instrument — replays from its session file alone.
     let (srv, dir) = fresh("river");
     let example =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/river_flows_in_you.jsonl");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/examples/river-flows-in-you.json");
     let res = srv
         .replay_session(Parameters(ReplaySessionReq {
             path: example.to_string_lossy().into_owned(),
@@ -287,7 +287,7 @@ async fn band_demo_session_replays_with_four_instruments() {
     // The instrument set playing together: kit + bass + epiano + strings
     // through a compressor and reverb — a band from one author_sound call.
     let (srv, dir) = fresh("band");
-    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/band_demo.jsonl");
+    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/examples/band-demo.json");
     srv.replay_session(Parameters(ReplaySessionReq {
         path: example.to_string_lossy().into_owned(),
     }))
@@ -312,7 +312,7 @@ async fn river_phonk_remix_session_replays() {
     // The remix showcase: River's hook re-gridded to 140 bpm phonk — cowbell
     // lead, driven 808, lo-fi bitcrushed piano, kit, pads — one call.
     let (srv, dir) = fresh("phonk");
-    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/river_phonk.jsonl");
+    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/examples/river-phonk.json");
     srv.replay_session(Parameters(ReplaySessionReq {
         path: example.to_string_lossy().into_owned(),
     }))

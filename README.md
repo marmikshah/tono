@@ -76,7 +76,7 @@ Renders and exports land in `SONARIUM_WORKDIR` (default `~/.sonarium/sounds`)
   `session.jsonl`. `save_session` snapshots it; `replay_session` re-applies a
   saved journal into a fresh working directory (enforced) — same calls, same
   seeds, **byte-identical audio**. A session file is a portable, diffable
-  project file ([example](examples/laser_session.jsonl), replayed in CI).
+  project file ([example](docs/examples/laser-session.json), replayed in CI).
 - **Variations, not presets.** `mutate_sound` nudges parameters;
   `generate_variants` makes N level-matched round-robin takes; `humanize`
   applies one coherent pitch + level shift per take; `morph_sounds`
@@ -186,23 +186,23 @@ it is parsed and validated by the test suite.
 
 ### Showcase — a real piece of music
 
-[`examples/river_flows_in_you.jsonl`](examples/river_flows_in_you.jsonl) is a
+[`docs/examples/river-flows-in-you.json`](docs/examples/river-flows-in-you.json) is a
 session file that renders the **complete** *River Flows in You* (Yiruma):
 800 notes played on the built-in `piano` instrument, with the performance's
 tempo map (rubato) and sustain pedal intact, through reverb, stereo width,
 and a −14 LUFS master — authored as one `author_sound` call and replayable
 with one `replay_session` call.
-[`examples/midi_to_seq.py`](examples/midi_to_seq.py) is the converter that
+[`docs/examples/midi_to_seq.py`](docs/examples/midi_to_seq.py) is the converter that
 turns any MIDI file into `seq` notes (tempo-map-aware, pedal-aware), so real
 scores can drive Sonarium.
 
-[`examples/band_demo.jsonl`](examples/band_demo.jsonl) is the instrument set
+[`docs/examples/band-demo.json`](docs/examples/band-demo.json) is the instrument set
 on the **mixing console**: drum kit + bass + e-piano + string pad over an
 Am–F–C–G groove, each on its own panned track, glued by a master-bus
 compressor and stereo-spread reverb — a true stereo production from one
 `author_sound` call.
 
-[`examples/river_phonk.jsonl`](examples/river_phonk.jsonl) is the remix
+[`docs/examples/river-phonk.json`](docs/examples/river-phonk.json) is the remix
 proof: the same River hook re-gridded to a rigid 140 bpm and rebuilt as
 phonk — pitched **cowbell** lead, tanh-driven 808 sub, bitcrushed lo-fi
 piano, hat rolls, drop/break/drop arrangement, slammed through the bus

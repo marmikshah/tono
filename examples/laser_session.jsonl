@@ -1,6 +1,0 @@
-{"tool":"author_sound","args":{"graph":{"name":"laser_zap","duration":0.22,"root":{"type":"mix","inputs":[{"type":"mul","inputs":[{"type":"square","duty":0.25,"freq":{"slide":{"from":880,"to":180,"secs":0.18,"curve":"exp"}}},{"type":"env","a":0.0,"d":0.18,"s":0.0,"r":0.02,"punch":0.3}]},{"type":"mul","inputs":[{"type":"noise"},{"type":"env","a":0.0,"d":0.04,"s":0.0,"r":0.0}]}]}}}}
-{"tool":"set_param","args":{"id":"laser_zap","path":"root.inputs[0].inputs[0].duty","value":0.3}}
-{"tool":"generate_variants","args":{"id":"laser_zap","count":3,"amount":0.15,"seed":42,"target_lufs":-16.0}}
-{"tool":"create_bank","args":{"name":"Blaster Pack"}}
-{"tool":"add_to_bank","args":{"bank_id":"blaster_pack","sound_id":"laser_zap","category":"weapon","rr_group":"blaster"}}
-{"tool":"add_to_bank","args":{"bank_id":"blaster_pack","sound_id":"laser_zap_mut","category":"weapon","rr_group":"blaster"}}
