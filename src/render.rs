@@ -973,6 +973,10 @@ fn render_seq(
         let mut phase = 0.0f32;
         let mut tri = 0.0f32; // band-limited triangle integrator state (per note)
         let (mut cph, mut mph) = (0.0f32, 0.0f32); // fm phases (reset per note)
+        let (mut cph2, mut mph2) = (0.0f32, 0.0f32); // piano's second (detuned) string
+        // Piano: natural decay time falls with pitch — bass strings ring for
+        // seconds, treble dies in under one.
+        let piano_decay = (8.0 / (1.0 + f[0].max(20.0) / 110.0)).clamp(0.25, 6.0);
         // Karplus-Strong string: a noise burst in a tuned delay line. Tuned to
         // the note's onset pitch (a plucked string cannot glide).
         let mut string: Vec<f32> = if voice.wave == SeqWave::Pluck {
@@ -1026,6 +1030,33 @@ fn render_seq(
                     string[spos] = voice.pluck_decay * 0.5 * (y + next);
                     spos = (spos + 1) % string.len();
                     y
+                }
+                SeqWave::Piano => {
+                    let t = i as f32 / srf;
+                    // Hammer-strike brightness: louder keys strike brighter
+                    // and the shimmer fades within ~80 ms.
+                    let idx = (1.2 + 2.3 * note.gain) * (-t / 0.08).exp();
+                    // Two strings detuned ±1.6 cents beat slowly against each
+                    // other — the chorusing shimmer of a real unison pair.
+                    let a = (TAU * cph + idx * (TAU * mph).sin()).sin();
+                    let b = (TAU * cph2 + idx * (TAU * mph2).sin()).sin();
+                    let detune = 1.000_92; // 2^(1.6/1200)
+                    cph += dt / detune;
+                    cph -= cph.floor();
+                    mph += dt / detune;
+                    mph -= mph.floor();
+                    cph2 += dt * detune;
+                    cph2 -= cph2.floor();
+                    mph2 += dt * detune;
+                    mph2 -= mph2.floor();
+                    // Felt-hammer thump: 4 ms of soft noise on the attack.
+                    let thump = if t < 0.004 {
+                        rng.bi() * 0.25 * (1.0 - t / 0.004)
+                    } else {
+                        0.0
+                    };
+                    // Natural decay on top of (gated by) the seq envelope.
+                    (0.5 * (a + b) + thump) * (-t / piano_decay).exp()
                 }
             };
             out[start + i] += s * envb[i] * note.gain;
@@ -1336,6 +1367,32 @@ mod tests {
         let mut other = doc(json);
         other.seed = 10;
         assert_ne!(s, render(&other));
+    }
+
+    #[test]
+    fn piano_bass_rings_longer_than_treble() {
+        let note = |pitch: &str| {
+            let d = doc(&format!(
+                r#"{{ "name": "n", "duration": 2.0, "root": {{ "type": "seq",
+                     "bpm": 60, "steps_per_beat": 1, "wave": "piano",
+                     "env": {{ "a": 0.002, "s": 1.0, "r": 0.1 }},
+                     "notes": [ {{ "step": 0, "len": 2, "pitch": "{pitch}" }} ] }} }}"#
+            ));
+            render(&d)
+        };
+        let tail_ratio = |s: &[f32]| {
+            let q = s.len() / 4;
+            rms(&s[2 * q..3 * q]) / rms(&s[..q]).max(1e-9)
+        };
+        let bass = note("A1");
+        let treble = note("A5");
+        assert!(rms(&bass) > 0.02 && rms(&treble) > 0.005, "both audible");
+        assert!(
+            tail_ratio(&bass) > tail_ratio(&treble) * 1.5,
+            "bass sustains, treble dies: {} vs {}",
+            tail_ratio(&bass),
+            tail_ratio(&treble)
+        );
     }
 
     #[test]

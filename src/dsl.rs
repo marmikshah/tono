@@ -710,6 +710,13 @@ pub enum SeqWave {
     /// burst rings through a tuned feedback loop — guitar, harp, koto. Pitch
     /// is fixed per note (slides are ignored).
     Pluck,
+    /// Acoustic piano model: two detuned FM strings per note with a hammer
+    /// thump, velocity-sensitive brightness, and a natural pitch-dependent
+    /// decay (bass strings ring for seconds, treble dies fast) — no
+    /// parameters to set, play it like a piano. Set the seq env to
+    /// `{a:0.002, s:1, r:0.2}` and let the instrument shape each note;
+    /// `len` works like holding the key (with the pedal, longer).
+    Piano,
 }
 
 /// An ADSR amplitude envelope. One shape, used in three places: the [`Node::Env`]
