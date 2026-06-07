@@ -7,6 +7,8 @@
 
 <p align="center"><strong>A headless sound studio for AI agents — GarageBand-as-API, over MCP.</strong></p>
 
+<p align="center"><a href="https://marmikshah.github.io/sonarium/listen.html"><strong>▶ Listen to everything in your browser</strong></a></p>
+
 <p align="center">
   <img src="docs/river-flows-spectrogram.png" width="640" alt="spectrogram of River Flows in You, 800 notes on the sampled piano">
 </p>
@@ -114,13 +116,19 @@ MIDI), and its phonk remix (cowbell lead, driven 808, lo-fi piano).
 And an **iconic-sounds pack** — recognizable classics rebuilt from scratch,
 with playable renders in [docs/examples/audio/](docs/examples/audio/):
 
-| Recipe | Listen | The trick |
+| Recipe | Play | The trick |
 |---|---|---|
-| [retro-coin](docs/examples/retro-coin.json) | [ogg](docs/examples/audio/retro-coin.ogg) | B5 grace note into a held E6 — the interval *is* the sound |
-| [jump-8bit](docs/examples/jump-8bit.json) | [ogg](docs/examples/audio/jump-8bit.ogg) | exponential square sweep, gone at sustain 0 |
-| [waka](docs/examples/waka.json) | [ogg](docs/examples/audio/waka.ogg) | per-note pitch slides alternating up/down — the chomp drawn into the note list |
-| [nokia-tune](docs/examples/nokia-tune.json) | [ogg](docs/examples/audio/nokia-tune.ogg) | 13 notes of Gran Vals on the Karplus-Strong pluck |
-| [deep-note](docs/examples/deep-note.json) | [ogg](docs/examples/audio/deep-note.ogg) | 8 supersaw mixer tracks gliding from a scattered cluster onto a five-octave D chord |
+| [retro-coin](docs/examples/retro-coin.json) | [▶ mp4](docs/examples/audio/retro-coin.mp4) | B5 grace note into a held E6 — the interval *is* the sound |
+| [jump-8bit](docs/examples/jump-8bit.json) | [▶ mp4](docs/examples/audio/jump-8bit.mp4) | exponential square sweep, gone at sustain 0 |
+| [waka](docs/examples/waka.json) | [▶ mp4](docs/examples/audio/waka.mp4) | per-note pitch slides alternating up/down — the chomp drawn into the note list |
+| [nokia-tune](docs/examples/nokia-tune.json) | [▶ mp4](docs/examples/audio/nokia-tune.mp4) | 13 notes of Gran Vals on the Karplus-Strong pluck |
+| [deep-note](docs/examples/deep-note.json) | [▶ mp4](docs/examples/audio/deep-note.mp4) | 8 supersaw mixer tracks gliding from a scattered cluster onto a five-octave D chord |
+
+The ▶ links play right on GitHub (each mp4 is the sound's spectrogram with
+the audio as its track — click, press play). The
+[listen page](https://marmikshah.github.io/sonarium/listen.html) plays all
+nine showcases inline, including the full piano piece and the phonk remix.
+OGGs sit next to the mp4s for direct use.
 
 ## Works with atelier
 
