@@ -240,6 +240,26 @@ async fn restart_rehydrates_the_library() {
 }
 
 #[tokio::test]
+async fn shipped_example_session_replays_clean() {
+    let (srv, dir) = fresh("example");
+    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/laser_session.jsonl");
+    let res = srv
+        .replay_session(Parameters(ReplaySessionReq {
+            path: example.to_string_lossy().into_owned(),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(res.0.applied, 6);
+    // The session builds a 4-sound library and a 2-member bank.
+    for f in ["laser_zap.wav", "laser_zap_mut.wav", "laser_zap_mut_3.wav"] {
+        assert!(dir.join(f).exists(), "missing {f}");
+    }
+    let banks = srv.list_banks().await;
+    assert_eq!(banks.0.banks[0].id, "blaster_pack");
+    assert_eq!(banks.0.banks[0].members.len(), 2);
+}
+
+#[tokio::test]
 async fn replayed_session_reproduces_audio_byte_for_byte() {
     // Session A: author, surgically edit, mutate (explicit seed), bank it.
     let (a, dir_a) = fresh("replay_a");
