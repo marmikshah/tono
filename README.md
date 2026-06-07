@@ -233,4 +233,5 @@ toolchain is required. CI runs the same fmt + clippy + test gate on pushes to
 
 ## License
 
-MIT
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at
+your option.
