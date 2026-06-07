@@ -44,7 +44,7 @@ clean: ## Remove build artifacts
 	cargo clean
 
 daemon: release ## Install + start the background daemon (launchd / systemd --user)
-	$(BIN) service install --bind $(BIND)
+	$(BIN) service install --bind $(BIND) --workdir $(abspath $(WORKDIR))
 
 daemon-status: ## Show daemon state
 	$(BIN) service status

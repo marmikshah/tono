@@ -72,9 +72,9 @@ Renders and exports land in `SONARIUM_WORKDIR` (default `~/.sonarium/sounds`)
   + a similarity score to converge on a reference.
 - **Reproducible sessions.** Every mutating tool call is journaled to
   `session.jsonl`. `save_session` snapshots it; `replay_session` re-applies a
-  saved journal into a fresh working directory — same calls, same seeds,
-  **byte-identical audio**. A session file is a portable, diffable project
-  file ([example](examples/laser_session.jsonl), replayed in CI).
+  saved journal into a fresh working directory (enforced) — same calls, same
+  seeds, **byte-identical audio**. A session file is a portable, diffable
+  project file ([example](examples/laser_session.jsonl), replayed in CI).
 - **Variations, not presets.** `mutate_sound` nudges parameters;
   `generate_variants` makes N level-matched round-robin takes; `humanize`
   applies one coherent pitch + level shift per take; `morph_sounds`
@@ -183,7 +183,8 @@ make check          # fmt + clippy -D warnings + test  (pre-commit gate)
 ```
 
 Rust 1.88+ (edition 2024). OGG encoding builds vendored libvorbis, so a C
-toolchain is required. CI runs `make check` on every push.
+toolchain is required. CI runs the same fmt + clippy + test gate on pushes to
+`main` and on pull requests.
 
 ## Production notes
 
