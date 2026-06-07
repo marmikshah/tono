@@ -5,7 +5,8 @@
 //! Processors transform the signal flowing through a `chain`.
 
 use crate::dsl::{
-    Adsr, Curve, Modulator, Node, NoiseColor, SeqNote, SeqWave, Shape, SoundDoc, SuperWave, Value,
+    Adsr, Curve, DriveShape, Modulator, Node, NoiseColor, SeqNote, SeqWave, Shape, SoundDoc,
+    SuperWave, Value,
 };
 use crate::dsp::{Rng, peak_limit};
 use std::f32::consts::TAU;
@@ -169,15 +170,399 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
         Node::Chain { stages } => {
             let mut buf: Option<Signal> = None;
             for stage in stages {
-                // Processors land in the next commit; until then every stage
-                // renders standalone (a source/combinator replaces the signal).
-                buf = Some(render_node(stage, n, sr, rng));
+                buf = Some(match (&buf, stage.is_processor()) {
+                    // A processor transforms the running signal.
+                    (Some(input), true) => apply_processor(stage, input, sr),
+                    // A source/combinator as a later stage replaces the signal.
+                    (_, _) => render_node(stage, n, sr, rng),
+                });
             }
             buf.unwrap_or_else(|| vec![0.0; n])
         }
         // A processor rendered standalone (outside a chain) has no input ⇒ silence.
-        _ => vec![0.0; n],
+        _ if node.is_processor() => vec![0.0; n],
+        // Every non-processor variant is matched above; this fires only if a
+        // new source is added to the DSL without a render arm.
+        _ => unreachable!("unhandled source node in render_node"),
     }
+}
+
+/// Apply a processor node to an incoming signal.
+fn apply_processor(node: &Node, input: &[f32], sr: u32) -> Signal {
+    match node {
+        Node::Lowpass { cutoff, q } => biquad(input, cutoff, *q, sr, FilterKind::Low),
+        Node::Highpass { cutoff, q } => biquad(input, cutoff, *q, sr, FilterKind::High),
+        Node::Bandpass { cutoff, q } => biquad(input, cutoff, *q, sr, FilterKind::Band),
+        Node::Notch { cutoff, q } => biquad(input, cutoff, *q, sr, FilterKind::Notch),
+        Node::Peak { cutoff, q, gain_db } => {
+            biquad(input, cutoff, *q, sr, FilterKind::Peak(*gain_db))
+        }
+        Node::Lowshelf { cutoff, gain_db } => {
+            biquad(input, cutoff, 0.707, sr, FilterKind::LowShelf(*gain_db))
+        }
+        Node::Highshelf { cutoff, gain_db } => {
+            biquad(input, cutoff, 0.707, sr, FilterKind::HighShelf(*gain_db))
+        }
+        Node::Gain { amount } => {
+            let g = eval_value(amount, input.len(), sr);
+            input.iter().zip(g).map(|(x, k)| x * k).collect()
+        }
+        Node::Bitcrush { bits } => {
+            let levels = (1u32 << *bits as u32) as f32;
+            let half = levels / 2.0;
+            input
+                .iter()
+                .map(|x| (x.clamp(-1.0, 1.0) * half).round() / half)
+                .collect()
+        }
+        Node::Downsample { factor } => {
+            let f = (*factor).max(1) as usize;
+            let mut out = Vec::with_capacity(input.len());
+            let mut held = 0.0;
+            for (i, &x) in input.iter().enumerate() {
+                if i % f == 0 {
+                    held = x;
+                }
+                out.push(held);
+            }
+            out
+        }
+        Node::Delay { secs, feedback } => {
+            let dn = ((secs * sr as f32) as usize).max(1);
+            let mut buf = vec![0.0f32; dn];
+            let mut w = 0usize;
+            let mut out = Vec::with_capacity(input.len());
+            for &x in input {
+                let delayed = buf[w];
+                let y = x + feedback * delayed;
+                buf[w] = y;
+                w = (w + 1) % dn;
+                out.push(y);
+            }
+            out
+        }
+        Node::Reverb { room, mix } => reverb(input, *room, *mix, sr),
+        Node::Drive { amount, shape } => {
+            let a = eval_value(amount, input.len(), sr);
+            input
+                .iter()
+                .zip(a)
+                .map(|(x, amt)| drive_curve(amt.max(0.0) * x, *shape))
+                .collect()
+        }
+        Node::RingMod { freq } => {
+            let f = eval_value(freq, input.len(), sr);
+            let srf = sr as f32;
+            let mut phase = 0.0f32;
+            let mut out = Vec::with_capacity(input.len());
+            for (i, &x) in input.iter().enumerate() {
+                out.push(x * (TAU * phase).sin());
+                phase += f[i].max(0.0) / srf;
+                phase -= phase.floor();
+            }
+            out
+        }
+        Node::Chorus { rate, depth, mix } => chorus(input, *rate, *depth, *mix, sr),
+        Node::Flanger {
+            rate,
+            depth,
+            feedback,
+            mix,
+        } => flanger(input, *rate, *depth, *feedback, *mix, sr),
+        Node::Phaser {
+            rate,
+            depth,
+            feedback,
+            mix,
+        } => phaser(input, *rate, *depth, *feedback, *mix, sr),
+        Node::Compress {
+            threshold,
+            ratio,
+            attack,
+            release,
+            makeup,
+        } => compress(input, *threshold, *ratio, *attack, *release, *makeup, sr),
+        _ => input.to_vec(),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FilterKind {
+    Low,
+    High,
+    Band,
+    Notch,
+    /// Peaking EQ, gain in dB.
+    Peak(f32),
+    /// Low shelf, gain in dB.
+    LowShelf(f32),
+    /// High shelf, gain in dB.
+    HighShelf(f32),
+}
+
+/// RBJ biquad with per-sample coefficient updates so the cutoff can be
+/// modulated. State carried in Direct Form I. Peaking/shelving kinds carry a
+/// dB gain (`A = 10^(gain/40)`).
+fn biquad(input: &[f32], cutoff: &Value, q: f32, sr: u32, kind: FilterKind) -> Signal {
+    let fc = eval_value(cutoff, input.len(), sr);
+    let srf = sr as f32;
+    let q = q.max(0.05);
+    let nyq = srf / 2.0;
+    let amp = match kind {
+        FilterKind::Peak(g) | FilterKind::LowShelf(g) | FilterKind::HighShelf(g) => {
+            10f32.powf(g / 40.0)
+        }
+        _ => 1.0,
+    };
+    let (mut x1, mut x2, mut y1, mut y2) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    let mut out = Vec::with_capacity(input.len());
+    for (i, &x0) in input.iter().enumerate() {
+        let f = fc[i].clamp(20.0, nyq - 100.0);
+        let w0 = TAU * f / srf;
+        let (sin, cos) = w0.sin_cos();
+        let alpha = sin / (2.0 * q);
+        let (b0, b1, b2, a0, a1, a2) = match kind {
+            FilterKind::Low => (
+                (1.0 - cos) / 2.0,
+                1.0 - cos,
+                (1.0 - cos) / 2.0,
+                1.0 + alpha,
+                -2.0 * cos,
+                1.0 - alpha,
+            ),
+            FilterKind::High => (
+                (1.0 + cos) / 2.0,
+                -(1.0 + cos),
+                (1.0 + cos) / 2.0,
+                1.0 + alpha,
+                -2.0 * cos,
+                1.0 - alpha,
+            ),
+            FilterKind::Band => (alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
+            FilterKind::Notch => (1.0, -2.0 * cos, 1.0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
+            FilterKind::Peak(_) => (
+                1.0 + alpha * amp,
+                -2.0 * cos,
+                1.0 - alpha * amp,
+                1.0 + alpha / amp,
+                -2.0 * cos,
+                1.0 - alpha / amp,
+            ),
+            FilterKind::LowShelf(_) => {
+                let s = 2.0 * amp.sqrt() * alpha;
+                let (ap1, am1) = (amp + 1.0, amp - 1.0);
+                (
+                    amp * (ap1 - am1 * cos + s),
+                    2.0 * amp * (am1 - ap1 * cos),
+                    amp * (ap1 - am1 * cos - s),
+                    ap1 + am1 * cos + s,
+                    -2.0 * (am1 + ap1 * cos),
+                    ap1 + am1 * cos - s,
+                )
+            }
+            FilterKind::HighShelf(_) => {
+                let s = 2.0 * amp.sqrt() * alpha;
+                let (ap1, am1) = (amp + 1.0, amp - 1.0);
+                (
+                    amp * (ap1 + am1 * cos + s),
+                    -2.0 * amp * (am1 + ap1 * cos),
+                    amp * (ap1 + am1 * cos - s),
+                    ap1 - am1 * cos + s,
+                    2.0 * (am1 - ap1 * cos),
+                    ap1 - am1 * cos - s,
+                )
+            }
+        };
+        let y0 = (b0 / a0) * x0 + (b1 / a0) * x1 + (b2 / a0) * x2 - (a1 / a0) * y1 - (a2 / a0) * y2;
+        x2 = x1;
+        x1 = x0;
+        y2 = y1;
+        y1 = y0;
+        out.push(y0);
+    }
+    out
+}
+
+/// Schroeder reverb: parallel feedback combs into series allpasses. Tunings are
+/// the classic Freeverb values, scaled to the sample rate.
+fn reverb(input: &[f32], room: f32, mix: f32, sr: u32) -> Signal {
+    let scale = sr as f32 / 44_100.0;
+    let comb_tunings = [1116, 1188, 1277, 1356, 1422, 1491];
+    let allpass_tunings = [556, 441, 341, 225];
+    let feedback = 0.7 + 0.28 * room.clamp(0.0, 1.0);
+    let damp = 0.2;
+
+    let mut wet = vec![0.0f32; input.len()];
+    // Parallel combs (summed).
+    for &tune in &comb_tunings {
+        let len = ((tune as f32 * scale) as usize).max(1);
+        let mut buf = vec![0.0f32; len];
+        let mut idx = 0usize;
+        let mut filter_store = 0.0f32;
+        for (i, &x) in input.iter().enumerate() {
+            let y = buf[idx];
+            filter_store = y * (1.0 - damp) + filter_store * damp;
+            buf[idx] = x + filter_store * feedback;
+            idx = (idx + 1) % len;
+            wet[i] += y;
+        }
+    }
+    // Series allpasses.
+    for &tune in &allpass_tunings {
+        let len = ((tune as f32 * scale) as usize).max(1);
+        let mut buf = vec![0.0f32; len];
+        let mut idx = 0usize;
+        let g = 0.5;
+        for w in wet.iter_mut() {
+            let buffered = buf[idx];
+            let y = -*w + buffered;
+            buf[idx] = *w + buffered * g;
+            idx = (idx + 1) % len;
+            *w = y;
+        }
+    }
+    let mix = mix.clamp(0.0, 1.0);
+    let comb_norm = 1.0 / comb_tunings.len() as f32;
+    input
+        .iter()
+        .zip(wet)
+        .map(|(dry, w)| dry * (1.0 - mix) + (w * comb_norm) * mix)
+        .collect()
+}
+
+/// Apply a waveshaper curve to a single sample.
+fn drive_curve(x: f32, shape: DriveShape) -> f32 {
+    match shape {
+        DriveShape::Tanh => x.tanh(),
+        DriveShape::Hard => x.clamp(-1.0, 1.0),
+        DriveShape::Fold => {
+            // Reflect anything outside [-1, 1] back inward (wavefolding).
+            let mut y = x;
+            while !(-1.0..=1.0).contains(&y) {
+                if y > 1.0 {
+                    y = 2.0 - y;
+                } else {
+                    y = -2.0 - y;
+                }
+            }
+            y
+        }
+    }
+}
+
+/// Chorus: a single voice of modulated delay mixed with the dry signal.
+fn chorus(input: &[f32], rate: f32, depth: f32, mix: f32, sr: u32) -> Signal {
+    let srf = sr as f32;
+    let base = 0.015 * srf; // ~15 ms centre delay
+    let swing = depth.clamp(0.0, 1.0) * 0.010 * srf; // up to ±10 ms
+    let max_delay = (base + swing) as usize + 2;
+    let mut buf = vec![0.0f32; max_delay];
+    let mut w = 0usize;
+    let mix = mix.clamp(0.0, 1.0);
+    let mut out = Vec::with_capacity(input.len());
+    for (i, &x) in input.iter().enumerate() {
+        buf[w] = x;
+        let lfo = (TAU * rate * i as f32 / srf).sin();
+        let delay = base + swing * lfo;
+        // Fractional read via linear interpolation.
+        let read = w as f32 - delay;
+        let read = read.rem_euclid(max_delay as f32);
+        let i0 = read.floor() as usize % max_delay;
+        let i1 = (i0 + 1) % max_delay;
+        let frac = read - read.floor();
+        let wet = buf[i0] * (1.0 - frac) + buf[i1] * frac;
+        out.push(x * (1.0 - mix) + wet * mix);
+        w = (w + 1) % max_delay;
+    }
+    out
+}
+
+/// Flanger: a 0.5–6 ms swept delay with feedback, mixed against the dry path.
+fn flanger(input: &[f32], rate: f32, depth: f32, feedback: f32, mix: f32, sr: u32) -> Signal {
+    let srf = sr as f32;
+    let base = 0.0025 * srf; // 2.5 ms centre
+    let swing = depth.clamp(0.0, 1.0) * 0.002 * srf; // up to ±2 ms
+    let max_delay = (base + swing) as usize + 2;
+    let mut buf = vec![0.0f32; max_delay];
+    let mut w = 0usize;
+    let fb = feedback.clamp(0.0, 0.95);
+    let mix = mix.clamp(0.0, 1.0);
+    let mut out = Vec::with_capacity(input.len());
+    for (i, &x) in input.iter().enumerate() {
+        let lfo = (TAU * rate * i as f32 / srf).sin();
+        let delay = base + swing * lfo;
+        let read = (w as f32 - delay).rem_euclid(max_delay as f32);
+        let i0 = read.floor() as usize % max_delay;
+        let i1 = (i0 + 1) % max_delay;
+        let frac = read - read.floor();
+        let wet = buf[i0] * (1.0 - frac) + buf[i1] * frac;
+        buf[w] = x + wet * fb;
+        w = (w + 1) % max_delay;
+        out.push(x * (1.0 - mix) + wet * mix);
+    }
+    out
+}
+
+/// Phaser: four first-order all-pass stages with an LFO-swept coefficient and
+/// feedback — swept spectral notches.
+fn phaser(input: &[f32], rate: f32, depth: f32, feedback: f32, mix: f32, sr: u32) -> Signal {
+    let srf = sr as f32;
+    let fb = feedback.clamp(0.0, 0.95);
+    let mix = mix.clamp(0.0, 1.0);
+    let depth = depth.clamp(0.0, 1.0);
+    let mut x1 = [0.0f32; 4];
+    let mut y1 = [0.0f32; 4];
+    let mut last_wet = 0.0f32;
+    let mut out = Vec::with_capacity(input.len());
+    for (i, &x) in input.iter().enumerate() {
+        // Sweep the all-pass coefficient between ~0.15 and ~0.85.
+        let lfo = 0.5 + 0.5 * (TAU * rate * i as f32 / srf).sin();
+        let g = 0.15 + 0.7 * depth * lfo;
+        let mut s = x + last_wet * fb;
+        for k in 0..4 {
+            let y = -g * s + x1[k] + g * y1[k];
+            x1[k] = s;
+            y1[k] = y;
+            s = y;
+        }
+        last_wet = s;
+        out.push(x * (1.0 - mix) + s * mix);
+    }
+    out
+}
+
+/// Feed-forward compressor with a peak-detector envelope follower.
+fn compress(
+    input: &[f32],
+    threshold_db: f32,
+    ratio: f32,
+    attack: f32,
+    release: f32,
+    makeup_db: f32,
+    sr: u32,
+) -> Signal {
+    let srf = sr as f32;
+    let at = (-1.0 / (attack.max(1e-4) * srf)).exp();
+    let rt = (-1.0 / (release.max(1e-4) * srf)).exp();
+    let makeup = 10f32.powf(makeup_db / 20.0);
+    let ratio = ratio.max(1.0);
+    let mut env = 0.0f32; // envelope in linear amplitude
+    let mut out = Vec::with_capacity(input.len());
+    for &x in input {
+        let rect = x.abs();
+        // Attack when rising, release when falling.
+        let coeff = if rect > env { at } else { rt };
+        env = rect + coeff * (env - rect);
+        let env_db = 20.0 * env.max(1e-9).log10();
+        let gain_db = if env_db > threshold_db {
+            -(env_db - threshold_db) * (1.0 - 1.0 / ratio)
+        } else {
+            0.0
+        };
+        let g = 10f32.powf(gain_db / 20.0);
+        out.push(x * g * makeup);
+    }
+    out
 }
 
 /// Drive a phase accumulator at a (possibly modulated) frequency and map each
@@ -518,6 +903,102 @@ mod tests {
         let post = rms(&s[(0.26 * 44_100.0) as usize..(0.35 * 44_100.0) as usize]);
         assert!(pre < 1e-4, "before the note: silence, rms {pre}");
         assert!(post > 0.05, "during the note: audible, rms {post}");
+    }
+
+    /// Brightness proxy: energy of the first difference relative to the
+    /// signal (high-frequency content differentiates to larger steps).
+    fn brightness(s: &[f32]) -> f32 {
+        let diff: f32 = s.windows(2).map(|w| (w[1] - w[0]).powi(2)).sum();
+        let total: f32 = s.iter().map(|x| x * x).sum();
+        diff / total.max(1e-12)
+    }
+
+    #[test]
+    fn lowpass_darkens_highpass_brightens() {
+        let noise = r#"{ "type": "noise" }"#;
+        let plain = doc(&format!(
+            r#"{{ "name": "n", "duration": 0.2, "root": {noise} }}"#
+        ));
+        let lp = doc(&format!(
+            r#"{{ "name": "n", "duration": 0.2, "root": {{ "type": "chain", "stages": [
+                {noise}, {{ "type": "lowpass", "cutoff": 500 }} ] }} }}"#
+        ));
+        let hp = doc(&format!(
+            r#"{{ "name": "n", "duration": 0.2, "root": {{ "type": "chain", "stages": [
+                {noise}, {{ "type": "highpass", "cutoff": 5000 }} ] }} }}"#
+        ));
+        let b_plain = brightness(&render(&plain));
+        assert!(brightness(&render(&lp)) < b_plain * 0.5, "lowpass darkens");
+        assert!(
+            brightness(&render(&hp)) > b_plain * 1.1,
+            "highpass brightens"
+        );
+    }
+
+    #[test]
+    fn chain_processors_transform_in_series() {
+        // sine → gain 0.25: the processor scales the running signal.
+        let d = doc(
+            r#"{ "name": "n", "duration": 0.05, "root": { "type": "chain", "stages": [
+                { "type": "sine", "freq": 440 },
+                { "type": "gain", "amount": 0.25 }
+            ] } }"#,
+        );
+        let s = render(&d);
+        let peak = s.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+        assert!((peak - 0.25).abs() < 0.01);
+    }
+
+    #[test]
+    fn bitcrush_quantizes_amplitude() {
+        // The gain stage keeps the crushed peak under the output ceiling so the
+        // safety limit stays out of the way and the levels survive untouched.
+        let d = doc(
+            r#"{ "name": "n", "duration": 0.05, "root": { "type": "chain", "stages": [
+                { "type": "sine", "freq": 100 },
+                { "type": "gain", "amount": 0.5 },
+                { "type": "bitcrush", "bits": 2 }
+            ] } }"#,
+        );
+        let s = render(&d);
+        // 2 bits ⇒ amplitudes land on multiples of 0.5.
+        for x in &s {
+            let nearest = (x / 0.5).round() * 0.5;
+            assert!((x - nearest).abs() < 1e-4, "{x} not on a 2-bit level");
+        }
+    }
+
+    #[test]
+    fn drive_hard_clips_to_unit_range() {
+        let d = doc(
+            r#"{ "name": "n", "duration": 0.05, "root": { "type": "chain", "stages": [
+                { "type": "sine", "freq": 440 },
+                { "type": "drive", "amount": 10, "shape": "hard" }
+            ] } }"#,
+        );
+        // Heavy drive into a hard clip ⇒ near-square at the ceiling.
+        let s = render(&d);
+        let clipped = s.iter().filter(|x| x.abs() > 0.95).count();
+        assert!(clipped > s.len() / 2);
+    }
+
+    #[test]
+    fn compressor_attenuates_above_threshold() {
+        // A 0 dBFS sine through threshold −20 dB, ratio 4:1 settles at a steady
+        // gain of −(0 − (−20))·(1 − 1/4) = −15 dB.
+        let wet = doc(
+            r#"{ "name": "n", "duration": 0.3, "root": { "type": "chain", "stages": [
+                { "type": "sine", "freq": 440 },
+                { "type": "compress", "threshold": -20, "ratio": 4 }
+            ] } }"#,
+        );
+        let dry =
+            doc(r#"{ "name": "n", "duration": 0.3, "root": { "type": "sine", "freq": 440 } }"#);
+        // Skip the attack transient, measure the settled tail.
+        let tail = |s: Vec<f32>| rms(&s[s.len() / 2..]);
+        let ratio = tail(render(&wet)) / tail(render(&dry));
+        let db = 20.0 * ratio.log10();
+        assert!((db + 15.0).abs() < 2.0, "expected ≈ −15 dB, got {db:.1} dB");
     }
 
     #[test]
