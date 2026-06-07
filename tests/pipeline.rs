@@ -294,14 +294,17 @@ async fn band_demo_session_replays_with_four_instruments() {
     .await
     .unwrap();
     let g = graph_json(&srv, "band_demo").await;
-    let waves: Vec<&str> = g["root"]["stages"][0]["inputs"]
-        .as_array()
-        .unwrap()
+    // The band sits on the mixing console: four panned tracks + a master bus.
+    let tracks = g["root"]["tracks"].as_array().unwrap();
+    let waves: Vec<&str> = tracks
         .iter()
-        .map(|l| l["wave"].as_str().unwrap())
+        .map(|t| t["node"]["wave"].as_str().unwrap())
         .collect();
     assert_eq!(waves, vec!["kit", "bass", "epiano", "strings"]);
-    assert!(dir.join("band_demo.wav").exists());
+    assert!(g["root"]["master"].as_array().unwrap().len() == 2);
+    // A mixer document writes a true stereo file.
+    let reader = hound::WavReader::open(dir.join("band_demo.wav")).unwrap();
+    assert_eq!(reader.spec().channels, 2);
 }
 
 #[tokio::test]

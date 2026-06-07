@@ -197,8 +197,9 @@ turns any MIDI file into `seq` notes (tempo-map-aware, pedal-aware), so real
 scores can drive Sonarium.
 
 [`examples/band_demo.jsonl`](examples/band_demo.jsonl) is the instrument set
-playing together: drum kit + bass + e-piano comping + string pad over an
-Am–F–C–G groove, mixed through a compressor and reverb — a band from one
+on the **mixing console**: drum kit + bass + e-piano + string pad over an
+Am–F–C–G groove, each on its own panned track, glued by a master-bus
+compressor and stereo-spread reverb — a true stereo production from one
 `author_sound` call.
 
 [`examples/river_phonk.jsonl`](examples/river_phonk.jsonl) is the remix
