@@ -19,5 +19,6 @@ pub mod engines;
 pub mod journal;
 pub mod render;
 pub mod resources;
+pub mod server;
 pub mod session;
 pub mod vary;

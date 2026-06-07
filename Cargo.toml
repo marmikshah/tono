@@ -12,11 +12,15 @@ categories = ["multimedia::audio", "game-development"]
 
 [dependencies]
 anyhow = "1.0.102"
+base64 = "0.22.1"
 flacenc = { version = "0.4", default-features = false }
 hound = "3.5.1"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+rmcp = { version = "1.7.0", features = ["server", "transport-io", "transport-streamable-http-server"] }
 rustfft = "6.4.1"
 schemars = "1.2.1"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "io-std", "sync", "net"] }
+tracing = "0.1.44"
 vorbis_rs = "0.5.5"

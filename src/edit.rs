@@ -71,8 +71,9 @@ fn nav_mut<'a>(root: &'a mut Json, segs: &[Seg]) -> Result<&'a mut Json, String>
     Ok(cur)
 }
 
-/// A single edit operation, externally tagged by `op`.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+/// A single edit operation, externally tagged by `op`. (`Serialize` so the
+/// session journal can record edit calls verbatim.)
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum EditOp {
     /// Set the JSON value at `path`. Works for a numeric parameter
