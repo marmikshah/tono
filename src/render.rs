@@ -323,6 +323,8 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
             fm_index,
             fm_strike,
             pluck_decay,
+            swing,
+            humanize,
             env,
             notes,
         } => {
@@ -333,6 +335,8 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
                 fm_index: *fm_index,
                 fm_strike: *fm_strike,
                 pluck_decay: *pluck_decay,
+                swing: *swing,
+                humanize: *humanize,
                 env,
             };
             render_seq(*bpm, *steps_per_beat, &voice, notes, n, sr, rng)
@@ -939,6 +943,8 @@ struct SeqVoice<'a> {
     fm_index: f32,
     fm_strike: f32,
     pluck_decay: f32,
+    swing: f32,
+    humanize: f32,
     env: &'a Adsr,
 }
 
@@ -958,7 +964,26 @@ fn render_seq(
     let step_dur = srf * 60.0 / bpm / steps_per_beat.max(1) as f32; // samples per step
     let mut out = vec![0.0f32; n];
     for note in notes {
-        let start = (note.step as f32 * step_dur) as usize;
+        // Groove: swing delays every off-beat (odd) step by a fraction of a
+        // step; humanize adds a deterministic per-note timing push/pull and
+        // velocity wobble so repeats stop sounding machine-perfect.
+        let swing_delay = if note.step % 2 == 1 {
+            voice.swing * 0.5 * step_dur
+        } else {
+            0.0
+        };
+        let (human_delay, gain) = if voice.humanize > 0.0 {
+            // Seed from the note's identity so the jitter is stable per note.
+            let mut hr = Rng::new((note.step as u64) << 32 ^ (note.len as u64) << 8 ^ 0x6A09_E667);
+            (
+                voice.humanize * 0.12 * step_dur * hr.bi(),
+                note.gain * (1.0 + voice.humanize * 0.15 * hr.bi()),
+            )
+        } else {
+            (0.0, note.gain)
+        };
+        let gain = gain.clamp(0.0, 1.0);
+        let start = (note.step as f32 * step_dur + swing_delay + human_delay).max(0.0) as usize;
         if start >= n {
             continue;
         }
@@ -972,7 +997,7 @@ fn render_seq(
         let d = eval_value(voice.duty, len, sr);
         let sig = seq_note_signal(voice, note, &f[..avail], &d[..avail], sr, rng);
         for (i, s) in sig.into_iter().enumerate() {
-            out[start + i] += s * envb[i] * note.gain;
+            out[start + i] += s * envb[i] * gain;
         }
     }
     out
@@ -1650,6 +1675,39 @@ mod tests {
             brightness(&b) < brightness(&saw) * 0.5,
             "bass is filtered dark"
         );
+    }
+
+    #[test]
+    fn swing_delays_offbeats_and_humanize_jitters_deterministically() {
+        let beat = |extra: &str| {
+            let d = doc(&format!(
+                r#"{{ "name": "n", "duration": 1.0, "root": {{ "type": "seq",
+                     "bpm": 120, "steps_per_beat": 2, "wave": "sine"{extra},
+                     "env": {{ "d": 0.05 }},
+                     "notes": [ {{ "step": 0, "len": 1, "pitch": 880 }},
+                                {{ "step": 1, "len": 1, "pitch": 880 }} ] }} }}"#
+            ));
+            render(&d)
+        };
+        let onset =
+            |s: &[f32], from: usize| from + s[from..].iter().position(|x| x.abs() > 0.05).unwrap();
+        let straight = beat("");
+        let swung = beat(r#", "swing": 0.6"#);
+        // Step 1 (the off-beat, at 0.25 s) lands later when swung; step 0 doesn't.
+        let half = 44_100 / 5; // search after 0.2 s
+        assert_eq!(onset(&straight, 0), onset(&swung, 0));
+        let (a, b) = (onset(&straight, half), onset(&swung, half));
+        let expected = (0.6 * 0.5 * 0.25 * 44_100.0) as usize; // swing*half*step
+        assert!(
+            (b - a) as i64 - expected as i64 <= 2,
+            "off-beat delayed by ~{expected}, got {}",
+            b - a
+        );
+        // Humanize changes timing/level but is deterministic.
+        let h1 = beat(r#", "humanize": 0.3"#);
+        let h2 = beat(r#", "humanize": 0.3"#);
+        assert_eq!(h1, h2);
+        assert_ne!(h1, straight);
     }
 
     #[test]

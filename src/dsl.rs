@@ -443,6 +443,16 @@ pub enum Node {
         /// longer; low notes naturally ring longer than high ones).
         #[serde(default = "default_pluck_decay")]
         pluck_decay: f32,
+        /// Swing, 0..1: every off-beat grid step is delayed by this fraction
+        /// of a step (0 = straight, ~0.55 = classic shuffle). Off-beats are
+        /// odd steps, so set `steps_per_beat` to the swung subdivision.
+        #[serde(default)]
+        swing: f32,
+        /// Humanize, 0..1: deterministic per-note timing and velocity jitter
+        /// (from the doc's seed) so repeats stop sounding machine-perfect.
+        /// 0.1–0.25 is a tasteful player; 1 is sloppy.
+        #[serde(default)]
+        humanize: f32,
         /// Per-note amplitude envelope.
         env: Adsr,
         /// The notes to play.
@@ -983,6 +993,8 @@ fn validate_node(node: &Node) -> Result<(), String> {
             fm_index,
             fm_strike,
             pluck_decay,
+            swing,
+            humanize,
             env,
             notes,
             ..
@@ -1011,6 +1023,8 @@ fn validate_node(node: &Node) -> Result<(), String> {
                     "seq.pluck_decay must be in [0.8, 1), got {pluck_decay}"
                 ));
             }
+            in_unit("seq.swing", *swing)?;
+            in_unit("seq.humanize", *humanize)?;
             env.validate("seq.env")?;
             for note in notes {
                 if note.len < 1 {
