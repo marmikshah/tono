@@ -9,16 +9,15 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Current DSL schema version. Stored on every doc so old graphs stay loadable
-/// as the vocabulary evolves.
-pub const SCHEMA_VERSION: u32 = 1;
+/// as the vocabulary evolves. Version 2 gives every mixer track its own
+/// deterministic RNG stream (v1 threads one stream through the track list in
+/// order, so editing one track shifts the noise content of its siblings).
+pub const SCHEMA_VERSION: u32 = 2;
 
 // Serde `default = "..."` requires free functions. Values with non-obvious
 // origins: q 0.707 is Butterworth (maximally flat), haas 12 ms sits in the
 // precedence-effect sweet spot, ceiling −1 dBTP is the common streaming-safe
 // true-peak ceiling.
-fn default_version() -> u32 {
-    SCHEMA_VERSION
-}
 fn default_sample_rate() -> u32 {
     44_100
 }
@@ -121,9 +120,12 @@ pub struct SoundDoc {
     /// Seed for any stochastic node (noise). Same seed ⇒ identical audio.
     #[serde(default)]
     pub seed: u64,
-    /// DSL schema version. Defaults to the current version.
-    #[serde(default = "default_version")]
-    pub version: u32,
+    /// DSL schema version. Omitted ⇒ 1, the semantics documents were authored
+    /// under before versioning mattered; the authoring tools stamp new
+    /// documents with the current [`SCHEMA_VERSION`]. Documents from a newer
+    /// sonarium are rejected by `validate` instead of silently misrendered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
     /// Optional stereo treatment applied to the final mono render. Defaults to
     /// mono (game SFX are usually authored mono and spatialised by the engine;
     /// use stereo for BGM, ambience, and UI stingers).
@@ -834,6 +836,13 @@ pub struct Adsr {
 /// One mixer channel in a [`Node::Tracks`] root.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Track {
+    /// Stable layer id — a short slug like `"kick"` or `"tail"`, unique within
+    /// the document. This is how `add_layer` / `set_layer` / `set_param`
+    /// address the track, so it never shifts when sibling layers are added or
+    /// removed (unlike an array index). Omitted ids are backfilled
+    /// deterministically (`layer_<position>`) on the next build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     /// The track's signal graph (usually a `seq` or a `chain`).
     pub node: Node,
     /// Stereo position, −1 (hard left) .. 1 (hard right). Equal-power law.
@@ -842,6 +851,16 @@ pub struct Track {
     /// Channel fader, 0..2 (1 = unity).
     #[serde(default = "default_gain")]
     pub gain: f32,
+    /// Start offset in seconds: the rendered layer is shifted this far right
+    /// on the bus (the transient + body + tail recipe). The render keeps its
+    /// full length and the shifted tail is truncated at the document edge.
+    #[serde(default)]
+    pub at: f32,
+    /// Muted layers stay in the document but are left off the bus. This is
+    /// rendered state, not a monitoring convenience — exports ship without
+    /// muted layers.
+    #[serde(default)]
+    pub mute: bool,
 }
 
 /// One note in a [`Node::Seq`].
@@ -903,9 +922,48 @@ impl Adsr {
 }
 
 impl SoundDoc {
+    /// The schema version this document's render semantics follow (omitted ⇒ 1).
+    pub fn effective_version(&self) -> u32 {
+        self.version.unwrap_or(1)
+    }
+
+    /// Backfill missing track ids deterministically (`layer_<position>`,
+    /// suffixed on collision with explicit ids). Runs at the build chokepoint
+    /// so every persisted mixer document carries addressable layers; the rule
+    /// is positional, so replaying a journal mints identical ids. Returns true
+    /// if anything changed.
+    pub fn ensure_track_ids(&mut self) -> bool {
+        let Node::Tracks { tracks, .. } = &mut self.root else {
+            return false;
+        };
+        let used: std::collections::HashSet<String> =
+            tracks.iter().filter_map(|t| t.id.clone()).collect();
+        let mut changed = false;
+        for (i, t) in tracks.iter_mut().enumerate() {
+            if t.id.is_none() {
+                let mut id = format!("layer_{i}");
+                let mut n = 2;
+                while used.contains(&id) {
+                    id = format!("layer_{i}_{n}");
+                    n += 1;
+                }
+                t.id = Some(id);
+                changed = true;
+            }
+        }
+        changed
+    }
+
     /// Validate ranges and structure beyond what serde already enforces.
     /// Returns a human-readable message the agent can act on.
     pub fn validate(&self) -> Result<(), String> {
+        let v = self.effective_version();
+        if v == 0 || v > SCHEMA_VERSION {
+            return Err(format!(
+                "version must be in [1, {SCHEMA_VERSION}], got {v} — a document from a newer \
+                 sonarium cannot render correctly here; upgrade sonarium"
+            ));
+        }
         // 600 s covers full songs; the cap exists only to bound render memory.
         if !(self.duration > 0.0 && self.duration <= 600.0) {
             return Err(format!(
@@ -980,14 +1038,74 @@ impl SoundDoc {
             if tracks.is_empty() {
                 return Err("tracks must be non-empty".into());
             }
+            // A mixer document builds its stereo image from per-layer pan; a
+            // doc-level Haas/Wide treatment would be silently dropped by the
+            // renderer. v1 documents keep the historical silent-ignore so old
+            // libraries still load.
+            if self.effective_version() >= 2 && !matches!(self.stereo, Stereo::Mono) {
+                return Err(
+                    "a tracks document builds its stereo image from per-layer pan — remove the \
+                     doc-level stereo treatment (set stereo mode 'mono') and pan the layers \
+                     instead"
+                        .into(),
+                );
+            }
+            let mut seen_ids = std::collections::HashSet::new();
+            let mut seen_streams = std::collections::HashMap::new();
             for (i, t) in tracks.iter().enumerate() {
+                // Errors name the layer by id when it has one — that is the
+                // address the agent used.
+                let who = match &t.id {
+                    Some(id) => format!("layer '{id}'"),
+                    None => format!("tracks[{i}]"),
+                };
+                if let Some(id) = &t.id {
+                    if id.is_empty()
+                        || !id
+                            .chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                    {
+                        return Err(format!(
+                            "{who}: layer ids are short slugs (a-z, 0-9, _), got '{id}'"
+                        ));
+                    }
+                    if id == "master" {
+                        return Err(
+                            "'master' is reserved for the master chain; pick another layer id"
+                                .into(),
+                        );
+                    }
+                    if !seen_ids.insert(id.clone()) {
+                        return Err(format!("duplicate layer id '{id}' — ids must be unique"));
+                    }
+                    // Stream keys must be collision-free or two layers would
+                    // silently share one noise stream (and u64::MAX is the
+                    // master bus's stream).
+                    let key = crate::dsp::layer_stream_key(id);
+                    if key == u64::MAX {
+                        return Err(format!(
+                            "{who}: this id collides with the master bus's RNG stream — rename \
+                             the layer"
+                        ));
+                    }
+                    if let Some(other) = seen_streams.insert(key, id.clone()) {
+                        return Err(format!(
+                            "layer ids '{other}' and '{id}' hash to the same RNG stream — \
+                             rename one of them"
+                        ));
+                    }
+                }
                 if !(-1.0..=1.0).contains(&t.pan) {
-                    return Err(format!("tracks[{i}].pan must be in [-1, 1], got {}", t.pan));
+                    return Err(format!("{who}: pan must be in [-1, 1], got {}", t.pan));
                 }
                 if !(0.0..=2.0).contains(&t.gain) {
+                    return Err(format!("{who}: gain must be in [0, 2], got {}", t.gain));
+                }
+                if !(0.0..self.duration).contains(&t.at) {
                     return Err(format!(
-                        "tracks[{i}].gain must be in [0, 2], got {}",
-                        t.gain
+                        "{who}: at must be in [0, duration {}), got {} — the layer would be \
+                         entirely outside the render window",
+                        self.duration, t.at
                     ));
                 }
                 if contains_tracks(&t.node) {
@@ -1316,9 +1434,42 @@ mod tests {
                 .unwrap();
         assert_eq!(doc.duration, 0.3);
         assert_eq!(doc.sample_rate, 44_100);
-        assert_eq!(doc.version, SCHEMA_VERSION);
+        // Version-less documents keep the pre-versioning (v1) render semantics.
+        assert_eq!(doc.version, None);
+        assert_eq!(doc.effective_version(), 1);
         assert!(matches!(doc.stereo, Stereo::Mono));
         assert!(matches!(doc.playback, Playback::OneShot));
+    }
+
+    #[test]
+    fn v2_tracks_reject_doc_level_stereo() {
+        let mut doc: SoundDoc = serde_json::from_str(
+            r#"{ "name": "band", "duration": 0.2, "version": 2,
+                "stereo": { "mode": "wide" },
+                "root": { "type": "tracks",
+                  "tracks": [ { "id": "a", "node": { "type": "sine", "freq": 220 } } ] } }"#,
+        )
+        .unwrap();
+        let err = doc.validate().unwrap_err();
+        assert!(err.contains("per-layer pan"), "{err}");
+        // v1 documents keep the historical silent-ignore so old libraries load.
+        doc.version = None;
+        assert_eq!(doc.validate(), Ok(()));
+    }
+
+    #[test]
+    fn future_schema_versions_are_rejected() {
+        let mut doc: SoundDoc =
+            serde_json::from_str(r#"{ "name": "beep", "root": { "type": "sine", "freq": 440 } }"#)
+                .unwrap();
+        assert_eq!(doc.validate(), Ok(()));
+        doc.version = Some(SCHEMA_VERSION);
+        assert_eq!(doc.validate(), Ok(()));
+        doc.version = Some(SCHEMA_VERSION + 1);
+        let err = doc.validate().unwrap_err();
+        assert!(err.contains("upgrade sonarium"), "unhelpful error: {err}");
+        doc.version = Some(0);
+        assert!(doc.validate().is_err());
     }
 
     #[test]

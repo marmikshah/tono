@@ -44,6 +44,11 @@ pub struct Analysis {
     pub head_silence_ms: f32,
     /// Trailing near-silence in ms after the sound ends (trim candidate).
     pub tail_silence_ms: f32,
+    /// Per-layer contribution stats for mixer documents (post-fader,
+    /// pre-master — a master compressor/reverb reshapes the bus after these
+    /// are measured). Empty for plain documents.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<crate::render::LayerStats>,
     /// Filesystem path to the rendered spectrogram PNG.
     pub spectrogram_png_path: String,
     /// Filesystem path to the rendered waveform / amplitude-envelope PNG (so the
@@ -93,6 +98,7 @@ pub fn analyze(samples: &[f32], sample_rate: u32, png_path: &Path) -> anyhow::Re
         onset_count: t.onsets,
         head_silence_ms: t.head_ms,
         tail_silence_ms: t.tail_ms,
+        layers: Vec::new(), // filled by the caller for mixer documents
         spectrogram_png_path: png_path.to_string_lossy().into_owned(),
         waveform_png_path: wave_path.to_string_lossy().into_owned(),
     })

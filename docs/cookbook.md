@@ -272,6 +272,35 @@ A sound persists across restarts and has a stable slug id (from its name, e.g.
    `stages` or a `mix`/`mul`'s `inputs`) · `remove{path,index?}`. Prefer these
    over `refine_sound` (whole-graph replace) for surgical changes.
 
+## Building sounds in layers
+
+Pro SFX are stacks: a transient (the click that says "now"), a body (the
+identity), a tail (the space). Build them as **layers** — each one a mixer
+track with a stable id you address directly:
+
+1. `author_sound` with the FIRST layer's graph (the body, usually).
+2. `add_layer { id, layer: "crack", node: {...}, at: 0.0 }` for each next
+   component — `at` places it in time (a tail layer 20 ms late, a pre-click
+   5 ms early relative to a body at `at: 0.005`).
+3. Balance with the per-layer feedback every render returns
+   (`crack 38% • peak −8.1 dBFS | body 52% … | tail 10%`):
+   `set_layer { id, layer: "tail", gain: 0.4 }`.
+4. Edit inside a layer with layer-relative paths:
+   `set_param { id, layer: "crack", path: "env.d", value: 0.03 }`.
+
+**One layer per thing you'd fade, pan, time-shift, or analyze separately** —
+an instrument in a song, a component in an SFX. Use `mix` only for sub-signals
+that share one envelope/filter; never one layer holding a mix of seqs (it
+makes the per-layer feedback useless). The first `add_layer` on a plain sound
+wraps the existing graph as a layer named after the sound — level-compensated
+and announced, nothing changes audibly.
+
+Layers are independent by construction: each has its own deterministic RNG
+stream keyed by its id, so muting, removing, duplicating, or editing one layer
+never changes a sibling's noise grains. `mute` is rendered state (exports ship
+without muted layers); `layer_ops {op:"duplicate"}` is a built-in variation —
+the copy re-grains its noise deterministically from the new id.
+
 ## Level-matched, click-safe output
 
 Add a top-level `normalize` to gain-match to a loudness target and brick-wall
