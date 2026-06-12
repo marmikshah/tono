@@ -335,12 +335,31 @@ async fn river_phonk_remix_session_replays() {
     .unwrap();
     let g = graph_json(&srv, "river_phonk").await;
     let layers = g["root"]["stages"][0]["inputs"].as_array().unwrap();
-    // The cowbell lead and the driven-808 chain are both present.
-    let has_cowbell = layers.iter().any(|l| l["wave"] == "cowbell");
-    let has_808 = layers
+    // The driven-808 chain is present and ducks under the kick.
+    let bass = layers
         .iter()
-        .any(|l| l["type"] == "chain" && l["stages"][1]["type"] == "drive");
-    assert!(has_cowbell && has_808);
+        .find(|l| l["type"] == "chain" && l["stages"][1]["type"] == "drive")
+        .expect("driven 808 chain");
+    assert_eq!(
+        bass["stages"].as_array().unwrap().last().unwrap()["type"],
+        "duck"
+    );
+    // The cowbell lead lives in the melodic branch, behind the shared
+    // reverb + kick-keyed duck (the phonk pump); the sub stays dry.
+    let melodics = layers
+        .iter()
+        .find(|l| l["stages"][0]["type"] == "mix")
+        .expect("melodic branch");
+    let stages = melodics["stages"].as_array().unwrap();
+    assert!(
+        stages[0]["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n["wave"] == "cowbell")
+    );
+    assert_eq!(stages[1]["type"], "reverb");
+    assert_eq!(stages[2]["type"], "duck");
     assert!(dir.join("river_phonk.wav").exists());
 }
 
