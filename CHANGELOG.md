@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.1.0 — 2026-06-12
+
+Compositional authoring: a sound is now a document you build up in named,
+addressable layers, each rendered on its own deterministic stream. Backward
+compatible — v1 documents omit the version field, keep their original render
+semantics, and replay byte-for-byte.
+
+### Layered authoring
+- **Stable layer ids**: every track carries a unique, validated slug id, an
+  `at` start offset (applied post-render, so RNG consumption never depends on
+  placement), and persisted `mute`. Ids are backfilled deterministically at the
+  build chokepoint, so replays mint the same ids.
+- **Schema v2 per-layer RNG streams**: each track and the master bus gets its
+  own deterministic noise stream keyed by layer id — adding, removing, or muting
+  one layer never re-grains a sibling. v1 docs keep the threaded stream.
+- New tools — **`add_layer`** (the compositional flow: the first call wraps a
+  plain root as a level-compensated layer named after the sound; duplicates
+  rejected with the layer listing), **`set_layer`** (mixer fields), **`layer_ops`**
+  (remove/duplicate). `set_param` / `edit_sound` take a `layer` arg with
+  node-relative paths; `describe_sound` emits per-layer tables with
+  ready-to-paste layer-relative paths and a row for every seq note.
+- **Per-layer contribution stats**: each render captures every layer's
+  post-fader pre-master peak / RMS / energy share from the same pass and prints
+  a compact per-layer balance line (muted layers flagged); the stats persist on
+  `Analysis`. `morph_sounds` unifies layer identity positionally, so
+  independently-minted ids no longer block morphs between same-shaped documents.
+
+### Performance & history
+- **Single-pass render**: mixer documents were fully rendered twice per
+  build/export (stereo for the WAV, mid for analysis). `render_product()` now
+  yields both from one pass; build/export/pack/rehydrate and `make_loop` reuse it.
+- Undo history deepens **20 → 100** — compositional editing burns revisions fast
+  and graphs are small JSON.
+
+### Fixes
+- Mutating tools now build **before** checkpointing, so a rejected graph leaves
+  history, redo, and the journal untouched (a failed call used to push a no-op
+  revision, wipe redo, and desync replay).
+- Replay no longer stamps the current schema version onto version-less journaled
+  steps; `rehydrate` backfills track ids and per-layer stats so pre-layering
+  mixer docs survive a restart; `humanize` trims the master chain on Tracks roots
+  instead of wrapping the root (which validation rejected on every multi-track
+  sound). Closes 18 issues from an adversarial branch review.
+
+### Skill & showcases
+- Ship a **sound-designer** project skill: the listen-and-fix loop, how to read
+  every analysis metric and both feedback images, per-archetype numeric targets,
+  symptom-to-fix recipes, the layered workflow, and the ship checklist.
+- Three loop-ready game-BGM showcases composed on the console with it —
+  **evening-glade** (soft BGM), **iron-gauntlet** (boss battle), **sunny-steps**
+  (idle platformer) — replace the phonk remix; both River showcases and the
+  retro-coin / jump-8bit SFX got a polish pass. Eleven examples, all replayed in
+  CI with playable renders.
+
 ## 1.0.0 — 2026-06-07
 
 First release. A headless sound studio for AI agents, driven over MCP.
