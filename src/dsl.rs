@@ -836,6 +836,13 @@ pub struct Adsr {
 /// One mixer channel in a [`Node::Tracks`] root.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Track {
+    /// Stable layer id — a short slug like `"kick"` or `"tail"`, unique within
+    /// the document. This is how `add_layer` / `set_layer` / `set_param`
+    /// address the track, so it never shifts when sibling layers are added or
+    /// removed (unlike an array index). Omitted ids are backfilled
+    /// deterministically (`layer_<position>`) on the next build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     /// The track's signal graph (usually a `seq` or a `chain`).
     pub node: Node,
     /// Stereo position, −1 (hard left) .. 1 (hard right). Equal-power law.
@@ -844,6 +851,16 @@ pub struct Track {
     /// Channel fader, 0..2 (1 = unity).
     #[serde(default = "default_gain")]
     pub gain: f32,
+    /// Start offset in seconds: the rendered layer is shifted this far right
+    /// on the bus (the transient + body + tail recipe). The render keeps its
+    /// full length and the shifted tail is truncated at the document edge.
+    #[serde(default)]
+    pub at: f32,
+    /// Muted layers stay in the document but are left off the bus. This is
+    /// rendered state, not a monitoring convenience — exports ship without
+    /// muted layers.
+    #[serde(default)]
+    pub mute: bool,
 }
 
 /// One note in a [`Node::Seq`].
@@ -908,6 +925,33 @@ impl SoundDoc {
     /// The schema version this document's render semantics follow (omitted ⇒ 1).
     pub fn effective_version(&self) -> u32 {
         self.version.unwrap_or(1)
+    }
+
+    /// Backfill missing track ids deterministically (`layer_<position>`,
+    /// suffixed on collision with explicit ids). Runs at the build chokepoint
+    /// so every persisted mixer document carries addressable layers; the rule
+    /// is positional, so replaying a journal mints identical ids. Returns true
+    /// if anything changed.
+    pub fn ensure_track_ids(&mut self) -> bool {
+        let Node::Tracks { tracks, .. } = &mut self.root else {
+            return false;
+        };
+        let used: std::collections::HashSet<String> =
+            tracks.iter().filter_map(|t| t.id.clone()).collect();
+        let mut changed = false;
+        for (i, t) in tracks.iter_mut().enumerate() {
+            if t.id.is_none() {
+                let mut id = format!("layer_{i}");
+                let mut n = 2;
+                while used.contains(&id) {
+                    id = format!("layer_{i}_{n}");
+                    n += 1;
+                }
+                t.id = Some(id);
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// Validate ranges and structure beyond what serde already enforces.
@@ -994,14 +1038,45 @@ impl SoundDoc {
             if tracks.is_empty() {
                 return Err("tracks must be non-empty".into());
             }
+            let mut seen_ids = std::collections::HashSet::new();
             for (i, t) in tracks.iter().enumerate() {
+                // Errors name the layer by id when it has one — that is the
+                // address the agent used.
+                let who = match &t.id {
+                    Some(id) => format!("layer '{id}'"),
+                    None => format!("tracks[{i}]"),
+                };
+                if let Some(id) = &t.id {
+                    if id.is_empty()
+                        || !id
+                            .chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                    {
+                        return Err(format!(
+                            "{who}: layer ids are short slugs (a-z, 0-9, _), got '{id}'"
+                        ));
+                    }
+                    if id == "master" {
+                        return Err(
+                            "'master' is reserved for the master chain; pick another layer id"
+                                .into(),
+                        );
+                    }
+                    if !seen_ids.insert(id.clone()) {
+                        return Err(format!("duplicate layer id '{id}' — ids must be unique"));
+                    }
+                }
                 if !(-1.0..=1.0).contains(&t.pan) {
-                    return Err(format!("tracks[{i}].pan must be in [-1, 1], got {}", t.pan));
+                    return Err(format!("{who}: pan must be in [-1, 1], got {}", t.pan));
                 }
                 if !(0.0..=2.0).contains(&t.gain) {
+                    return Err(format!("{who}: gain must be in [0, 2], got {}", t.gain));
+                }
+                if !(0.0..self.duration).contains(&t.at) {
                     return Err(format!(
-                        "tracks[{i}].gain must be in [0, 2], got {}",
-                        t.gain
+                        "{who}: at must be in [0, duration {}), got {} — the layer would be \
+                         entirely outside the render window",
+                        self.duration, t.at
                     ));
                 }
                 if contains_tracks(&t.node) {

@@ -41,6 +41,17 @@ fn track_stream_seed(seed: u64, i: u64) -> u64 {
 /// The master bus's stream index (never collides with a track index).
 const MASTER_STREAM: u64 = u64::MAX;
 
+/// FNV-1a over a layer id: the stable stream key for a v2 track, so a layer's
+/// noise content survives sibling layers being added, removed, or reordered.
+fn fnv1a(s: &str) -> u64 {
+    let mut h: u64 = 0xCBF2_9CE4_8422_2325;
+    for b in s.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    h
+}
+
 /// Render a `tracks` document to a finished stereo pair: each track is
 /// rendered mono and equal-power panned onto the bus (sampler tracks keep
 /// their native stereo), the master chain runs per channel (the reverb with
@@ -61,25 +72,42 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<(Signal, Signal)> {
     let mut rng = Rng::new(doc.seed);
     let (mut left, mut right) = (vec![0.0f32; n], vec![0.0f32; n]);
     for (ti, t) in tracks.iter().enumerate() {
+        // v2 streams are keyed by the stable layer id (positional fallback for
+        // not-yet-backfilled docs), so a layer's noise never depends on its
+        // siblings or its position in the list.
+        let stream = t.id.as_deref().map(fnv1a).unwrap_or(ti as u64);
+        if t.mute {
+            // Muted layers stay off the bus. v1's single stream must still
+            // advance exactly as if the track had rendered, or muting one
+            // layer would change every later layer's noise.
+            if !per_track_streams && track_native_stereo(&t.node, n, sr).is_none() {
+                let _ = render_node(&t.node, n, sr, &mut rng);
+            }
+            continue;
+        }
+        // The layer lands `at` seconds into the song: render full-length, then
+        // shift right and truncate (never shortening the render keeps RNG
+        // consumption — and therefore v1 sibling content — offset-invariant).
+        let off = ((t.at.max(0.0) * sr as f32).round() as usize).min(n);
         // Equal-power pan law.
         let theta = (t.pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
         let (gl, gr) = (theta.cos() * t.gain, theta.sin() * t.gain);
         if let Some((l, r)) = track_native_stereo(&t.node, n, sr) {
             // A sampler track keeps its recorded stereo image; pan biases it.
-            for i in 0..n {
-                left[i] += l[i] * gl * std::f32::consts::SQRT_2;
-                right[i] += r[i] * gr * std::f32::consts::SQRT_2;
+            for i in 0..n - off {
+                left[i + off] += l[i] * gl * std::f32::consts::SQRT_2;
+                right[i + off] += r[i] * gr * std::f32::consts::SQRT_2;
             }
         } else {
             let mono = if per_track_streams {
-                let mut trng = Rng::new(track_stream_seed(doc.seed, ti as u64));
+                let mut trng = Rng::new(track_stream_seed(doc.seed, stream));
                 render_node(&t.node, n, sr, &mut trng)
             } else {
                 render_node(&t.node, n, sr, &mut rng)
             };
-            for (i, x) in mono.into_iter().enumerate() {
-                left[i] += x * gl;
-                right[i] += x * gr;
+            for (i, x) in mono.into_iter().take(n - off).enumerate() {
+                left[i + off] += x * gl;
+                right[i + off] += x * gr;
             }
         }
     }
@@ -1715,6 +1743,61 @@ mod tests {
         // v1 (version omitted) keeps the legacy threaded stream — and with it
         // byte-identical replay of pre-versioning documents.
         assert_ne!(right(&mk(sine, "")), right(&mk(noise, "")));
+    }
+
+    #[test]
+    fn layer_at_offset_shifts_and_truncates() {
+        let d = doc(r#"{ "name": "t", "duration": 0.1, "version": 2,
+                 "root": { "type": "tracks", "tracks": [
+                    { "id": "late", "node": { "type": "sine", "freq": 440 },
+                      "gain": 0.5, "at": 0.05 }
+                 ] } }"#);
+        let (l, _) = render_tracks(&d).unwrap();
+        let head = rms(&l[..2000]);
+        let tail = rms(&l[2300..]);
+        assert!(head < 1e-6, "before `at` the bus is silent, rms {head}");
+        assert!(tail > 0.1, "the layer plays from `at` on, rms {tail}");
+        assert_eq!(l.len(), 4410); // shifted tail truncated at the doc edge
+    }
+
+    #[test]
+    fn muted_layer_is_exactly_absent_in_v2() {
+        let with_muted = doc(r#"{ "name": "t", "duration": 0.05, "seed": 9, "version": 2,
+                 "root": { "type": "tracks", "tracks": [
+                    { "id": "keep", "node": { "type": "noise" }, "gain": 0.5 },
+                    { "id": "gone", "node": { "type": "noise" }, "gain": 0.5, "mute": true }
+                 ] } }"#);
+        let without = doc(r#"{ "name": "t", "duration": 0.05, "seed": 9, "version": 2,
+                 "root": { "type": "tracks", "tracks": [
+                    { "id": "keep", "node": { "type": "noise" }, "gain": 0.5 }
+                 ] } }"#);
+        // Id-keyed streams: muting/removing a sibling never re-grains "keep".
+        assert_eq!(render_tracks(&with_muted), render_tracks(&without));
+    }
+
+    #[test]
+    fn wrapping_a_plain_root_as_a_compensated_layer_is_level_neutral() {
+        let plain = doc(r#"{ "name": "p", "duration": 0.05,
+                 "root": { "type": "mul", "inputs": [
+                    { "type": "sine", "freq": 330 },
+                    { "type": "env", "a": 0.0, "d": 0.04, "s": 0.0, "r": 0.0 } ] } }"#);
+        let wrapped = doc(r#"{ "name": "p", "duration": 0.05, "version": 2,
+                 "root": { "type": "tracks", "tracks": [
+                    { "id": "p", "gain": 1.4142135,
+                      "node": { "type": "mul", "inputs": [
+                        { "type": "sine", "freq": 330 },
+                        { "type": "env", "a": 0.0, "d": 0.04, "s": 0.0, "r": 0.0 } ] } }
+                 ] } }"#);
+        let a = render(&plain);
+        let b = render(&wrapped); // mid of the wrapped bus
+        let max_diff = a
+            .iter()
+            .zip(&b)
+            .fold(0.0f32, |m, (x, y)| m.max((x - y).abs()));
+        assert!(
+            max_diff < 1e-6,
+            "wrap must be level-neutral, diff {max_diff}"
+        );
     }
 
     #[test]

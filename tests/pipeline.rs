@@ -374,6 +374,136 @@ async fn every_example_recipe_replays() {
 }
 
 #[tokio::test]
+async fn layered_authoring_flow_round_trips_and_replays() {
+    use sonarium::server::{AddLayerReq, LayerOpsReq, SetLayerReq};
+
+    let (a, dir_a) = fresh("layers_a");
+    a.author_sound(author_req(LASER)).await.unwrap();
+
+    // First add_layer wraps the plain root as layer "laser_zap" and stacks
+    // a sub layer next to it.
+    let res = a
+        .add_layer(Parameters(
+            serde_json::from_str::<AddLayerReq>(
+                r#"{ "id": "laser_zap", "layer": "sub",
+                     "node": { "type": "mul", "inputs": [
+                        { "type": "sine", "freq": 80 },
+                        { "type": "env", "d": 0.15 } ] },
+                     "gain": 0.6 }"#,
+            )
+            .unwrap(),
+        ))
+        .await
+        .unwrap();
+    let texts: Vec<String> = res
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("wrapped as layer 'laser_zap'")),
+        "the wrap must be announced: {texts:?}"
+    );
+
+    // Duplicate layers are rejected with the listing.
+    let err = a
+        .add_layer(Parameters(
+            serde_json::from_str::<AddLayerReq>(
+                r#"{ "id": "laser_zap", "layer": "sub", "node": { "type": "noise" } }"#,
+            )
+            .unwrap(),
+        ))
+        .await
+        .unwrap_err();
+    assert!(
+        err.contains("already exists") && err.contains("laser_zap, sub"),
+        "{err}"
+    );
+
+    // The describe map speaks layers now.
+    let desc = a
+        .describe_sound(Parameters(IdReq {
+            id: "laser_zap".into(),
+        }))
+        .await
+        .unwrap();
+    let ids: Vec<&str> = desc.0.layers.iter().map(|l| l.id.as_str()).collect();
+    assert_eq!(ids, vec!["laser_zap", "sub"]);
+
+    // Layer-relative set_param; absolute paths with `layer` are rejected.
+    a.set_param(Parameters(
+        serde_json::from_str::<SetParamReq>(
+            r#"{ "id": "laser_zap", "layer": "sub", "path": "inputs[0].freq", "value": 60 }"#,
+        )
+        .unwrap(),
+    ))
+    .await
+    .unwrap();
+    let err = a
+        .set_param(Parameters(
+            serde_json::from_str::<SetParamReq>(
+                r#"{ "id": "laser_zap", "layer": "sub",
+                     "path": "root.tracks[1].node.inputs[0].freq", "value": 60 }"#,
+            )
+            .unwrap(),
+        ))
+        .await
+        .unwrap_err();
+    assert!(err.contains("drop the 'root.tracks[..]' prefix"), "{err}");
+    let err = a
+        .set_param(Parameters(
+            serde_json::from_str::<SetParamReq>(
+                r#"{ "id": "laser_zap", "layer": "sub", "path": "gain", "value": 0.5 }"#,
+            )
+            .unwrap(),
+        ))
+        .await
+        .unwrap_err();
+    assert!(err.contains("set_layer"), "{err}");
+
+    // Mixer moves + structural ops.
+    a.set_layer(Parameters(
+        serde_json::from_str::<SetLayerReq>(
+            r#"{ "id": "laser_zap", "layer": "sub", "gain": 0.4, "at": 0.02 }"#,
+        )
+        .unwrap(),
+    ))
+    .await
+    .unwrap();
+    a.layer_ops(Parameters(
+        serde_json::from_str::<LayerOpsReq>(
+            r#"{ "id": "laser_zap", "op": "duplicate", "layer": "sub", "new_id": "sub_b" }"#,
+        )
+        .unwrap(),
+    ))
+    .await
+    .unwrap();
+    a.layer_ops(Parameters(
+        serde_json::from_str::<LayerOpsReq>(
+            r#"{ "id": "laser_zap", "op": "remove", "layer": "sub_b" }"#,
+        )
+        .unwrap(),
+    ))
+    .await
+    .unwrap();
+
+    // The whole layered flow replays byte-identically in a fresh dir.
+    let saved = a
+        .save_session(Parameters(SaveSessionReq { dest: None }))
+        .await
+        .unwrap();
+    let (b, dir_b) = fresh("layers_b");
+    b.replay_session(Parameters(ReplaySessionReq { path: saved.0.path }))
+        .await
+        .unwrap();
+    let wav_a = std::fs::read(dir_a.join("laser_zap.wav")).unwrap();
+    let wav_b = std::fs::read(dir_b.join("laser_zap.wav")).unwrap();
+    assert_eq!(wav_a, wav_b, "layered session must replay byte-identically");
+}
+
+#[tokio::test]
 async fn replayed_session_reproduces_audio_byte_for_byte() {
     // Session A: author, surgically edit, mutate (explicit seed), bank it.
     let (a, dir_a) = fresh("replay_a");

@@ -28,7 +28,7 @@ use serde_json::json;
 use crate::analysis::{self, Analysis};
 use crate::audio;
 use crate::bank::{Bank, BankMember, ManifestEntry};
-use crate::dsl::{Node, Normalize, Playback, SoundDoc, Stereo};
+use crate::dsl::{Node, Normalize, Playback, SoundDoc, Stereo, Track};
 use crate::dsp::dbfs;
 use crate::edit::{self, EditOp, NodeInfo};
 use crate::engines::{self, EngineTarget};
@@ -238,8 +238,15 @@ pub struct DescribeResp {
     pub id: String,
     pub name: String,
     pub duration: f32,
-    /// Every node with its editable path, type, and parameters.
+    /// Node rows of a plain (non-mixer) document, absolute paths from `root`.
     pub nodes: Vec<NodeInfo>,
+    /// Mixer layers keyed by stable id; node paths inside are layer-relative
+    /// (pass them with `layer` to set_param / edit_sound). Empty for plain docs.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<edit::LayerInfo>,
+    /// Master-chain processors (absolute paths, no `layer` arg).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub master: Vec<NodeInfo>,
 }
 
 /// Set a single parameter (or node) by path.
@@ -247,7 +254,12 @@ pub struct DescribeResp {
 pub struct SetParamReq {
     /// Id of the sound to edit.
     pub id: String,
-    /// Path to the target, e.g. `root.inputs[0].freq` or `root.stages[1].cutoff`.
+    /// Address a mixer layer by its stable id; `path` is then relative to the
+    /// layer's node (e.g. `env.a`, `notes[3].pitch`, `stages[1].cutoff`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
+    /// Path to the target, e.g. `root.inputs[0].freq` — or, with `layer`,
+    /// layer-relative like `inputs[0].freq`.
     pub path: String,
     /// New value: a number, a modulator object
     /// (`{"slide":{"from":880,"to":180,"secs":0.18}}`), or a whole node.
@@ -259,8 +271,80 @@ pub struct SetParamReq {
 pub struct EditReq {
     /// Id of the sound to edit.
     pub id: String,
+    /// Address a mixer layer by its stable id; every op's path is then
+    /// relative to that layer's node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
     /// Ordered edit ops applied in one re-render.
     pub ops: Vec<EditOp>,
+}
+
+/// Add an instrument layer to a sound's mixer.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct AddLayerReq {
+    /// Id of the sound to extend.
+    pub id: String,
+    /// The new layer's stable id — a short slug like `kick`, `body`, `tail`.
+    /// Duplicates are rejected (every layer stays unambiguously addressable).
+    pub layer: String,
+    /// The layer's signal graph: any source/combinator node (seq, chain, mix…).
+    pub node: Node,
+    /// Fader 0..2 (default 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gain: Option<f32>,
+    /// Stereo position −1..1 (default 0, center).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pan: Option<f32>,
+    /// Start offset in seconds (default 0) — place a tail layer late, a
+    /// pre-transient click early.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<f32>,
+}
+
+/// Adjust a layer's mixer fields without touching its graph.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SetLayerReq {
+    /// Id of the sound.
+    pub id: String,
+    /// The layer to adjust (see describe_sound for the list).
+    pub layer: String,
+    /// New fader value 0..2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gain: Option<f32>,
+    /// New stereo position −1..1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pan: Option<f32>,
+    /// New start offset in seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<f32>,
+    /// Mute / unmute. Mute is rendered state: exports ship without muted layers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mute: Option<bool>,
+}
+
+/// Structural layer operations.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LayerOp {
+    /// Delete the layer (a mixer keeps at least one).
+    Remove,
+    /// Copy the layer under `new_id` (its noise re-realizes deterministically
+    /// from the new id — a built-in variation).
+    Duplicate,
+}
+
+/// Remove or duplicate a layer.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct LayerOpsReq {
+    /// Id of the sound.
+    pub id: String,
+    /// The operation.
+    pub op: LayerOp,
+    /// The layer to operate on.
+    pub layer: String,
+    /// New layer id for `duplicate`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_id: Option<String>,
 }
 
 fn default_loop_crossfade() -> f32 {
@@ -734,18 +818,21 @@ impl Sonarium {
     /// parameters, so the agent knows what it can target before editing.
     #[tool(
         name = "describe_sound",
-        description = "List every node in a sound's graph with its editable path (e.g. root.inputs[0].freq, root.stages[1].cutoff) and parameters. Call this before set_param / edit_sound to see what you can change."
+        description = "The addressing map: every editable node with its path and parameters. Plain sounds list absolute paths (root.inputs[0].freq); mixer sounds list per-layer tables — copy the layer id + the layer-relative path (env.a, notes[3].pitch) straight into set_param/edit_sound, and use set_layer for the mixer fields (gain/pan/at/mute). Call this before editing."
     )]
     pub async fn describe_sound(
         &self,
         params: Parameters<IdReq>,
     ) -> Result<Json<DescribeResp>, String> {
         let rec = self.require(&params.0.id)?;
+        let map = edit::describe(&rec.graph);
         Ok(Json(DescribeResp {
             id: rec.id,
             name: rec.name,
             duration: rec.graph.duration,
-            nodes: edit::describe(&rec.graph),
+            nodes: map.nodes,
+            layers: map.layers,
+            master: map.master,
         }))
     }
 
@@ -759,8 +846,17 @@ impl Sonarium {
         params: Parameters<SetParamReq>,
     ) -> Result<CallToolResult, String> {
         let args = serde_json::to_value(&params.0).map_err(|e| e.to_string())?;
-        let SetParamReq { id, path, value } = params.0;
+        let SetParamReq {
+            id,
+            layer,
+            path,
+            value,
+        } = params.0;
         let rec = self.require(&id)?;
+        let path = match &layer {
+            Some(l) => resolve_layer_path(&rec.graph, l, &path)?,
+            None => path,
+        };
         let graph = edit::apply_ops(&rec.graph, &[EditOp::Set { path, value }])?;
         self.checkpoint(&id, &rec.graph);
         let new = self.build(id, graph, rec.created_at)?;
@@ -775,16 +871,228 @@ impl Sonarium {
     )]
     pub async fn edit_sound(&self, params: Parameters<EditReq>) -> Result<CallToolResult, String> {
         let args = serde_json::to_value(&params.0).map_err(|e| e.to_string())?;
-        let EditReq { id, ops } = params.0;
+        let EditReq { id, layer, mut ops } = params.0;
         if ops.is_empty() {
             return Err("ops must be non-empty".into());
         }
         let rec = self.require(&id)?;
+        if let Some(l) = &layer {
+            for op in &mut ops {
+                let p = match op {
+                    EditOp::Set { path, .. }
+                    | EditOp::Insert { path, .. }
+                    | EditOp::Remove { path, .. } => path,
+                };
+                *p = resolve_layer_path(&rec.graph, l, p)?;
+            }
+        }
         let graph = edit::apply_ops(&rec.graph, &ops)?;
         self.checkpoint(&id, &rec.graph);
         let new = self.build(id, graph, rec.created_at)?;
         self.jlog("edit_sound", args);
         Ok(sound_result(&new, true))
+    }
+
+    /// Stack a new instrument layer onto a sound.
+    #[tool(
+        name = "add_layer",
+        description = "Add an instrument layer to a sound and re-render. The compositional flow: author_sound creates the sound with its FIRST layer's graph, add_layer stacks every next one — one layer per thing you'd fade, pan, time-shift, or analyze separately (an instrument in a song; crack/body/tail in an SFX). Use mix only for sub-signals that share one envelope/filter. The first add_layer on a plain sound wraps the existing graph as a layer named after the sound (level-compensated; announced). Then address layers by id: set_layer (gain/pan/at/mute), set_param/edit_sound {layer, path}."
+    )]
+    pub async fn add_layer(
+        &self,
+        params: Parameters<AddLayerReq>,
+    ) -> Result<CallToolResult, String> {
+        let args = serde_json::to_value(&params.0).map_err(|e| e.to_string())?;
+        let AddLayerReq {
+            id,
+            layer,
+            node,
+            gain,
+            pan,
+            at,
+        } = params.0;
+        check_layer_slug(&layer)?;
+        let rec = self.require(&id)?;
+        let mut graph = rec.graph.clone();
+        let mut notes = Vec::new();
+
+        if !matches!(graph.root, Node::Tracks { .. }) {
+            if !matches!(graph.stereo, Stereo::Mono) {
+                return Err(
+                    "this sound uses a doc-level stereo treatment (haas/wide); a mixer document \
+                     replaces that with per-layer pan — refine_sound it to stereo mode 'mono' \
+                     first, then add_layer and pan the layers"
+                        .into(),
+                );
+            }
+            // Wrap the existing graph as the first layer, named after the
+            // sound. √2 gain exactly compensates the equal-power center pan,
+            // so the original keeps its level on the bus.
+            let first = if rec.id == layer {
+                format!("{}_main", rec.id)
+            } else {
+                rec.id.clone()
+            };
+            let old = std::mem::replace(&mut graph.root, Node::Mix { inputs: Vec::new() });
+            graph.root = Node::Tracks {
+                tracks: vec![Track {
+                    id: Some(first.clone()),
+                    node: old,
+                    pan: 0.0,
+                    gain: std::f32::consts::SQRT_2,
+                    at: 0.0,
+                    mute: false,
+                }],
+                master: Vec::new(),
+            };
+            notes.push(format!(
+                "existing graph wrapped as layer '{first}' (gain √2 compensates the equal-power \
+                 pan — its level is unchanged; noise textures may re-grain)"
+            ));
+        }
+
+        let Node::Tracks { tracks, .. } = &mut graph.root else {
+            unreachable!("wrapped above")
+        };
+        if tracks.iter().any(|t| t.id.as_deref() == Some(&layer)) {
+            return Err(format!(
+                "layer '{layer}' already exists in '{id}' (layers: {}) — pick a new id, or edit \
+                 the existing layer with set_param/set_layer",
+                layer_ids(&graph)
+            ));
+        }
+        tracks.push(Track {
+            id: Some(layer.clone()),
+            node,
+            pan: pan.unwrap_or(0.0),
+            gain: gain.unwrap_or(1.0),
+            at: at.unwrap_or(0.0),
+            mute: false,
+        });
+        let count = tracks.len();
+
+        self.checkpoint(&id, &rec.graph);
+        let new = self.build(id, graph, rec.created_at)?;
+        self.jlog("add_layer", args);
+        let mut res = sound_result(&new, true);
+        for n in notes {
+            res.content.push(Content::text(n));
+        }
+        res.content.push(Content::text(format!(
+            "layer '{layer}' added ({count} layers: {})",
+            layer_ids(&new.graph)
+        )));
+        Ok(res)
+    }
+
+    /// Mixer moves on one layer: fader, pan, time offset, mute.
+    #[tool(
+        name = "set_layer",
+        description = "Adjust a layer's mixer fields — gain (0..2), pan (-1..1), at (start offset seconds), mute — without touching its graph, and re-render. Mute is rendered state: exports ship without muted layers. For the layer's instrument parameters use set_param {layer, path}."
+    )]
+    pub async fn set_layer(
+        &self,
+        params: Parameters<SetLayerReq>,
+    ) -> Result<CallToolResult, String> {
+        let args = serde_json::to_value(&params.0).map_err(|e| e.to_string())?;
+        let SetLayerReq {
+            id,
+            layer,
+            gain,
+            pan,
+            at,
+            mute,
+        } = params.0;
+        if gain.is_none() && pan.is_none() && at.is_none() && mute.is_none() {
+            return Err("nothing to set — pass at least one of gain / pan / at / mute".into());
+        }
+        let rec = self.require(&id)?;
+        let mut graph = rec.graph.clone();
+        {
+            let t = find_layer_mut(&mut graph, &layer)?;
+            if let Some(g) = gain {
+                t.gain = g;
+            }
+            if let Some(p) = pan {
+                t.pan = p;
+            }
+            if let Some(a) = at {
+                t.at = a;
+            }
+            if let Some(m) = mute {
+                t.mute = m;
+            }
+        }
+        self.checkpoint(&id, &rec.graph);
+        let new = self.build(id, graph, rec.created_at)?;
+        self.jlog("set_layer", args);
+        let mut res = sound_result(&new, true);
+        if mute == Some(true) {
+            res.content.push(Content::text(format!(
+                "layer '{layer}' muted — it is off the bus AND off every export until unmuted"
+            )));
+        }
+        Ok(res)
+    }
+
+    /// Remove or duplicate a layer.
+    #[tool(
+        name = "layer_ops",
+        description = "Structural layer operations: {op:\"remove\", layer} deletes a layer (a mixer keeps at least one); {op:\"duplicate\", layer, new_id} copies one (deterministic re-grained noise — a built-in variation). Other layers are untouched: every layer has its own RNG stream."
+    )]
+    pub async fn layer_ops(
+        &self,
+        params: Parameters<LayerOpsReq>,
+    ) -> Result<CallToolResult, String> {
+        let args = serde_json::to_value(&params.0).map_err(|e| e.to_string())?;
+        let LayerOpsReq {
+            id,
+            op,
+            layer,
+            new_id,
+        } = params.0;
+        let rec = self.require(&id)?;
+        let mut graph = rec.graph.clone();
+        // Existence check (with the standard listing error) before mutating.
+        find_layer_mut(&mut graph, &layer)?;
+        let Node::Tracks { tracks, .. } = &mut graph.root else {
+            unreachable!("find_layer_mut verified a tracks root")
+        };
+        match op {
+            LayerOp::Remove => {
+                if tracks.len() == 1 {
+                    return Err(format!(
+                        "'{layer}' is the only layer — a mixer needs at least one; delete or \
+                         refine the sound instead"
+                    ));
+                }
+                tracks.retain(|t| t.id.as_deref() != Some(&layer));
+            }
+            LayerOp::Duplicate => {
+                let new_id =
+                    new_id.ok_or("duplicate needs new_id — the copy's layer id".to_string())?;
+                check_layer_slug(&new_id)?;
+                if tracks.iter().any(|t| t.id.as_deref() == Some(&new_id)) {
+                    return Err(format!("layer '{new_id}' already exists — pick another id"));
+                }
+                let pos = tracks
+                    .iter()
+                    .position(|t| t.id.as_deref() == Some(&layer))
+                    .expect("verified above");
+                let mut copy = tracks[pos].clone();
+                copy.id = Some(new_id);
+                tracks.insert(pos + 1, copy);
+            }
+        }
+        self.checkpoint(&id, &rec.graph);
+        let new = self.build(id, graph, rec.created_at)?;
+        self.jlog("layer_ops", args);
+        let mut res = sound_result(&new, true);
+        res.content.push(Content::text(format!(
+            "layers now: {}",
+            layer_ids(&new.graph)
+        )));
+        Ok(res)
     }
 
     /// Compare two sounds: metric deltas + a similarity score (convergence aid).
@@ -1239,6 +1547,9 @@ impl Sonarium {
             "refine_sound" => self.refine_sound(Parameters(de(a)?)).await.map(drop),
             "set_param" => self.set_param(Parameters(de(a)?)).await.map(drop),
             "edit_sound" => self.edit_sound(Parameters(de(a)?)).await.map(drop),
+            "add_layer" => self.add_layer(Parameters(de(a)?)).await.map(drop),
+            "set_layer" => self.set_layer(Parameters(de(a)?)).await.map(drop),
+            "layer_ops" => self.layer_ops(Parameters(de(a)?)).await.map(drop),
             "mutate_sound" => self.mutate_sound(Parameters(de(a)?)).await.map(drop),
             "generate_variants" => self.generate_variants(Parameters(de(a)?)).await.map(drop),
             "morph_sounds" => self.morph_sounds(Parameters(de(a)?)).await.map(drop),
@@ -1367,9 +1678,13 @@ impl Sonarium {
     fn build_product(
         &self,
         id: String,
-        graph: SoundDoc,
+        mut graph: SoundDoc,
         created_at: u64,
     ) -> Result<(Record, render::RenderProduct), String> {
+        // Mixer tracks without ids get deterministic ones here (the one
+        // chokepoint every graph passes through), so persisted documents are
+        // always layer-addressable and replays mint identical ids.
+        graph.ensure_track_ids();
         graph.validate()?;
         let product = render::render_product(&graph);
 
@@ -1427,6 +1742,106 @@ impl Sonarium {
 /// Peak absolute sample value.
 fn peak_abs(samples: &[f32]) -> f32 {
     samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()))
+}
+
+/// The comma-joined layer ids of a mixer document (for listing in errors and
+/// confirmations).
+fn layer_ids(graph: &SoundDoc) -> String {
+    let Node::Tracks { tracks, .. } = &graph.root else {
+        return String::new();
+    };
+    tracks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| t.id.clone().unwrap_or_else(|| format!("layer_{i}")))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Layer ids are short slugs so they survive round-trips through tool calls.
+fn check_layer_slug(layer: &str) -> Result<(), String> {
+    if layer.is_empty()
+        || !layer
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    {
+        let hint = slugify(layer);
+        return Err(format!(
+            "layer ids are short slugs (a-z, 0-9, _), got '{layer}'{}",
+            if hint.is_empty() {
+                String::new()
+            } else {
+                format!(" — try '{hint}'")
+            }
+        ));
+    }
+    if layer == "master" {
+        return Err(
+            "'master' is the master chain, not a layer — address its processors with plain \
+             paths like 'root.master[0].room'"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Find a layer by id, with the standard teaching error.
+fn find_layer_mut<'a>(graph: &'a mut SoundDoc, layer: &str) -> Result<&'a mut Track, String> {
+    let name = graph.name.clone();
+    let listing = layer_ids(graph);
+    let Node::Tracks { tracks, .. } = &mut graph.root else {
+        return Err(format!(
+            "'{name}' has no layers yet — add_layer turns it into a mixer document"
+        ));
+    };
+    tracks
+        .iter_mut()
+        .find(|t| t.id.as_deref() == Some(layer))
+        .ok_or_else(|| format!("no layer '{layer}' in '{name}'; layers: {listing}"))
+}
+
+/// Resolve a layer-relative path (`env.a`, `notes[3].pitch`) to the absolute
+/// document path `root.tracks[<i>].node.<path>`.
+fn resolve_layer_path(graph: &SoundDoc, layer: &str, path: &str) -> Result<String, String> {
+    if layer == "master" {
+        return Err(
+            "'master' is not a layer — address master processors with plain paths like \
+             'root.master[0].room' (no layer arg)"
+                .into(),
+        );
+    }
+    if matches!(path, "gain" | "pan" | "at" | "mute") {
+        return Err(format!(
+            "'{path}' is a mixer field — use set_layer; layer paths address the instrument \
+             graph (e.g. 'env.a', 'notes[3].pitch', 'stages[1].cutoff')"
+        ));
+    }
+    if path == "root" || path.starts_with("root.") || path.starts_with("root[") {
+        return Err(
+            "layer paths are relative to the layer's node — drop the 'root.tracks[..]' prefix \
+             (e.g. 'inputs[0].freq', or '' for the node itself)"
+                .into(),
+        );
+    }
+    let Node::Tracks { tracks, .. } = &graph.root else {
+        return Err(format!(
+            "'{}' has no layers — drop the layer arg, or add_layer first",
+            graph.name
+        ));
+    };
+    let i = tracks
+        .iter()
+        .position(|t| t.id.as_deref() == Some(layer))
+        .ok_or_else(|| {
+            format!(
+                "no layer '{layer}' in '{}'; layers: {}",
+                graph.name,
+                layer_ids(graph)
+            )
+        })?;
+    // parse_path skips empty segments, so an empty layer path addresses the
+    // layer's node itself.
+    Ok(format!("root.tracks[{i}].node.{path}"))
 }
 
 /// The level-reporting row shared by every multi-sound generator.
