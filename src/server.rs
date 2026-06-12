@@ -39,8 +39,8 @@ use crate::session::{Record, Store, now_secs, slugify};
 use crate::vary;
 
 const INSTRUCTIONS: &str = "Sonarium is a sound-engineering MCP server: you compose audio from instruments and effects by authoring a symbolic synthesis graph, and the server renders it deterministically, returning analysis (peak/true-peak/RMS, LUFS, spectral centroid, transients) plus two images — a spectrogram and a waveform — so you iterate by inspection, like a sound designer at a DAW.\n\
-Workflow: author_sound with a graph → read the stats, view the images → refine with set_param / edit_sound (surgical, path-addressed; call describe_sound first to see every editable path) or refine_sound (whole-graph replace) → export (wav/flac/ogg) when it matches. undo_sound / redo_sound step a 20-deep per-sound history; sounds persist across restarts under stable slug ids.\n\
-Graph vocabulary: root is one node; every node is a mono signal. Sources: square{freq,duty} (duty modulatable ⇒ PWM), triangle{freq}, sawtooth{freq}, sine{freq}, noise{color: white|pink|brown}, fm{freq,ratio,index} (bells / metallic), super{wave,freq,voices,detune_cents} (supersaw), and seq{bpm,steps_per_beat,wave,duty,env,notes} for melodies/basslines/drums — each note has its own pitch (a number, a NOTE NAME like \"C4\"/\"F#3\"/\"midi:60\", or a slide), a length in grid steps, and the shared per-note ADSR; gaps are rests; notes may overlap. Seq waves are square/triangle/sawtooth/sine/noise plus a core INSTRUMENT list: piano (acoustic — velocity brightness, bass rings/treble dies), epiano (Rhodes tine), organ (drawbars, sustains while held), strings (slow-swell ensemble — write notes slightly early), bass (filtered + sub), kit (drums on the General MIDI map — pitch picks the drum: midi:36 kick, 38 snare, 42/46 hats, 41-50 toms, 49 crash, 51 ride), fm (tunable mallets/bells via fm_ratio/fm_index/fm_strike), pluck (Karplus-Strong string via pluck_decay), cowbell (phonk lead), and sampler — REAL recorded instruments from any SoundFont: set sf2 to a .sf2 path and sf2_preset to the General MIDI program (0 piano, 32 bass, 48 strings; sf2_bank 128 = GM drum map). Every seq also takes swing (shuffle) and humanize (deterministic timing/velocity jitter), and the duck processor sidechain-pumps any chain to a trigger. For full productions use a top-level tracks root — the mixing console: tracks:[{node, pan(-1..1), gain}] places every instrument on the stereo stage (sampler tracks keep native stereo) and master:[processors] is the stereo bus chain with decorrelated reverb tails. mix still layers mono inside one track. Envelope: env{a,d,s,r,punch}. Combinators: mix (sum), mul (source × env), chain (source → processors). Processors: lowpass/highpass/bandpass/notch{cutoff,q}, peak{cutoff,q,gain_db}, lowshelf/highshelf{cutoff,gain_db}, gain, drive{amount,shape}, ringmod, chorus, flanger, phaser, compress, bitcrush, downsample, delay, reverb. Any numeric param may be a modulator: {\"slide\":{from,to,secs,curve}}, {\"lfo\":{shape,rate,depth,center}}, {\"arp\":{steps,rate}}, {\"env\":{a,d,s,r,from,to}} (the key to filter/pitch envelopes).\n\
+Workflow: author_sound with a graph (the sound's FIRST layer) → read the stats, view the images → add_layer to stack each next instrument/component under a stable layer id (one layer per thing you'd fade, pan, time-shift, or analyze separately: transient/body/tail for SFX, one instrument each for music; every render reports each layer's pre-master contribution) → refine with set_param / edit_sound (surgical; with layer set, paths are layer-relative like env.a or notes[3].pitch — call describe_sound first for the map), set_layer for mixer moves (gain/pan/at/mute), or refine_sound (whole-graph replace) → export (wav/flac/ogg) when it matches. undo_sound / redo_sound step a 100-deep per-sound history; sounds persist across restarts under stable slug ids.\n\
+Graph vocabulary: root is one node; every node is a mono signal. Sources: square{freq,duty} (duty modulatable ⇒ PWM), triangle{freq}, sawtooth{freq}, sine{freq}, noise{color: white|pink|brown}, fm{freq,ratio,index} (bells / metallic), super{wave,freq,voices,detune_cents} (supersaw), and seq{bpm,steps_per_beat,wave,duty,env,notes} for melodies/basslines/drums — each note has its own pitch (a number, a NOTE NAME like \"C4\"/\"F#3\"/\"midi:60\", or a slide), a length in grid steps, and the shared per-note ADSR; gaps are rests; notes may overlap. Seq waves are square/triangle/sawtooth/sine/noise plus a core INSTRUMENT list: piano (acoustic — velocity brightness, bass rings/treble dies), epiano (Rhodes tine), organ (drawbars, sustains while held), strings (slow-swell ensemble — write notes slightly early), bass (filtered + sub), kit (drums on the General MIDI map — pitch picks the drum: midi:36 kick, 38 snare, 42/46 hats, 41-50 toms, 49 crash, 51 ride), fm (tunable mallets/bells via fm_ratio/fm_index/fm_strike), pluck (Karplus-Strong string via pluck_decay), cowbell (phonk lead), and sampler — REAL recorded instruments from any SoundFont: set sf2 to a .sf2 path and sf2_preset to the General MIDI program (0 piano, 32 bass, 48 strings; sf2_bank 128 = GM drum map). Every seq also takes swing (shuffle) and humanize (deterministic timing/velocity jitter), and the duck processor sidechain-pumps any chain to a trigger. For full productions use a top-level tracks root — the mixing console: tracks:[{id, node, pan(-1..1), gain, at, mute}] places every layer on the stereo stage by stable id (sampler tracks keep native stereo; `at` time-shifts a layer; each layer has its own deterministic RNG stream) and master:[processors] is the stereo bus chain with decorrelated reverb tails (address them at root.master[i]). mix still layers mono inside one track — but prefer real layers for anything you'd balance separately. Envelope: env{a,d,s,r,punch}. Combinators: mix (sum), mul (source × env), chain (source → processors). Processors: lowpass/highpass/bandpass/notch{cutoff,q}, peak{cutoff,q,gain_db}, lowshelf/highshelf{cutoff,gain_db}, gain, drive{amount,shape}, ringmod, chorus, flanger, phaser, compress, bitcrush, downsample, delay, reverb. Any numeric param may be a modulator: {\"slide\":{from,to,secs,curve}}, {\"lfo\":{shape,rate,depth,center}}, {\"arp\":{steps,rate}}, {\"env\":{a,d,s,r,from,to}} (the key to filter/pitch envelopes).\n\
 Output shaping: add top-level stereo {\"mode\":\"wide\"|\"haas\"} for BGM/ambience width, playback {\"mode\":\"loop\",crossfade_secs} for a seamless loop (or call make_loop on an existing sound — the exported WAV carries a smpl loop chunk engines read), and normalize {target_lufs,ceiling_dbtp} for level-matched, click-safe renders. export also takes target_lufs.\n\
 Variations on sounds you made: mutate_sound nudges parameters; generate_variants makes N level-matched round-robin takes of a sound; humanize applies one coherent pitch shift + level trim per take (foley repeats); morph_sounds interpolates two same-shaped designs (charge tiers). compare_sounds reports metric deltas + a similarity score to converge on a reference.\n\
 Packs: create_bank / add_to_bank{category?,rr_group?} / list_banks, then export_bank or export_all write every member (wav/flac/ogg) plus a sounds.json manifest; pass engine:\"godot\"|\"unity\"|\"bevy\" to also emit engine integration files.\n\
@@ -1263,7 +1263,7 @@ impl Sonarium {
     /// Step a sound back to its previous graph.
     #[tool(
         name = "undo_sound",
-        description = "Revert a sound to its previous graph (every refine/set_param/edit_sound/make_loop pushes a revision; bounded 20-step history). The undone state moves to the redo stack."
+        description = "Revert a sound to its previous graph (every refine/set_param/edit_sound/make_loop pushes a revision; bounded 100-step history). The undone state moves to the redo stack."
     )]
     pub async fn undo_sound(&self, params: Parameters<IdReq>) -> Result<CallToolResult, String> {
         let args = serde_json::to_value(&params.0).map_err(|e| e.to_string())?;
@@ -1693,8 +1693,9 @@ impl Sonarium {
             .map_err(|e| format!("render write failed: {e}"))?;
 
         let png_path = self.store.png_path(&id);
-        let analysis = analysis::analyze(&product.mono, graph.sample_rate, &png_path)
+        let mut analysis = analysis::analyze(&product.mono, graph.sample_rate, &png_path)
             .map_err(|e| format!("analysis failed: {e}"))?;
+        analysis.layers = product.layers.clone();
 
         let rec = Record {
             id,
@@ -2004,6 +2005,26 @@ fn sound_result(rec: &Record, include_graph: bool) -> CallToolResult {
     );
 
     let mut content = vec![Content::text(summary)];
+    if !a.layers.is_empty() {
+        let rows: Vec<String> = a
+            .layers
+            .iter()
+            .map(|l| {
+                if l.mute {
+                    format!("{} (muted)", l.id)
+                } else {
+                    format!(
+                        "{} {:.0}% • peak {:.1} / rms {:.1} dBFS",
+                        l.id, l.energy_pct, l.peak_dbfs, l.rms_dbfs
+                    )
+                }
+            })
+            .collect();
+        content.push(Content::text(format!(
+            "layers (post-fader, pre-master): {}",
+            rows.join("  |  ")
+        )));
+    }
     for img_path in [&a.spectrogram_png_path, &a.waveform_png_path] {
         if let Ok(bytes) = std::fs::read(img_path) {
             let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);

@@ -26,6 +26,9 @@ pub struct RenderProduct {
     pub mono: Signal,
     /// The panned, mastered stereo bus of a `tracks` document.
     pub stereo: Option<(Signal, Signal)>,
+    /// Per-layer contribution stats for a `tracks` document (post-fader,
+    /// pre-master), captured from the same render pass.
+    pub layers: Vec<LayerStats>,
 }
 
 /// Derive track `i`'s independent RNG stream from the document seed (schema
@@ -52,6 +55,32 @@ fn fnv1a(s: &str) -> u64 {
     h
 }
 
+/// Post-fader, pre-master snapshot of one layer's contribution to the bus
+/// mid signal — the balance numbers an agent mixes by. "Pre-master" matters:
+/// a master compressor / reverb reshapes the bus AFTER these are measured.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct LayerStats {
+    /// The layer's stable id.
+    pub id: String,
+    /// Peak of the layer's bus contribution in dBFS (−180 ⇒ silent / muted).
+    pub peak_dbfs: f32,
+    /// RMS of the contribution in dBFS.
+    pub rms_dbfs: f32,
+    /// Share of the summed pre-master layer energy, 0..100.
+    pub energy_pct: f32,
+    /// True when the layer is muted (it contributes nothing).
+    pub mute: bool,
+}
+
+/// A finished mixer render: the stereo bus plus per-layer contribution stats
+/// captured from the same pass (free — no extra render).
+#[derive(Debug, PartialEq)]
+pub struct TracksRender {
+    pub left: Signal,
+    pub right: Signal,
+    pub layers: Vec<LayerStats>,
+}
+
 /// Render a `tracks` document to a finished stereo pair: each track is
 /// rendered mono and equal-power panned onto the bus (sampler tracks keep
 /// their native stereo), the master chain runs per channel (the reverb with
@@ -62,7 +91,7 @@ fn fnv1a(s: &str) -> u64 {
 /// changes the noise content of its siblings. v1 documents keep the original
 /// single stream threaded through the track list in order — their audio stays
 /// byte-identical across upgrades.
-pub fn render_tracks(doc: &SoundDoc) -> Option<(Signal, Signal)> {
+pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
     let Node::Tracks { tracks, master } = &doc.root else {
         return None;
     };
@@ -71,7 +100,10 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<(Signal, Signal)> {
     let per_track_streams = doc.effective_version() >= 2;
     let mut rng = Rng::new(doc.seed);
     let (mut left, mut right) = (vec![0.0f32; n], vec![0.0f32; n]);
+    let mut layers = Vec::with_capacity(tracks.len());
+    let mut energies = Vec::with_capacity(tracks.len());
     for (ti, t) in tracks.iter().enumerate() {
+        let layer_id = t.id.clone().unwrap_or_else(|| format!("layer_{ti}"));
         // v2 streams are keyed by the stable layer id (positional fallback for
         // not-yet-backfilled docs), so a layer's noise never depends on its
         // siblings or its position in the list.
@@ -83,6 +115,14 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<(Signal, Signal)> {
             if !per_track_streams && track_native_stereo(&t.node, n, sr).is_none() {
                 let _ = render_node(&t.node, n, sr, &mut rng);
             }
+            layers.push(LayerStats {
+                id: layer_id,
+                peak_dbfs: -180.0,
+                rms_dbfs: -180.0,
+                energy_pct: 0.0,
+                mute: true,
+            });
+            energies.push(0.0f64);
             continue;
         }
         // The layer lands `at` seconds into the song: render full-length, then
@@ -92,11 +132,21 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<(Signal, Signal)> {
         // Equal-power pan law.
         let theta = (t.pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
         let (gl, gr) = (theta.cos() * t.gain, theta.sin() * t.gain);
+        // Contribution stats accumulate over what actually lands on the bus
+        // (post fader/pan/offset, pre master).
+        let (mut tpeak, mut tsum) = (0.0f32, 0.0f64);
         if let Some((l, r)) = track_native_stereo(&t.node, n, sr) {
             // A sampler track keeps its recorded stereo image; pan biases it.
             for i in 0..n - off {
-                left[i + off] += l[i] * gl * std::f32::consts::SQRT_2;
-                right[i + off] += r[i] * gr * std::f32::consts::SQRT_2;
+                let (la, ra) = (
+                    l[i] * gl * std::f32::consts::SQRT_2,
+                    r[i] * gr * std::f32::consts::SQRT_2,
+                );
+                left[i + off] += la;
+                right[i + off] += ra;
+                let m = 0.5 * (la + ra);
+                tpeak = tpeak.max(m.abs());
+                tsum += (m * m) as f64;
             }
         } else {
             let mono = if per_track_streams {
@@ -106,9 +156,32 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<(Signal, Signal)> {
                 render_node(&t.node, n, sr, &mut rng)
             };
             for (i, x) in mono.into_iter().take(n - off).enumerate() {
-                left[i + off] += x * gl;
-                right[i + off] += x * gr;
+                let (la, ra) = (x * gl, x * gr);
+                left[i + off] += la;
+                right[i + off] += ra;
+                let m = 0.5 * (la + ra);
+                tpeak = tpeak.max(m.abs());
+                tsum += (m * m) as f64;
             }
+        }
+        let rms = if n > off {
+            ((tsum / (n - off) as f64) as f32).sqrt()
+        } else {
+            0.0
+        };
+        layers.push(LayerStats {
+            id: layer_id,
+            peak_dbfs: crate::dsp::dbfs(tpeak),
+            rms_dbfs: crate::dsp::dbfs(rms),
+            energy_pct: 0.0, // filled below once the total is known
+            mute: false,
+        });
+        energies.push(tsum);
+    }
+    let total: f64 = energies.iter().sum();
+    if total > 0.0 {
+        for (l, e) in layers.iter_mut().zip(&energies) {
+            l.energy_pct = ((e / total) * 100.0) as f32;
         }
     }
     if per_track_streams {
@@ -141,7 +214,11 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<(Signal, Signal)> {
         normalize_output(&mut right, nz);
     }
     peak_limit(&mut [&mut left, &mut right]);
-    Some((left, right))
+    Some(TracksRender {
+        left,
+        right,
+        layers,
+    })
 }
 
 /// A track whose node is directly a sampler seq renders in native stereo.
@@ -188,17 +265,24 @@ fn track_native_stereo(node: &Node, n: usize, sr: u32) -> Option<(Signal, Signal
 /// for mixer documents. Every consumer that needs both (analysis + the WAV on
 /// disk) should call this instead of rendering twice.
 pub fn render_product(doc: &SoundDoc) -> RenderProduct {
-    if let Some((l, r)) = render_tracks(doc) {
+    if let Some(tr) = render_tracks(doc) {
         // Mono consumers (analysis, mono export) get the mid signal.
-        let mono = l.iter().zip(&r).map(|(a, b)| 0.5 * (a + b)).collect();
+        let mono = tr
+            .left
+            .iter()
+            .zip(&tr.right)
+            .map(|(a, b)| 0.5 * (a + b))
+            .collect();
         return RenderProduct {
             mono,
-            stereo: Some((l, r)),
+            stereo: Some((tr.left, tr.right)),
+            layers: tr.layers,
         };
     }
     RenderProduct {
         mono: render_plain(doc),
         stereo: None,
+        layers: Vec::new(),
     }
 }
 
@@ -1732,7 +1816,7 @@ mod tests {
                      ] }} }}"#
             ))
         };
-        let right = |d: &SoundDoc| render_tracks(d).unwrap().1;
+        let right = |d: &SoundDoc| render_tracks(d).unwrap().right;
         let sine = r#"{ "type": "sine", "freq": 440 }"#;
         let noise = r#"{ "type": "noise" }"#;
         // v2: editing track 0 never changes track 1's noise content.
@@ -1752,7 +1836,7 @@ mod tests {
                     { "id": "late", "node": { "type": "sine", "freq": 440 },
                       "gain": 0.5, "at": 0.05 }
                  ] } }"#);
-        let (l, _) = render_tracks(&d).unwrap();
+        let l = render_tracks(&d).unwrap().left;
         let head = rms(&l[..2000]);
         let tail = rms(&l[2300..]);
         assert!(head < 1e-6, "before `at` the bus is silent, rms {head}");
@@ -1772,7 +1856,34 @@ mod tests {
                     { "id": "keep", "node": { "type": "noise" }, "gain": 0.5 }
                  ] } }"#);
         // Id-keyed streams: muting/removing a sibling never re-grains "keep".
-        assert_eq!(render_tracks(&with_muted), render_tracks(&without));
+        let (a, b) = (
+            render_tracks(&with_muted).unwrap(),
+            render_tracks(&without).unwrap(),
+        );
+        assert_eq!((a.left, a.right), (b.left, b.right));
+        // The muted layer still reports a (silent) stats row.
+        assert!(a.layers[1].mute && a.layers[1].energy_pct == 0.0);
+    }
+
+    #[test]
+    fn layer_stats_report_contribution() {
+        let d = doc(r#"{ "name": "t", "duration": 0.05, "version": 2,
+                 "root": { "type": "tracks", "tracks": [
+                    { "id": "loud", "node": { "type": "sine", "freq": 220 }, "gain": 0.8 },
+                    { "id": "quiet", "node": { "type": "sine", "freq": 330 }, "gain": 0.2 }
+                 ] } }"#);
+        let tr = render_tracks(&d).unwrap();
+        assert_eq!(tr.layers.len(), 2);
+        assert_eq!(tr.layers[0].id, "loud");
+        assert_eq!(tr.layers[1].id, "quiet");
+        // 0.8 vs 0.2 gain ⇒ a 16:1 energy split.
+        assert!(tr.layers[0].energy_pct > 90.0, "{:?}", tr.layers);
+        assert!(tr.layers[1].energy_pct < 10.0, "{:?}", tr.layers);
+        let total: f32 = tr.layers.iter().map(|l| l.energy_pct).sum();
+        assert!((total - 100.0).abs() < 0.1);
+        // dB sanity: the loud layer peaks ~12 dB above the quiet one.
+        let gap = tr.layers[0].peak_dbfs - tr.layers[1].peak_dbfs;
+        assert!((gap - 12.04).abs() < 0.2, "gap {gap}");
     }
 
     #[test]
@@ -2143,7 +2254,8 @@ mod tests {
             ] } }"#,
         );
         assert_eq!(d.validate(), Ok(()));
-        let (l, r) = render_tracks(&d).unwrap();
+        let tr = render_tracks(&d).unwrap();
+        let (l, r) = (tr.left, tr.right);
         // Hard-left 440 dominates L; hard-right (at half gain) is alone on R.
         assert!(
             rms(&l) > rms(&r) * 1.5,
@@ -2168,7 +2280,8 @@ mod tests {
                      { "type": "env", "d": 0.1 } ] } } ],
                  "master": [ { "type": "reverb", "room": 0.6, "mix": 0.4 } ] } }"#,
         );
-        let (l, r) = render_tracks(&d).unwrap();
+        let tr = render_tracks(&d).unwrap();
+        let (l, r) = (tr.left, tr.right);
         assert_ne!(l, r, "spread reverb gives each side its own tail");
         // And with a duck in the master, both channels stay deterministic.
         let d2 = doc(

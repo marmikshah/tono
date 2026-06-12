@@ -357,6 +357,26 @@ pub fn morph(a: &SoundDoc, b: &SoundDoc, t: f32) -> Result<SoundDoc, String> {
     } else if let Some(o) = jb.as_object_mut() {
         o.remove("version");
     }
+    // Layer identity is positional in a morph: two same-shaped mixer docs
+    // almost always carry different layer ids (they're unique per doc), and
+    // ids/mute are not interpolatable — copy a's onto b instead of erroring.
+    if let Some(ta) = ja["root"].get("tracks").and_then(|v| v.as_array()).cloned()
+        && let Some(tb) = jb["root"].get_mut("tracks").and_then(|v| v.as_array_mut())
+    {
+        for (i, track_b) in tb.iter_mut().enumerate() {
+            let Some(track_a) = ta.get(i) else { break };
+            for key in ["id", "mute"] {
+                match track_a.get(key) {
+                    Some(v) => track_b[key] = v.clone(),
+                    None => {
+                        if let Some(o) = track_b.as_object_mut() {
+                            o.remove(key);
+                        }
+                    }
+                }
+            }
+        }
+    }
     let merged = lerp_json(&ja, &jb, t, "$")?;
     let doc: SoundDoc =
         serde_json::from_value(merged).map_err(|e| format!("morphed graph invalid: {e}"))?;
@@ -556,6 +576,28 @@ mod tests {
         );
         assert_eq!(infos[2].node_type, "square");
         assert_eq!(infos[2].params["freq"], 880.0);
+    }
+
+    #[test]
+    fn morph_unifies_layer_identity() {
+        let mk = |id1: &str, id2: &str, f: f32| -> SoundDoc {
+            serde_json::from_str(&format!(
+                r#"{{ "name": "m", "duration": 0.2, "version": 2,
+                     "root": {{ "type": "tracks", "tracks": [
+                        {{ "id": "{id1}", "node": {{ "type": "sine", "freq": {f} }} }},
+                        {{ "id": "{id2}", "node": {{ "type": "noise" }}, "mute": true }}
+                     ] }} }}"#
+            ))
+            .unwrap()
+        };
+        // Independently-minted layer ids must never block a morph.
+        let a = mk("crack", "tail_a", 200.0);
+        let b = mk("snap", "tail_b", 400.0);
+        let mid = morph(&a, &b, 0.5).unwrap();
+        let v = serde_json::to_value(&mid).unwrap();
+        assert_eq!(v["root"]["tracks"][0]["id"], "crack"); // a's identity wins
+        assert_eq!(v["root"]["tracks"][0]["node"]["freq"], 300.0);
+        assert_eq!(v["root"]["tracks"][1]["mute"], true);
     }
 
     #[test]

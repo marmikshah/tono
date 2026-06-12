@@ -20,8 +20,12 @@ The complete tool surface, as advertised to MCP clients.
   (`session.jsonl`). `save_session` snapshots it; `replay_session` (or the
   `sonarium replay` CLI) reproduces the whole project byte-for-byte in a fresh
   working directory.
-- For music, a **`tracks` root is the mixing console**: per-track pan/gain
-  onto a stereo bus, master processor chain, decorrelated reverb tails.
+- For music and layered SFX, a **`tracks` root is the mixing console**: each
+  track is a **layer** with a stable slug id (`kick`, `crack`, `tail`),
+  pan/gain, an `at` start offset, and `mute`, summed onto a stereo bus through
+  a master processor chain (decorrelated reverb tails). Layers are addressed
+  by id, never by index, so addresses survive re-arrangement; every layer has
+  its own deterministic RNG stream, so editing one never re-grains another.
   Instruments live in the **`seq`** node — see
   [the cookbook](cookbook.md) for the full DSL and instrument table
   (piano, e-piano, organ, strings, bass, GM drum kit, cowbell, pluck, FM,
@@ -34,18 +38,43 @@ The complete tool surface, as advertised to MCP clients.
   structured `{ id, wav_path, analysis }`. The primary tool.
 - `refine_sound { id, graph }` — replace a sound's graph and re-render
   (pushes an undo revision).
-- `set_param { id, path, value }` — change ONE parameter or node by JSON path
-  (`root.inputs[0].freq`, `root.tracks[1].node.notes[3].gain`) and re-render.
-  `value` is a number, a modulator object, or a whole node.
-- `edit_sound { id, ops }` — many ordered ops in one re-render:
+- `set_param { id, layer?, path, value }` — change ONE parameter or node by
+  JSON path and re-render. With `layer`, the path is relative to that layer's
+  node (`env.a`, `notes[3].pitch`); without it, absolute
+  (`root.inputs[0].freq`). `value` is a number, a modulator object, or a whole
+  node.
+- `edit_sound { id, layer?, ops }` — many ordered ops in one re-render:
   `{op:"set", path, value}` · `{op:"insert", path, index?, node}` ·
   `{op:"remove", path, index?}`. Illegal edits fail with the op index and
   reason; the graph is never corrupted.
 
+## Layers (compositional authoring)
+
+The flow: `author_sound` creates the sound with its **first** layer's graph;
+`add_layer` stacks every next one. One layer per thing you'd fade, pan,
+time-shift, or analyze separately — an instrument in a song; the
+crack/body/tail of an SFX. Use `mix` only for sub-signals that share one
+envelope or filter. Every render reports each layer's post-fader, pre-master
+contribution (peak / RMS / energy share), so balance problems name the layer
+to fix.
+
+- `add_layer { id, layer, node, gain?, pan?, at? }` — stack a new instrument
+  layer. The first call on a plain sound wraps its existing graph as a
+  level-compensated layer named after the sound (announced in the response).
+  Duplicate layer ids are rejected with the current listing.
+- `set_layer { id, layer, gain?, pan?, at?, mute? }` — mixer moves without
+  touching the layer's graph. `mute` is rendered state: exports ship without
+  muted layers.
+- `layer_ops { id, op: "remove" | "duplicate", layer, new_id? }` — structural
+  changes; duplicating re-grains noise deterministically from the new id (a
+  built-in variation).
+
 ## Inspection
 
 - `describe_sound { id }` — the addressing map: every node's editable path,
-  type, and parameters. Call before `set_param` / `edit_sound`.
+  type, and parameters. Mixer sounds get per-layer tables (copy the layer id +
+  layer-relative path straight into `set_param`), rows for every seq note, and
+  the master chain at `root.master[i]`. Call before `set_param` / `edit_sound`.
 - `get_sound { id }` — graph + paths + analysis.
 - `list_sounds {}` — the library inventory.
 - `analyze { id }` — re-run analysis: peak / true-peak / RMS / crest, ≈LUFS,
@@ -55,7 +84,7 @@ The complete tool surface, as advertised to MCP clients.
 
 ## History
 
-- `undo_sound { id }` / `redo_sound { id }` — step through a 20-deep per-sound
+- `undo_sound { id }` / `redo_sound { id }` — step through a 100-deep per-sound
   revision history (every refine/set_param/edit/make_loop pushes one). Survives
   restarts.
 - `history { id }` — `{ undo_depth, redo_depth }`.
