@@ -41,30 +41,37 @@ fn track_stream_seed(seed: u64, i: u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// The master bus's stream index (never collides with a track index).
+/// The master bus's stream key (validate rejects a layer id hashing to it).
 const MASTER_STREAM: u64 = u64::MAX;
 
-/// FNV-1a over a layer id: the stable stream key for a v2 track, so a layer's
-/// noise content survives sibling layers being added, removed, or reordered.
-fn fnv1a(s: &str) -> u64 {
-    let mut h: u64 = 0xCBF2_9CE4_8422_2325;
-    for b in s.as_bytes() {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x0000_0100_0000_01B3);
-    }
-    h
+use crate::dsp::layer_stream_key;
+
+/// True when a track renders in native stereo (a sampler seq) — a cheap shape
+/// test; the actual rendering happens in [`track_native_stereo`].
+fn is_native_stereo(node: &Node) -> bool {
+    matches!(
+        node,
+        Node::Seq {
+            wave: SeqWave::Sampler,
+            ..
+        }
+    )
 }
 
-/// Post-fader, pre-master snapshot of one layer's contribution to the bus
-/// mid signal — the balance numbers an agent mixes by. "Pre-master" matters:
-/// a master compressor / reverb reshapes the bus AFTER these are measured.
+/// Post-fader, pre-master snapshot of one layer's contribution to the stereo
+/// bus — the balance numbers an agent mixes by. "Pre-master" matters: a master
+/// compressor / reverb reshapes the bus AFTER these are measured. Energy and
+/// peak are measured per channel (pan-invariant: hard-panned and centered
+/// layers of equal power read equal).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct LayerStats {
     /// The layer's stable id.
     pub id: String,
-    /// Peak of the layer's bus contribution in dBFS (−180 ⇒ silent / muted).
+    /// Peak of the layer's loudest bus channel in dBFS (−180 ⇒ silent/muted).
     pub peak_dbfs: f32,
-    /// RMS of the contribution in dBFS.
+    /// RMS of the layer's bus contribution over the WHOLE document timeline
+    /// (per-channel energy, both channels), dBFS — comparable across layers
+    /// regardless of their `at` placement.
     pub rms_dbfs: f32,
     /// Share of the summed pre-master layer energy, 0..100.
     pub energy_pct: f32,
@@ -104,15 +111,16 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
     let mut energies = Vec::with_capacity(tracks.len());
     for (ti, t) in tracks.iter().enumerate() {
         let layer_id = t.id.clone().unwrap_or_else(|| format!("layer_{ti}"));
-        // v2 streams are keyed by the stable layer id (positional fallback for
-        // not-yet-backfilled docs), so a layer's noise never depends on its
-        // siblings or its position in the list.
-        let stream = t.id.as_deref().map(fnv1a).unwrap_or(ti as u64);
+        // v2 streams are keyed by the stable layer id. The fallback hashes the
+        // exact id `ensure_track_ids` will backfill, so a document's noise is
+        // identical before and after the backfill pass.
+        let stream = layer_stream_key(&layer_id);
         if t.mute {
             // Muted layers stay off the bus. v1's single stream must still
             // advance exactly as if the track had rendered, or muting one
-            // layer would change every later layer's noise.
-            if !per_track_streams && track_native_stereo(&t.node, n, sr).is_none() {
+            // layer would change every later layer's noise. (Cheap shape test:
+            // native-stereo sampler tracks never touch the shared stream.)
+            if !per_track_streams && !is_native_stereo(&t.node) {
                 let _ = render_node(&t.node, n, sr, &mut rng);
             }
             layers.push(LayerStats {
@@ -133,7 +141,8 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
         let theta = (t.pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
         let (gl, gr) = (theta.cos() * t.gain, theta.sin() * t.gain);
         // Contribution stats accumulate over what actually lands on the bus
-        // (post fader/pan/offset, pre master).
+        // (post fader/pan/offset, pre master). Per-channel energy keeps them
+        // pan-invariant: gl² + gr² = gain² for any pan.
         let (mut tpeak, mut tsum) = (0.0f32, 0.0f64);
         if let Some((l, r)) = track_native_stereo(&t.node, n, sr) {
             // A sampler track keeps its recorded stereo image; pan biases it.
@@ -144,9 +153,8 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
                 );
                 left[i + off] += la;
                 right[i + off] += ra;
-                let m = 0.5 * (la + ra);
-                tpeak = tpeak.max(m.abs());
-                tsum += (m * m) as f64;
+                tpeak = tpeak.max(la.abs()).max(ra.abs());
+                tsum += (la * la + ra * ra) as f64;
             }
         } else {
             let mono = if per_track_streams {
@@ -159,16 +167,13 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
                 let (la, ra) = (x * gl, x * gr);
                 left[i + off] += la;
                 right[i + off] += ra;
-                let m = 0.5 * (la + ra);
-                tpeak = tpeak.max(m.abs());
-                tsum += (m * m) as f64;
+                tpeak = tpeak.max(la.abs()).max(ra.abs());
+                tsum += (la * la + ra * ra) as f64;
             }
         }
-        let rms = if n > off {
-            ((tsum / (n - off) as f64) as f32).sqrt()
-        } else {
-            0.0
-        };
+        // RMS over the whole timeline (both channels), so layers compare
+        // fairly regardless of where `at` placed them.
+        let rms = ((tsum / (2 * n) as f64) as f32).sqrt();
         layers.push(LayerStats {
             id: layer_id,
             peak_dbfs: crate::dsp::dbfs(tpeak),

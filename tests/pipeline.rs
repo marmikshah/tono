@@ -489,6 +489,36 @@ async fn layered_authoring_flow_round_trips_and_replays() {
     .await
     .unwrap();
 
+    // A failing mixer move leaves history and redo exactly as they were —
+    // no spurious no-op revision, no destroyed redo stack.
+    let before = a
+        .history(Parameters(IdReq {
+            id: "laser_zap".into(),
+        }))
+        .await
+        .unwrap();
+    let err = a
+        .set_layer(Parameters(
+            serde_json::from_str::<SetLayerReq>(
+                r#"{ "id": "laser_zap", "layer": "sub", "gain": 5.0 }"#,
+            )
+            .unwrap(),
+        ))
+        .await
+        .unwrap_err();
+    assert!(err.contains("gain must be in [0, 2]"), "{err}");
+    let after = a
+        .history(Parameters(IdReq {
+            id: "laser_zap".into(),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(
+        (before.0.undo_depth, before.0.redo_depth),
+        (after.0.undo_depth, after.0.redo_depth),
+        "failed edits must not touch history"
+    );
+
     // The whole layered flow replays byte-identically in a fresh dir.
     let saved = a
         .save_session(Parameters(SaveSessionReq { dest: None }))

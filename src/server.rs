@@ -599,7 +599,11 @@ impl Sonarium {
         // New documents follow the current render semantics. The resolved
         // version is stamped into the journaled args (like mutate_sound's
         // seed) so a future sonarium replays this step byte-faithfully.
-        req.graph.version.get_or_insert(crate::dsl::SCHEMA_VERSION);
+        // During replay the stamp must NOT run: a journaled step missing
+        // `version` predates stamping and was recorded under v1 semantics.
+        if !self.replaying.load(std::sync::atomic::Ordering::SeqCst) {
+            req.graph.version.get_or_insert(crate::dsl::SCHEMA_VERSION);
+        }
         let args = serde_json::to_value(&req).map_err(|e| e.to_string())?;
         let AuthorReq { mut graph, name } = req;
         if let Some(n) = name {
@@ -629,8 +633,10 @@ impl Sonarium {
         }
         let args = serde_json::to_value(&req).map_err(|e| e.to_string())?;
         let RefineReq { id, graph } = req;
-        self.checkpoint(&id, &existing.graph);
+        // Build first: a rejected graph must leave history, redo, and the
+        // journal untouched, or live and replayed sessions diverge.
         let rec = self.build(id, graph, existing.created_at)?;
+        self.checkpoint(&rec.id, &existing.graph);
         self.jlog("refine_sound", args);
         Ok(sound_result(&rec, false))
     }
@@ -858,8 +864,8 @@ impl Sonarium {
             None => path,
         };
         let graph = edit::apply_ops(&rec.graph, &[EditOp::Set { path, value }])?;
-        self.checkpoint(&id, &rec.graph);
         let new = self.build(id, graph, rec.created_at)?;
+        self.checkpoint(&new.id, &rec.graph);
         self.jlog("set_param", args);
         Ok(sound_result(&new, true))
     }
@@ -887,8 +893,8 @@ impl Sonarium {
             }
         }
         let graph = edit::apply_ops(&rec.graph, &ops)?;
-        self.checkpoint(&id, &rec.graph);
         let new = self.build(id, graph, rec.created_at)?;
+        self.checkpoint(&new.id, &rec.graph);
         self.jlog("edit_sound", args);
         Ok(sound_result(&new, true))
     }
@@ -928,7 +934,7 @@ impl Sonarium {
             // Wrap the existing graph as the first layer, named after the
             // sound. √2 gain exactly compensates the equal-power center pan,
             // so the original keeps its level on the bus.
-            let first = if rec.id == layer {
+            let first = if rec.id == layer || rec.id == "master" {
                 format!("{}_main", rec.id)
             } else {
                 rec.id.clone()
@@ -945,10 +951,22 @@ impl Sonarium {
                 }],
                 master: Vec::new(),
             };
+            // The wrap is the moment a sound becomes a mixer document — adopt
+            // v2 render semantics (per-layer RNG streams) here, where the
+            // re-grain is already announced. Replays re-run this same code,
+            // so the upgrade is deterministic.
+            graph.version = Some(crate::dsl::SCHEMA_VERSION);
             notes.push(format!(
                 "existing graph wrapped as layer '{first}' (gain √2 compensates the equal-power \
                  pan — its level is unchanged; noise textures may re-grain)"
             ));
+        } else if graph.effective_version() < 2 {
+            notes.push(
+                "note: this is a schema-v1 document — its layers share one RNG stream, so \
+                 structural changes can re-grain later layers' noise (refine_sound with \
+                 version 2 to give every layer its own stream)"
+                    .to_string(),
+            );
         }
 
         let Node::Tracks { tracks, .. } = &mut graph.root else {
@@ -971,8 +989,8 @@ impl Sonarium {
         });
         let count = tracks.len();
 
-        self.checkpoint(&id, &rec.graph);
         let new = self.build(id, graph, rec.created_at)?;
+        self.checkpoint(&new.id, &rec.graph);
         self.jlog("add_layer", args);
         let mut res = sound_result(&new, true);
         for n in notes {
@@ -1023,8 +1041,8 @@ impl Sonarium {
                 t.mute = m;
             }
         }
-        self.checkpoint(&id, &rec.graph);
         let new = self.build(id, graph, rec.created_at)?;
+        self.checkpoint(&new.id, &rec.graph);
         self.jlog("set_layer", args);
         let mut res = sound_result(&new, true);
         if mute == Some(true) {
@@ -1038,7 +1056,7 @@ impl Sonarium {
     /// Remove or duplicate a layer.
     #[tool(
         name = "layer_ops",
-        description = "Structural layer operations: {op:\"remove\", layer} deletes a layer (a mixer keeps at least one); {op:\"duplicate\", layer, new_id} copies one (deterministic re-grained noise — a built-in variation). Other layers are untouched: every layer has its own RNG stream."
+        description = "Structural layer operations: {op:\"remove\", layer} deletes a layer (a mixer keeps at least one); {op:\"duplicate\", layer, new_id} copies one (deterministic re-grained noise — a built-in variation). On schema-v2 documents other layers are untouched — every layer has its own RNG stream (v1 documents share one stream; a warning is appended there)."
     )]
     pub async fn layer_ops(
         &self,
@@ -1084,14 +1102,21 @@ impl Sonarium {
                 tracks.insert(pos + 1, copy);
             }
         }
-        self.checkpoint(&id, &rec.graph);
         let new = self.build(id, graph, rec.created_at)?;
+        self.checkpoint(&new.id, &rec.graph);
         self.jlog("layer_ops", args);
         let mut res = sound_result(&new, true);
         res.content.push(Content::text(format!(
             "layers now: {}",
             layer_ids(&new.graph)
         )));
+        if new.graph.effective_version() < 2 {
+            res.content.push(Content::text(
+                "note: schema-v1 document — layers share one RNG stream, so this structural \
+                 change may have re-grained later layers' noise"
+                    .to_string(),
+            ));
+        }
         Ok(res)
     }
 
@@ -1246,8 +1271,8 @@ impl Sonarium {
             crossfade_secs,
         };
         graph.validate()?;
-        self.checkpoint(&id, &rec.graph);
         let (new, product) = self.build_product(id, graph, rec.created_at)?;
+        self.checkpoint(&new.id, &rec.graph);
         self.jlog("make_loop", args);
         // Report how clean the resulting loop seam is.
         let looped = product.mono;
@@ -1811,11 +1836,19 @@ fn resolve_layer_path(graph: &SoundDoc, layer: &str, path: &str) -> Result<Strin
                 .into(),
         );
     }
-    if matches!(path, "gain" | "pan" | "at" | "mute") {
+    // Match the FIRST path segment so 'gain[0]' / 'mute.x' get the teaching
+    // error too — while nested uses like 'notes[3].gain' stay untouched.
+    let first_seg = path.split(['.', '[']).next().unwrap_or(path);
+    if matches!(first_seg, "gain" | "pan" | "at" | "mute") {
         return Err(format!(
             "'{path}' is a mixer field — use set_layer; layer paths address the instrument \
              graph (e.g. 'env.a', 'notes[3].pitch', 'stages[1].cutoff')"
         ));
+    }
+    if first_seg == "id" {
+        return Err(
+            "layer ids are immutable addresses — use layer_ops duplicate + remove to rename".into(),
+        );
     }
     if path == "root" || path.starts_with("root.") || path.starts_with("root[") {
         return Err(
@@ -1879,7 +1912,11 @@ fn apply_target_lufs(graph: &mut SoundDoc, target: f32) {
 pub fn rehydrate(store: &Store) -> usize {
     store.load_banks();
     let mut restored = 0;
-    for (id, graph, created_at) in store.list_graph_files() {
+    for (id, mut graph, created_at) in store.list_graph_files() {
+        // Pre-layering mixer documents have no track ids — backfill exactly
+        // like build does, so describe/set_layer addresses resolve after a
+        // restart. (Positional + deterministic; v1 rendering ignores ids.)
+        graph.ensure_track_ids();
         if graph.validate().is_err() {
             continue;
         }
@@ -1889,9 +1926,11 @@ pub fn rehydrate(store: &Store) -> usize {
             continue;
         }
         let png_path = store.png_path(&id);
-        let Ok(analysis) = analysis::analyze(&product.mono, graph.sample_rate, &png_path) else {
+        let Ok(mut analysis) = analysis::analyze(&product.mono, graph.sample_rate, &png_path)
+        else {
             continue;
         };
+        analysis.layers = product.layers.clone();
         let rec = Record {
             id: id.clone(),
             name: graph.name.clone(),

@@ -210,7 +210,8 @@ impl Store {
         top
     }
 
-    /// Push a graph onto the undo stack (bounded to the last 20 revisions).
+    /// Push a graph onto the undo stack (bounded to the last `HISTORY_CAP`
+    /// revisions).
     pub fn push_history(&self, id: &str, graph: &SoundDoc) {
         Self::push_stack(&self.history_path(id), graph);
     }

@@ -1038,7 +1038,20 @@ impl SoundDoc {
             if tracks.is_empty() {
                 return Err("tracks must be non-empty".into());
             }
+            // A mixer document builds its stereo image from per-layer pan; a
+            // doc-level Haas/Wide treatment would be silently dropped by the
+            // renderer. v1 documents keep the historical silent-ignore so old
+            // libraries still load.
+            if self.effective_version() >= 2 && !matches!(self.stereo, Stereo::Mono) {
+                return Err(
+                    "a tracks document builds its stereo image from per-layer pan — remove the \
+                     doc-level stereo treatment (set stereo mode 'mono') and pan the layers \
+                     instead"
+                        .into(),
+                );
+            }
             let mut seen_ids = std::collections::HashSet::new();
+            let mut seen_streams = std::collections::HashMap::new();
             for (i, t) in tracks.iter().enumerate() {
                 // Errors name the layer by id when it has one — that is the
                 // address the agent used.
@@ -1064,6 +1077,22 @@ impl SoundDoc {
                     }
                     if !seen_ids.insert(id.clone()) {
                         return Err(format!("duplicate layer id '{id}' — ids must be unique"));
+                    }
+                    // Stream keys must be collision-free or two layers would
+                    // silently share one noise stream (and u64::MAX is the
+                    // master bus's stream).
+                    let key = crate::dsp::layer_stream_key(id);
+                    if key == u64::MAX {
+                        return Err(format!(
+                            "{who}: this id collides with the master bus's RNG stream — rename \
+                             the layer"
+                        ));
+                    }
+                    if let Some(other) = seen_streams.insert(key, id.clone()) {
+                        return Err(format!(
+                            "layer ids '{other}' and '{id}' hash to the same RNG stream — \
+                             rename one of them"
+                        ));
                     }
                 }
                 if !(-1.0..=1.0).contains(&t.pan) {
@@ -1410,6 +1439,22 @@ mod tests {
         assert_eq!(doc.effective_version(), 1);
         assert!(matches!(doc.stereo, Stereo::Mono));
         assert!(matches!(doc.playback, Playback::OneShot));
+    }
+
+    #[test]
+    fn v2_tracks_reject_doc_level_stereo() {
+        let mut doc: SoundDoc = serde_json::from_str(
+            r#"{ "name": "band", "duration": 0.2, "version": 2,
+                "stereo": { "mode": "wide" },
+                "root": { "type": "tracks",
+                  "tracks": [ { "id": "a", "node": { "type": "sine", "freq": 220 } } ] } }"#,
+        )
+        .unwrap();
+        let err = doc.validate().unwrap_err();
+        assert!(err.contains("per-layer pan"), "{err}");
+        // v1 documents keep the historical silent-ignore so old libraries load.
+        doc.version = None;
+        assert_eq!(doc.validate(), Ok(()));
     }
 
     #[test]
