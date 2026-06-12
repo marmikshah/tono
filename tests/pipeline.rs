@@ -323,44 +323,47 @@ async fn band_demo_session_replays_with_four_instruments() {
 }
 
 #[tokio::test]
-async fn river_phonk_remix_session_replays() {
-    // The remix showcase: River's hook re-gridded to 140 bpm phonk — cowbell
-    // lead, driven 808, lo-fi bitcrushed piano, kit, pads — one call.
-    let (srv, dir) = fresh("phonk");
-    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/examples/river-phonk.json");
+async fn bgm_showcases_replay_as_seamless_mixer_loops() {
+    // The three game-BGM showcases: each is a tracks-root mixer document
+    // rendered loop-ready (the WAV carries a smpl chunk engines read).
+    for (recipe, id) in [
+        ("evening-glade.json", "evening_glade"),
+        ("iron-gauntlet.json", "iron_gauntlet"),
+        ("sunny-steps.json", "sunny_steps"),
+    ] {
+        let (srv, dir) = fresh(&format!("bgm_{id}"));
+        let example = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("docs/examples")
+            .join(recipe);
+        srv.replay_session(Parameters(ReplaySessionReq {
+            path: example.to_string_lossy().into_owned(),
+        }))
+        .await
+        .unwrap();
+        let g = graph_json(&srv, id).await;
+        assert_eq!(g["root"]["type"], "tracks", "{id} mixes on the console");
+        assert_eq!(g["playback"]["mode"], "loop", "{id} ships as a loop");
+        let bytes = std::fs::read(dir.join(format!("{id}.wav"))).unwrap();
+        assert!(
+            bytes.windows(4).any(|w| w == b"smpl"),
+            "{id} WAV carries the loop chunk"
+        );
+    }
+    // The boss track's bass riff ducks under its own kick.
+    let (srv, _dir) = fresh("bgm_duck_check");
+    let example =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/examples/iron-gauntlet.json");
     srv.replay_session(Parameters(ReplaySessionReq {
         path: example.to_string_lossy().into_owned(),
     }))
     .await
     .unwrap();
-    let g = graph_json(&srv, "river_phonk").await;
-    let layers = g["root"]["stages"][0]["inputs"].as_array().unwrap();
-    // The driven-808 chain is present and ducks under the kick.
-    let bass = layers
-        .iter()
-        .find(|l| l["type"] == "chain" && l["stages"][1]["type"] == "drive")
-        .expect("driven 808 chain");
+    let g = graph_json(&srv, "iron_gauntlet").await;
+    let bass = &g["root"]["tracks"][1]["node"];
     assert_eq!(
         bass["stages"].as_array().unwrap().last().unwrap()["type"],
         "duck"
     );
-    // The cowbell lead lives in the melodic branch, behind the shared
-    // reverb + kick-keyed duck (the phonk pump); the sub stays dry.
-    let melodics = layers
-        .iter()
-        .find(|l| l["stages"][0]["type"] == "mix")
-        .expect("melodic branch");
-    let stages = melodics["stages"].as_array().unwrap();
-    assert!(
-        stages[0]["inputs"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|n| n["wave"] == "cowbell")
-    );
-    assert_eq!(stages[1]["type"], "reverb");
-    assert_eq!(stages[2]["type"], "duck");
-    assert!(dir.join("river_phonk.wav").exists());
 }
 
 #[tokio::test]
