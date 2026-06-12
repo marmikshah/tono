@@ -13,7 +13,7 @@
             "inputs": [
               {
                 "type": "square",
-                "duty": 0.5,
+                "duty": 0.3,
                 "freq": {
                   "slide": {
                     "from": 160,
@@ -29,7 +29,7 @@
                 "d": 0.28,
                 "s": 0.0,
                 "r": 0.05,
-                "punch": 0.25
+                "punch": 0.45
               }
             ]
           }
