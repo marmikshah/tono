@@ -75,6 +75,20 @@ async fn author_renders_artifacts_and_analysis() {
 }
 
 #[tokio::test]
+async fn author_stamps_the_current_schema_version() {
+    let (srv, _dir) = fresh("version_stamp");
+    let res = srv.author_sound(author_req(LASER)).await.unwrap();
+    let id = result_id(&res);
+    let g = graph_json(&srv, &id).await;
+    // LASER omits `version`; authoring resolves it to the current schema so
+    // the stored doc (and the journaled step) pin their render semantics.
+    assert_eq!(
+        g["version"].as_u64().unwrap() as u32,
+        sonarium::dsl::SCHEMA_VERSION
+    );
+}
+
+#[tokio::test]
 async fn edit_undo_redo_cycle_round_trips() {
     let (srv, _dir) = fresh("editing");
     srv.author_sound(author_req(LASER)).await.unwrap();

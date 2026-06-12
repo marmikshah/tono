@@ -511,8 +511,13 @@ impl Sonarium {
         &self,
         params: Parameters<AuthorReq>,
     ) -> Result<CallToolResult, String> {
-        let args = serde_json::to_value(&params.0).map_err(|e| e.to_string())?;
-        let AuthorReq { mut graph, name } = params.0;
+        let mut req = params.0;
+        // New documents follow the current render semantics. The resolved
+        // version is stamped into the journaled args (like mutate_sound's
+        // seed) so a future sonarium replays this step byte-faithfully.
+        req.graph.version.get_or_insert(crate::dsl::SCHEMA_VERSION);
+        let args = serde_json::to_value(&req).map_err(|e| e.to_string())?;
+        let AuthorReq { mut graph, name } = req;
         if let Some(n) = name {
             graph.name = n;
         }
@@ -531,9 +536,15 @@ impl Sonarium {
         &self,
         params: Parameters<RefineReq>,
     ) -> Result<CallToolResult, String> {
-        let args = serde_json::to_value(&params.0).map_err(|e| e.to_string())?;
-        let RefineReq { id, graph } = params.0;
-        let existing = self.require(&id)?;
+        let mut req = params.0;
+        let existing = self.require(&req.id)?;
+        // An omitted version keeps the sound's existing render semantics
+        // (refining must never silently re-seed a v1 mixer's noise).
+        if req.graph.version.is_none() {
+            req.graph.version = existing.graph.version;
+        }
+        let args = serde_json::to_value(&req).map_err(|e| e.to_string())?;
+        let RefineReq { id, graph } = req;
         self.checkpoint(&id, &existing.graph);
         let rec = self.build(id, graph, existing.created_at)?;
         self.jlog("refine_sound", args);
@@ -615,7 +626,7 @@ impl Sonarium {
         if let Some(t) = target_lufs {
             apply_target_lufs(&mut graph, t);
         }
-        let samples = render::render(&graph);
+        let product = render::render_product(&graph);
         let bits = bit_depth.unwrap_or(16);
 
         let dest_path = match dest {
@@ -630,7 +641,7 @@ impl Sonarium {
         }
         write_export(
             &dest_path,
-            &samples,
+            &product,
             &graph,
             format,
             bits,
@@ -928,10 +939,10 @@ impl Sonarium {
         };
         graph.validate()?;
         self.checkpoint(&id, &rec.graph);
-        let new = self.build(id, graph, rec.created_at)?;
+        let (new, product) = self.build_product(id, graph, rec.created_at)?;
         self.jlog("make_loop", args);
         // Report how clean the resulting loop seam is.
-        let looped = render::render(&new.graph);
+        let looped = product.mono;
         let seam = render::loop_seam_db(&looped);
         let mut res = sound_result(&new, true);
         res.content.push(Content::text(format!(
@@ -1267,7 +1278,7 @@ impl Sonarium {
             if let Some(t) = target_lufs {
                 apply_target_lufs(&mut graph, t);
             }
-            let samples = render::render(&graph);
+            let product = render::render_product(&graph);
 
             // Lay out the file (optionally under a category subfolder).
             let ext = format.ext();
@@ -1291,7 +1302,7 @@ impl Sonarium {
                     dest.join(format!("{}.{ext}", rec.id)),
                 ),
             };
-            write_export(&abs, &samples, &graph, format, 16, quality)
+            write_export(&abs, &product, &graph, format, 16, quality)
                 .map_err(|e| format!("write {}: {e}", abs.display()))?;
 
             let channels = if matches!(graph.root, Node::Tracks { .. })
@@ -1308,13 +1319,13 @@ impl Sonarium {
                 category: m.category.clone(),
                 rr_group: m.rr_group.clone(),
                 looped: matches!(graph.playback, Playback::Loop { .. }),
-                duration_ms: (samples.len() as f32 / graph.sample_rate as f32 * 1000.0).round()
+                duration_ms: (product.mono.len() as f32 / graph.sample_rate as f32 * 1000.0).round()
                     as u32,
                 sample_rate: graph.sample_rate,
                 channels,
-                lufs: round2(analysis::loudness_lufs(&samples)),
-                peak_dbfs: round2(dbfs(peak_abs(&samples))),
-                true_peak_dbfs: round2(dbfs(analysis::true_peak(&samples))),
+                lufs: round2(analysis::loudness_lufs(&product.mono)),
+                peak_dbfs: round2(dbfs(peak_abs(&product.mono))),
+                true_peak_dbfs: round2(dbfs(analysis::true_peak(&product.mono))),
             });
         }
 
@@ -1347,15 +1358,27 @@ impl Sonarium {
 
     /// Shared author/refine pipeline: validate → render → write WAV → analyze → store.
     fn build(&self, id: String, graph: SoundDoc, created_at: u64) -> Result<Record, String> {
+        self.build_product(id, graph, created_at)
+            .map(|(rec, _)| rec)
+    }
+
+    /// [`build`], also handing back the render product so callers that need
+    /// the finished samples (loop seam reporting) never render twice.
+    fn build_product(
+        &self,
+        id: String,
+        graph: SoundDoc,
+        created_at: u64,
+    ) -> Result<(Record, render::RenderProduct), String> {
         graph.validate()?;
-        let samples = render::render(&graph);
+        let product = render::render_product(&graph);
 
         let wav_path = self.store.wav_path(&id);
-        write_render(&wav_path, &samples, &graph, 16)
+        write_render(&wav_path, &product, &graph, 16)
             .map_err(|e| format!("render write failed: {e}"))?;
 
         let png_path = self.store.png_path(&id);
-        let analysis = analysis::analyze(&samples, graph.sample_rate, &png_path)
+        let analysis = analysis::analyze(&product.mono, graph.sample_rate, &png_path)
             .map_err(|e| format!("analysis failed: {e}"))?;
 
         let rec = Record {
@@ -1369,7 +1392,7 @@ impl Sonarium {
         self.store
             .put(rec.clone())
             .map_err(|e| format!("store failed: {e}"))?;
-        Ok(rec)
+        Ok((rec, product))
     }
 
     /// Fetch a record or fail with the standard message.
@@ -1444,13 +1467,13 @@ pub fn rehydrate(store: &Store) -> usize {
         if graph.validate().is_err() {
             continue;
         }
-        let samples = render::render(&graph);
+        let product = render::render_product(&graph);
         let wav_path = store.wav_path(&id);
-        if write_render(&wav_path, &samples, &graph, 16).is_err() {
+        if write_render(&wav_path, &product, &graph, 16).is_err() {
             continue;
         }
         let png_path = store.png_path(&id);
-        let Ok(analysis) = analysis::analyze(&samples, graph.sample_rate, &png_path) else {
+        let Ok(analysis) = analysis::analyze(&product.mono, graph.sample_rate, &png_path) else {
             continue;
         };
         let rec = Record {
@@ -1468,19 +1491,19 @@ pub fn rehydrate(store: &Store) -> usize {
     restored
 }
 
-/// Write a mono render to disk, applying the graph's stereo treatment when it
+/// Write a finished render to disk: the true stereo bus for mixer documents,
+/// otherwise the mono buffer with the graph's stereo treatment applied when it
 /// isn't `Mono` (then the file is interleaved stereo).
 fn write_render(
     path: &std::path::Path,
-    mono: &[f32],
+    product: &render::RenderProduct,
     graph: &SoundDoc,
     bits: u16,
 ) -> anyhow::Result<()> {
+    let mono = &product.mono;
     // A mixer document is true stereo: write the panned bus, not the mid.
-    if matches!(graph.root, Node::Tracks { .. })
-        && let Some((l, r)) = render::render_tracks(graph)
-    {
-        audio::write_wav_stereo(path, &l, &r, graph.sample_rate, bits)?;
+    if let Some((l, r)) = &product.stereo {
+        audio::write_wav_stereo(path, l, r, graph.sample_rate, bits)?;
         if matches!(graph.playback, Playback::Loop { .. }) && !mono.is_empty() {
             audio::append_smpl_loop(path, graph.sample_rate, 0, mono.len() as u32 - 1)?;
         }
@@ -1501,14 +1524,14 @@ fn write_render(
 }
 
 /// Per-channel buffers for a finished render (mono, or stereoized L/R).
-fn channels_for(samples: &[f32], graph: &SoundDoc) -> Vec<Vec<f32>> {
-    if let Some((l, r)) = render::render_tracks(graph) {
-        return vec![l, r];
+fn channels_for(product: &render::RenderProduct, graph: &SoundDoc) -> Vec<Vec<f32>> {
+    if let Some((l, r)) = &product.stereo {
+        return vec![l.clone(), r.clone()];
     }
     if matches!(graph.stereo, Stereo::Mono) {
-        vec![samples.to_vec()]
+        vec![product.mono.clone()]
     } else {
-        let (l, r) = render::stereoize(samples, graph.stereo, graph.sample_rate);
+        let (l, r) = render::stereoize(&product.mono, graph.stereo, graph.sample_rate);
         vec![l, r]
     }
 }
@@ -1517,16 +1540,16 @@ fn channels_for(samples: &[f32], graph: &SoundDoc) -> Vec<Vec<f32>> {
 /// `write_render` (stereo + `smpl` loop chunk); FLAC/OGG encode the channels.
 fn write_export(
     path: &std::path::Path,
-    samples: &[f32],
+    product: &render::RenderProduct,
     graph: &SoundDoc,
     format: ExportFormat,
     bits: u16,
     quality: f32,
 ) -> anyhow::Result<()> {
     match format {
-        ExportFormat::Wav => write_render(path, samples, graph, bits),
+        ExportFormat::Wav => write_render(path, product, graph, bits),
         ExportFormat::Flac | ExportFormat::Ogg => {
-            let ch = channels_for(samples, graph);
+            let ch = channels_for(product, graph);
             let refs: Vec<&[f32]> = ch.iter().map(|c| c.as_slice()).collect();
             if format == ExportFormat::Flac {
                 audio::write_flac(path, &refs, graph.sample_rate, bits)

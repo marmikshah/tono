@@ -15,19 +15,52 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 /// A block of mono audio samples.
 type Signal = Vec<f32>;
 
+/// A finished render: the mono mid (what analysis and mono export consume)
+/// plus the true stereo bus when the document is a `tracks` mixer. Producing
+/// both from ONE render keeps the author/refine/export paths from paying the
+/// full synthesis cost twice. Plain documents carry no pair here — their
+/// `stereo` treatment (Haas / Wide) is applied at write time by [`stereoize`].
+pub struct RenderProduct {
+    /// Mono mid signal: `0.5 × (L + R)` for a mixer document, the render
+    /// itself otherwise.
+    pub mono: Signal,
+    /// The panned, mastered stereo bus of a `tracks` document.
+    pub stereo: Option<(Signal, Signal)>,
+}
+
+/// Derive track `i`'s independent RNG stream from the document seed (schema
+/// v2). SplitMix64 finalizer over a golden-gamma offset, so streams never
+/// correlate with each other or with the v1 threaded stream.
+fn track_stream_seed(seed: u64, i: u64) -> u64 {
+    let mut z = seed ^ i.wrapping_add(1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// The master bus's stream index (never collides with a track index).
+const MASTER_STREAM: u64 = u64::MAX;
+
 /// Render a `tracks` document to a finished stereo pair: each track is
 /// rendered mono and equal-power panned onto the bus (sampler tracks keep
 /// their native stereo), the master chain runs per channel (the reverb with
 /// decorrelated tails), then loop/normalize apply jointly.
+///
+/// RNG model: schema v2 documents give every track (and the master bus) its
+/// own deterministic stream, so editing, muting, or removing one track never
+/// changes the noise content of its siblings. v1 documents keep the original
+/// single stream threaded through the track list in order — their audio stays
+/// byte-identical across upgrades.
 pub fn render_tracks(doc: &SoundDoc) -> Option<(Signal, Signal)> {
     let Node::Tracks { tracks, master } = &doc.root else {
         return None;
     };
     let sr = doc.sample_rate;
     let n = ((doc.duration * sr as f32).ceil() as usize).max(1);
+    let per_track_streams = doc.effective_version() >= 2;
     let mut rng = Rng::new(doc.seed);
     let (mut left, mut right) = (vec![0.0f32; n], vec![0.0f32; n]);
-    for t in tracks {
+    for (ti, t) in tracks.iter().enumerate() {
         // Equal-power pan law.
         let theta = (t.pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
         let (gl, gr) = (theta.cos() * t.gain, theta.sin() * t.gain);
@@ -38,12 +71,20 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<(Signal, Signal)> {
                 right[i] += r[i] * gr * std::f32::consts::SQRT_2;
             }
         } else {
-            let mono = render_node(&t.node, n, sr, &mut rng);
+            let mono = if per_track_streams {
+                let mut trng = Rng::new(track_stream_seed(doc.seed, ti as u64));
+                render_node(&t.node, n, sr, &mut trng)
+            } else {
+                render_node(&t.node, n, sr, &mut rng)
+            };
             for (i, x) in mono.into_iter().enumerate() {
                 left[i] += x * gl;
                 right[i] += x * gr;
             }
         }
+    }
+    if per_track_streams {
+        rng = Rng::new(track_stream_seed(doc.seed, MASTER_STREAM));
     }
     // Master bus: run each processor on both channels with identical state
     // seeds (the rng is cloned so e.g. a duck trigger fires identically), and
@@ -115,12 +156,31 @@ fn track_native_stereo(node: &Node, n: usize, sr: u32) -> Option<(Signal, Signal
     None
 }
 
-/// Render a sound document to normalized mono samples in [-1, 1].
-pub fn render(doc: &SoundDoc) -> Signal {
+/// Render a sound document once, yielding the mono mid plus the stereo bus
+/// for mixer documents. Every consumer that needs both (analysis + the WAV on
+/// disk) should call this instead of rendering twice.
+pub fn render_product(doc: &SoundDoc) -> RenderProduct {
     if let Some((l, r)) = render_tracks(doc) {
         // Mono consumers (analysis, mono export) get the mid signal.
-        return l.iter().zip(r).map(|(a, b)| 0.5 * (a + b)).collect();
+        let mono = l.iter().zip(&r).map(|(a, b)| 0.5 * (a + b)).collect();
+        return RenderProduct {
+            mono,
+            stereo: Some((l, r)),
+        };
     }
+    RenderProduct {
+        mono: render_plain(doc),
+        stereo: None,
+    }
+}
+
+/// Render a sound document to normalized mono samples in [-1, 1].
+pub fn render(doc: &SoundDoc) -> Signal {
+    render_product(doc).mono
+}
+
+/// The non-mixer render path: one graph, one mono buffer.
+fn render_plain(doc: &SoundDoc) -> Signal {
     let sr = doc.sample_rate;
     let n = ((doc.duration * sr as f32).ceil() as usize).max(1);
     let mut rng = Rng::new(doc.seed);
@@ -1608,6 +1668,53 @@ mod tests {
 
     fn rms(s: &[f32]) -> f32 {
         (s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32).sqrt()
+    }
+
+    #[test]
+    fn render_product_mid_is_the_track_bus_average() {
+        let d = doc(r#"{ "name": "t", "duration": 0.05, "seed": 3, "version": 2,
+                 "root": { "type": "tracks", "tracks": [
+                    { "node": { "type": "sine", "freq": 220 }, "gain": 0.5 },
+                    { "node": { "type": "noise" }, "gain": 0.5, "pan": 0.5 }
+                 ] } }"#);
+        let p = render_product(&d);
+        let (l, r) = p.stereo.as_ref().expect("tracks doc carries the bus");
+        assert_eq!(p.mono.len(), l.len());
+        for i in [0usize, 100, 1000] {
+            assert_eq!(p.mono[i], 0.5 * (l[i] + r[i]));
+        }
+        // Plain documents carry no pair; stereo treatment happens at write time.
+        let plain =
+            doc(r#"{ "name": "p", "duration": 0.05, "root": { "type": "sine", "freq": 220 } }"#);
+        assert!(render_product(&plain).stereo.is_none());
+    }
+
+    #[test]
+    fn v2_tracks_have_independent_rng_streams() {
+        // Two docs that differ ONLY in track 0 (a sine consumes no RNG draws, a
+        // noise consumes one per sample). Track 1 is hard-panned right, so the
+        // right channel is its noise alone. Gains stay at 0.5 so the joint peak
+        // limit never engages and the channels compare bit-for-bit.
+        let mk = |first: &str, version: &str| {
+            doc(&format!(
+                r#"{{ "name": "t", "duration": 0.05, "seed": 7{version},
+                     "root": {{ "type": "tracks", "tracks": [
+                        {{ "node": {first}, "pan": -1.0, "gain": 0.5 }},
+                        {{ "node": {{ "type": "noise" }}, "pan": 1.0, "gain": 0.5 }}
+                     ] }} }}"#
+            ))
+        };
+        let right = |d: &SoundDoc| render_tracks(d).unwrap().1;
+        let sine = r#"{ "type": "sine", "freq": 440 }"#;
+        let noise = r#"{ "type": "noise" }"#;
+        // v2: editing track 0 never changes track 1's noise content.
+        assert_eq!(
+            right(&mk(sine, r#", "version": 2"#)),
+            right(&mk(noise, r#", "version": 2"#))
+        );
+        // v1 (version omitted) keeps the legacy threaded stream — and with it
+        // byte-identical replay of pre-versioning documents.
+        assert_ne!(right(&mk(sine, "")), right(&mk(noise, "")));
     }
 
     #[test]

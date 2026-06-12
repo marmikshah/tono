@@ -267,7 +267,13 @@ pub fn morph(a: &SoundDoc, b: &SoundDoc, t: f32) -> Result<SoundDoc, String> {
     let mut jb = serde_json::to_value(b).map_err(|e| e.to_string())?;
     // Names/version are identity, not parameters — unify before the walk.
     jb["name"] = ja["name"].clone();
-    jb["version"] = ja["version"].clone();
+    // `version` is optional on the wire: mirror a's presence/absence exactly
+    // so the key sets always match.
+    if let Some(v) = ja.get("version") {
+        jb["version"] = v.clone();
+    } else if let Some(o) = jb.as_object_mut() {
+        o.remove("version");
+    }
     let merged = lerp_json(&ja, &jb, t, "$")?;
     let doc: SoundDoc =
         serde_json::from_value(merged).map_err(|e| format!("morphed graph invalid: {e}"))?;

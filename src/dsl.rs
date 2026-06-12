@@ -9,16 +9,15 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Current DSL schema version. Stored on every doc so old graphs stay loadable
-/// as the vocabulary evolves.
-pub const SCHEMA_VERSION: u32 = 1;
+/// as the vocabulary evolves. Version 2 gives every mixer track its own
+/// deterministic RNG stream (v1 threads one stream through the track list in
+/// order, so editing one track shifts the noise content of its siblings).
+pub const SCHEMA_VERSION: u32 = 2;
 
 // Serde `default = "..."` requires free functions. Values with non-obvious
 // origins: q 0.707 is Butterworth (maximally flat), haas 12 ms sits in the
 // precedence-effect sweet spot, ceiling −1 dBTP is the common streaming-safe
 // true-peak ceiling.
-fn default_version() -> u32 {
-    SCHEMA_VERSION
-}
 fn default_sample_rate() -> u32 {
     44_100
 }
@@ -121,9 +120,12 @@ pub struct SoundDoc {
     /// Seed for any stochastic node (noise). Same seed ⇒ identical audio.
     #[serde(default)]
     pub seed: u64,
-    /// DSL schema version. Defaults to the current version.
-    #[serde(default = "default_version")]
-    pub version: u32,
+    /// DSL schema version. Omitted ⇒ 1, the semantics documents were authored
+    /// under before versioning mattered; the authoring tools stamp new
+    /// documents with the current [`SCHEMA_VERSION`]. Documents from a newer
+    /// sonarium are rejected by `validate` instead of silently misrendered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
     /// Optional stereo treatment applied to the final mono render. Defaults to
     /// mono (game SFX are usually authored mono and spatialised by the engine;
     /// use stereo for BGM, ambience, and UI stingers).
@@ -903,9 +905,21 @@ impl Adsr {
 }
 
 impl SoundDoc {
+    /// The schema version this document's render semantics follow (omitted ⇒ 1).
+    pub fn effective_version(&self) -> u32 {
+        self.version.unwrap_or(1)
+    }
+
     /// Validate ranges and structure beyond what serde already enforces.
     /// Returns a human-readable message the agent can act on.
     pub fn validate(&self) -> Result<(), String> {
+        let v = self.effective_version();
+        if v == 0 || v > SCHEMA_VERSION {
+            return Err(format!(
+                "version must be in [1, {SCHEMA_VERSION}], got {v} — a document from a newer \
+                 sonarium cannot render correctly here; upgrade sonarium"
+            ));
+        }
         // 600 s covers full songs; the cap exists only to bound render memory.
         if !(self.duration > 0.0 && self.duration <= 600.0) {
             return Err(format!(
@@ -1316,9 +1330,26 @@ mod tests {
                 .unwrap();
         assert_eq!(doc.duration, 0.3);
         assert_eq!(doc.sample_rate, 44_100);
-        assert_eq!(doc.version, SCHEMA_VERSION);
+        // Version-less documents keep the pre-versioning (v1) render semantics.
+        assert_eq!(doc.version, None);
+        assert_eq!(doc.effective_version(), 1);
         assert!(matches!(doc.stereo, Stereo::Mono));
         assert!(matches!(doc.playback, Playback::OneShot));
+    }
+
+    #[test]
+    fn future_schema_versions_are_rejected() {
+        let mut doc: SoundDoc =
+            serde_json::from_str(r#"{ "name": "beep", "root": { "type": "sine", "freq": 440 } }"#)
+                .unwrap();
+        assert_eq!(doc.validate(), Ok(()));
+        doc.version = Some(SCHEMA_VERSION);
+        assert_eq!(doc.validate(), Ok(()));
+        doc.version = Some(SCHEMA_VERSION + 1);
+        let err = doc.validate().unwrap_err();
+        assert!(err.contains("upgrade sonarium"), "unhelpful error: {err}");
+        doc.version = Some(0);
+        assert!(doc.validate().is_err());
     }
 
     #[test]
