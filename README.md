@@ -24,7 +24,7 @@
 </p>
 
 <p align="center"><em>Every sound behind these images — a complete piano piece,
-a four-instrument band, a phonk remix — was composed, mixed and mastered by
+a four-instrument band, three game-ready BGM loops — was composed, mixed and mastered by
 agents through the MCP tools, and every one replays byte-identically from a
 session file in this repo. The logo and wordmark were drawn by an agent with
 <a href="https://github.com/marmikshah/atelier">atelier</a>, sonarium's
@@ -111,13 +111,15 @@ file** — JSON that replays identically every time:
 sonarium replay docs/examples/band-demo.json --workdir /tmp/sonarium-demo
 ```
 
-Nine annotated examples live in [docs/examples/](docs/examples/), every one
+Eleven annotated examples live in [docs/examples/](docs/examples/), every one
 replayed in CI. The deep cuts: the canonical SFX workflow (laser → variants →
 bank), a four-instrument band on the mixing console, the complete *River
 Flows in You* on the piano instrument (800 notes converted from MIDI with
 rubato and sustain pedal intact —
 [docs/examples/midi_to_seq.py](docs/examples/midi_to_seq.py) converts any
-MIDI), and its phonk remix (cowbell lead, driven 808, lo-fi piano).
+MIDI), and three loop-ready game BGM tracks — a soft evening theme, a
+driving boss battle (kick-ducked bass riff, phrygian sawtooth lead), and a
+swung idle-platformer bounce.
 
 And an **iconic-sounds pack** — recognizable classics rebuilt from scratch,
 with playable renders in [docs/examples/audio/](docs/examples/audio/):
@@ -132,8 +134,8 @@ with playable renders in [docs/examples/audio/](docs/examples/audio/):
 
 The ▶ links play right on GitHub (each mp4 is the sound's spectrogram with
 the audio as its track — click, press play). The
-[listen page](https://marmikshah.github.io/sonarium/listen.html) plays all
-nine showcases inline, including the full piano piece and the phonk remix.
+[listen page](https://marmikshah.github.io/sonarium/listen.html) plays every
+showcase inline, including the full piano piece and the three BGM loops.
 OGGs sit next to the mp4s for direct use.
 
 ## Works with atelier

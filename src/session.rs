@@ -167,7 +167,9 @@ impl Store {
     // `<id>.history.json` (undo) and `<id>.redo.json`.
 
     /// Maximum retained revisions per stack.
-    const HISTORY_CAP: usize = 20;
+    // Compositional authoring (add a layer, tweak each a few times) burns
+    // revisions fast; graphs are small JSON, so a deep history is cheap.
+    const HISTORY_CAP: usize = 100;
 
     fn history_path(&self, id: &str) -> PathBuf {
         self.dir.join(format!("{id}.history.json"))
@@ -208,7 +210,8 @@ impl Store {
         top
     }
 
-    /// Push a graph onto the undo stack (bounded to the last 20 revisions).
+    /// Push a graph onto the undo stack (bounded to the last `HISTORY_CAP`
+    /// revisions).
     pub fn push_history(&self, id: &str, graph: &SoundDoc) {
         Self::push_stack(&self.history_path(id), graph);
     }
@@ -404,20 +407,20 @@ mod tests {
     fn history_is_lifo_capped_and_redo_clears() {
         let store = tmp_store("history");
         let rec = record(&store, "s");
-        // Push 25 revisions with distinguishable durations.
-        for i in 0..25u32 {
+        // Push 105 revisions with distinguishable durations.
+        for i in 0..105u32 {
             let mut g = rec.graph.clone();
             g.duration = 0.01 * (i + 1) as f32;
             store.push_history("s", &g);
         }
         let (undo, redo) = store.history_depths("s");
-        assert_eq!((undo, redo), (20, 0)); // capped to the last 20
+        assert_eq!((undo, redo), (100, 0)); // capped to the last 100
         let top = store.pop_history("s").unwrap();
-        assert!((top.duration - 0.25).abs() < 1e-6); // most recent first
+        assert!((top.duration - 1.05).abs() < 1e-6); // most recent first
         store.push_redo("s", &top);
-        assert_eq!(store.history_depths("s"), (19, 1));
+        assert_eq!(store.history_depths("s"), (99, 1));
         store.clear_redo("s");
-        assert_eq!(store.history_depths("s"), (19, 0));
+        assert_eq!(store.history_depths("s"), (99, 0));
     }
 
     #[test]

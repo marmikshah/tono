@@ -200,12 +200,24 @@ fn is_child_array(key: &str) -> bool {
     matches!(key, "inputs" | "stages" | "notes")
 }
 
+/// Join a path prefix and a segment (layer-relative paths start empty: the
+/// layer's own node is path `""`, its children `inputs[0]`, `env`, ...).
+fn join(prefix: &str, seg: &str) -> String {
+    if prefix.is_empty() {
+        seg.to_string()
+    } else {
+        format!("{prefix}.{seg}")
+    }
+}
+
 fn walk(json: &Json, path: &str, out: &mut Vec<NodeInfo>) {
     let Some(obj) = json.as_object() else { return };
     if let Some(t) = obj.get("type").and_then(|v| v.as_str()) {
         let mut params = serde_json::Map::new();
         for (k, v) in obj {
-            if k == "type" || is_child_array(k) {
+            // Child structures get their own rows — duplicating the whole
+            // tracks/master subtree into a params blob helps nobody.
+            if k == "type" || is_child_array(k) || k == "tracks" || k == "master" {
                 continue;
             }
             params.insert(k.clone(), v.clone());
@@ -223,14 +235,28 @@ fn walk(json: &Json, path: &str, out: &mut Vec<NodeInfo>) {
             if let Some(arr) = v.as_array() {
                 for (i, ch) in arr.iter().enumerate() {
                     if let Some(node) = ch.get("node") {
-                        walk(node, &format!("{path}.tracks[{i}].node"), out);
+                        walk(node, &join(path, &format!("tracks[{i}].node")), out);
                     }
                 }
             }
             continue;
         }
         if k == "trigger" || k == "node" {
-            walk(v, &format!("{path}.{k}"), out);
+            walk(v, &join(path, k), out);
+            continue;
+        }
+        if k == "notes" {
+            // Seq notes have no `type` tag but ARE the most-edited leaves in
+            // the music workflow — every note gets an addressable row.
+            if let Some(arr) = v.as_array() {
+                for (i, note) in arr.iter().enumerate() {
+                    out.push(NodeInfo {
+                        path: join(path, &format!("notes[{i}]")),
+                        node_type: "note".to_string(),
+                        params: note.clone(),
+                    });
+                }
+            }
             continue;
         }
         if !is_child_array(k) {
@@ -238,24 +264,81 @@ fn walk(json: &Json, path: &str, out: &mut Vec<NodeInfo>) {
         }
         if let Some(arr) = v.as_array() {
             for (i, child) in arr.iter().enumerate() {
-                walk(child, &format!("{path}.{k}[{i}]"), out);
+                walk(child, &join(path, &format!("{k}[{i}]")), out);
             }
         }
     }
 }
 
-/// Produce the addressing map for a graph: one [`NodeInfo`] per node, so the
-/// agent can see exactly what paths it can edit before calling `set_param` /
-/// `edit_sound`.
-pub fn describe(doc: &SoundDoc) -> Vec<NodeInfo> {
-    let mut out = Vec::new();
-    let Ok(json) = serde_json::to_value(doc) else {
-        return out;
+/// One mixer layer's addressing map: its mixer fields (set with `set_layer`)
+/// plus the node rows of its graph. Node paths are LAYER-RELATIVE: pass them
+/// to `set_param`/`edit_sound` together with `layer`; the layer's own node is
+/// path `""`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct LayerInfo {
+    /// The stable layer id (`set_param { layer: <this>, path: ... }`).
+    pub id: String,
+    /// Stereo position −1..1.
+    pub pan: f32,
+    /// Fader 0..2.
+    pub gain: f32,
+    /// Start offset in seconds.
+    pub at: f32,
+    /// Muted layers are off the bus (and off every export).
+    pub mute: bool,
+    /// The layer's nodes, with layer-relative paths.
+    pub nodes: Vec<NodeInfo>,
+}
+
+/// The full addressing map of a document.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct DescribeMap {
+    /// Node rows of a plain (non-mixer) document, absolute paths from `root`.
+    pub nodes: Vec<NodeInfo>,
+    /// Mixer layers, keyed by stable id (empty for plain documents).
+    pub layers: Vec<LayerInfo>,
+    /// Master-chain processors, addressed absolutely (`root.master[0]`, no
+    /// `layer` arg).
+    pub master: Vec<NodeInfo>,
+}
+
+/// Produce the addressing map for a graph so the agent can see exactly what
+/// it can edit before calling `set_param` / `edit_sound` / `set_layer`.
+pub fn describe(doc: &SoundDoc) -> DescribeMap {
+    let mut map = DescribeMap {
+        nodes: Vec::new(),
+        layers: Vec::new(),
+        master: Vec::new(),
     };
-    if let Some(root) = json.get("root") {
-        walk(root, "root", &mut out);
+    let Ok(json) = serde_json::to_value(doc) else {
+        return map;
+    };
+    if let crate::dsl::Node::Tracks { tracks, master } = &doc.root {
+        for (i, t) in tracks.iter().enumerate() {
+            let mut nodes = Vec::new();
+            if let Some(node_json) = json["root"]["tracks"][i].get("node") {
+                walk(node_json, "", &mut nodes);
+            }
+            map.layers.push(LayerInfo {
+                id: t.id.clone().unwrap_or_else(|| format!("layer_{i}")),
+                pan: t.pan,
+                gain: t.gain,
+                at: t.at,
+                mute: t.mute,
+                nodes,
+            });
+        }
+        for (i, _) in master.iter().enumerate() {
+            if let Some(m) = json["root"]["master"].get(i) {
+                walk(m, &format!("root.master[{i}]"), &mut map.master);
+            }
+        }
+        return map;
     }
-    out
+    if let Some(root) = json.get("root") {
+        walk(root, "root", &mut map.nodes);
+    }
+    map
 }
 
 /// Linearly interpolate two same-shaped graphs at `t ∈ [0, 1]`: every numeric
@@ -267,7 +350,33 @@ pub fn morph(a: &SoundDoc, b: &SoundDoc, t: f32) -> Result<SoundDoc, String> {
     let mut jb = serde_json::to_value(b).map_err(|e| e.to_string())?;
     // Names/version are identity, not parameters — unify before the walk.
     jb["name"] = ja["name"].clone();
-    jb["version"] = ja["version"].clone();
+    // `version` is optional on the wire: mirror a's presence/absence exactly
+    // so the key sets always match.
+    if let Some(v) = ja.get("version") {
+        jb["version"] = v.clone();
+    } else if let Some(o) = jb.as_object_mut() {
+        o.remove("version");
+    }
+    // Layer identity is positional in a morph: two same-shaped mixer docs
+    // almost always carry different layer ids (they're unique per doc), and
+    // ids/mute are not interpolatable — copy a's onto b instead of erroring.
+    if let Some(ta) = ja["root"].get("tracks").and_then(|v| v.as_array()).cloned()
+        && let Some(tb) = jb["root"].get_mut("tracks").and_then(|v| v.as_array_mut())
+    {
+        for (i, track_b) in tb.iter_mut().enumerate() {
+            let Some(track_a) = ta.get(i) else { break };
+            for key in ["id", "mute"] {
+                match track_a.get(key) {
+                    Some(v) => track_b[key] = v.clone(),
+                    None => {
+                        if let Some(o) = track_b.as_object_mut() {
+                            o.remove(key);
+                        }
+                    }
+                }
+            }
+        }
+    }
     let merged = lerp_json(&ja, &jb, t, "$")?;
     let doc: SoundDoc =
         serde_json::from_value(merged).map_err(|e| format!("morphed graph invalid: {e}"))?;
@@ -411,8 +520,49 @@ mod tests {
     }
 
     #[test]
+    fn describe_maps_layers_notes_and_master() {
+        let doc: SoundDoc = serde_json::from_str(
+            r#"{ "name": "song", "duration": 1.0, "root": { "type": "tracks",
+                "tracks": [
+                  { "id": "lead", "node": { "type": "seq", "bpm": 120, "wave": "sine",
+                      "env": { "d": 0.1 },
+                      "notes": [ { "step": 0, "len": 2, "pitch": "C4" } ] } },
+                  { "id": "pad", "node": { "type": "chain", "stages": [
+                      { "type": "sine", "freq": 220 },
+                      { "type": "lowpass", "cutoff": 900 } ] }, "pan": -0.3 }
+                ],
+                "master": [ { "type": "compress", "threshold": -12, "ratio": 4 } ] } }"#,
+        )
+        .unwrap();
+        let map = describe(&doc);
+        assert!(map.nodes.is_empty()); // mixer docs describe per layer
+        assert_eq!(map.layers.len(), 2);
+        let lead = &map.layers[0];
+        assert_eq!(lead.id, "lead");
+        // The seq itself (layer-relative path "") and its note both get rows.
+        assert_eq!(lead.nodes[0].path, "");
+        assert_eq!(lead.nodes[0].node_type, "seq");
+        assert!(
+            !lead.nodes[0]
+                .params
+                .as_object()
+                .unwrap()
+                .contains_key("notes")
+        );
+        assert_eq!(lead.nodes[1].path, "notes[0]");
+        assert_eq!(lead.nodes[1].node_type, "note");
+        assert_eq!(lead.nodes[1].params["pitch"], "C4");
+        let pad = &map.layers[1];
+        assert_eq!(pad.nodes[1].path, "stages[0]");
+        assert_eq!(pad.pan, -0.3);
+        // Master processors are addressable without a layer arg.
+        assert_eq!(map.master[0].path, "root.master[0]");
+        assert_eq!(map.master[0].node_type, "compress");
+    }
+
+    #[test]
     fn describe_lists_every_node_with_paths() {
-        let infos = describe(&laser());
+        let infos = describe(&laser()).nodes;
         let paths: Vec<&str> = infos.iter().map(|i| i.path.as_str()).collect();
         assert_eq!(
             paths,
@@ -426,6 +576,28 @@ mod tests {
         );
         assert_eq!(infos[2].node_type, "square");
         assert_eq!(infos[2].params["freq"], 880.0);
+    }
+
+    #[test]
+    fn morph_unifies_layer_identity() {
+        let mk = |id1: &str, id2: &str, f: f32| -> SoundDoc {
+            serde_json::from_str(&format!(
+                r#"{{ "name": "m", "duration": 0.2, "version": 2,
+                     "root": {{ "type": "tracks", "tracks": [
+                        {{ "id": "{id1}", "node": {{ "type": "sine", "freq": {f} }} }},
+                        {{ "id": "{id2}", "node": {{ "type": "noise" }}, "mute": true }}
+                     ] }} }}"#
+            ))
+            .unwrap()
+        };
+        // Independently-minted layer ids must never block a morph.
+        let a = mk("crack", "tail_a", 200.0);
+        let b = mk("snap", "tail_b", 400.0);
+        let mid = morph(&a, &b, 0.5).unwrap();
+        let v = serde_json::to_value(&mid).unwrap();
+        assert_eq!(v["root"]["tracks"][0]["id"], "crack"); // a's identity wins
+        assert_eq!(v["root"]["tracks"][0]["node"]["freq"], 300.0);
+        assert_eq!(v["root"]["tracks"][1]["mute"], true);
     }
 
     #[test]

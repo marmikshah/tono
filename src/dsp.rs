@@ -38,6 +38,19 @@ impl Rng {
     }
 }
 
+/// FNV-1a over a layer id: the stable per-layer RNG stream key for schema-v2
+/// mixer documents. Lives here (not in the renderer) because `validate` also
+/// uses it to reject the rare id pair whose hashes collide — a collision would
+/// silently give two layers identical noise.
+pub fn layer_stream_key(id: &str) -> u64 {
+    let mut h: u64 = 0xCBF2_9CE4_8422_2325;
+    for b in id.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    h
+}
+
 /// Linear amplitude → dBFS (floored at −180 dB so silence stays finite).
 pub fn dbfs(x: f32) -> f32 {
     20.0 * x.max(1e-9).log10()

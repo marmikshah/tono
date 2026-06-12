@@ -75,6 +75,20 @@ async fn author_renders_artifacts_and_analysis() {
 }
 
 #[tokio::test]
+async fn author_stamps_the_current_schema_version() {
+    let (srv, _dir) = fresh("version_stamp");
+    let res = srv.author_sound(author_req(LASER)).await.unwrap();
+    let id = result_id(&res);
+    let g = graph_json(&srv, &id).await;
+    // LASER omits `version`; authoring resolves it to the current schema so
+    // the stored doc (and the journaled step) pin their render semantics.
+    assert_eq!(
+        g["version"].as_u64().unwrap() as u32,
+        sonarium::dsl::SCHEMA_VERSION
+    );
+}
+
+#[tokio::test]
 async fn edit_undo_redo_cycle_round_trips() {
     let (srv, _dir) = fresh("editing");
     srv.author_sound(author_req(LASER)).await.unwrap();
@@ -309,25 +323,47 @@ async fn band_demo_session_replays_with_four_instruments() {
 }
 
 #[tokio::test]
-async fn river_phonk_remix_session_replays() {
-    // The remix showcase: River's hook re-gridded to 140 bpm phonk — cowbell
-    // lead, driven 808, lo-fi bitcrushed piano, kit, pads — one call.
-    let (srv, dir) = fresh("phonk");
-    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/examples/river-phonk.json");
+async fn bgm_showcases_replay_as_seamless_mixer_loops() {
+    // The three game-BGM showcases: each is a tracks-root mixer document
+    // rendered loop-ready (the WAV carries a smpl chunk engines read).
+    for (recipe, id) in [
+        ("evening-glade.json", "evening_glade"),
+        ("iron-gauntlet.json", "iron_gauntlet"),
+        ("sunny-steps.json", "sunny_steps"),
+    ] {
+        let (srv, dir) = fresh(&format!("bgm_{id}"));
+        let example = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("docs/examples")
+            .join(recipe);
+        srv.replay_session(Parameters(ReplaySessionReq {
+            path: example.to_string_lossy().into_owned(),
+        }))
+        .await
+        .unwrap();
+        let g = graph_json(&srv, id).await;
+        assert_eq!(g["root"]["type"], "tracks", "{id} mixes on the console");
+        assert_eq!(g["playback"]["mode"], "loop", "{id} ships as a loop");
+        let bytes = std::fs::read(dir.join(format!("{id}.wav"))).unwrap();
+        assert!(
+            bytes.windows(4).any(|w| w == b"smpl"),
+            "{id} WAV carries the loop chunk"
+        );
+    }
+    // The boss track's bass riff ducks under its own kick.
+    let (srv, _dir) = fresh("bgm_duck_check");
+    let example =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/examples/iron-gauntlet.json");
     srv.replay_session(Parameters(ReplaySessionReq {
         path: example.to_string_lossy().into_owned(),
     }))
     .await
     .unwrap();
-    let g = graph_json(&srv, "river_phonk").await;
-    let layers = g["root"]["stages"][0]["inputs"].as_array().unwrap();
-    // The cowbell lead and the driven-808 chain are both present.
-    let has_cowbell = layers.iter().any(|l| l["wave"] == "cowbell");
-    let has_808 = layers
-        .iter()
-        .any(|l| l["type"] == "chain" && l["stages"][1]["type"] == "drive");
-    assert!(has_cowbell && has_808);
-    assert!(dir.join("river_phonk.wav").exists());
+    let g = graph_json(&srv, "iron_gauntlet").await;
+    let bass = &g["root"]["tracks"][1]["node"];
+    assert_eq!(
+        bass["stages"].as_array().unwrap().last().unwrap()["type"],
+        "duck"
+    );
 }
 
 #[tokio::test]
@@ -357,6 +393,166 @@ async fn every_example_recipe_replays() {
         count >= 9,
         "expected the full recipe library, found {count}"
     );
+}
+
+#[tokio::test]
+async fn layered_authoring_flow_round_trips_and_replays() {
+    use sonarium::server::{AddLayerReq, LayerOpsReq, SetLayerReq};
+
+    let (a, dir_a) = fresh("layers_a");
+    a.author_sound(author_req(LASER)).await.unwrap();
+
+    // First add_layer wraps the plain root as layer "laser_zap" and stacks
+    // a sub layer next to it.
+    let res = a
+        .add_layer(Parameters(
+            serde_json::from_str::<AddLayerReq>(
+                r#"{ "id": "laser_zap", "layer": "sub",
+                     "node": { "type": "mul", "inputs": [
+                        { "type": "sine", "freq": 80 },
+                        { "type": "env", "d": 0.15 } ] },
+                     "gain": 0.6 }"#,
+            )
+            .unwrap(),
+        ))
+        .await
+        .unwrap();
+    let texts: Vec<String> = res
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+        .collect();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("wrapped as layer 'laser_zap'")),
+        "the wrap must be announced: {texts:?}"
+    );
+
+    // Duplicate layers are rejected with the listing.
+    let err = a
+        .add_layer(Parameters(
+            serde_json::from_str::<AddLayerReq>(
+                r#"{ "id": "laser_zap", "layer": "sub", "node": { "type": "noise" } }"#,
+            )
+            .unwrap(),
+        ))
+        .await
+        .unwrap_err();
+    assert!(
+        err.contains("already exists") && err.contains("laser_zap, sub"),
+        "{err}"
+    );
+
+    // The describe map speaks layers now.
+    let desc = a
+        .describe_sound(Parameters(IdReq {
+            id: "laser_zap".into(),
+        }))
+        .await
+        .unwrap();
+    let ids: Vec<&str> = desc.0.layers.iter().map(|l| l.id.as_str()).collect();
+    assert_eq!(ids, vec!["laser_zap", "sub"]);
+
+    // Layer-relative set_param; absolute paths with `layer` are rejected.
+    a.set_param(Parameters(
+        serde_json::from_str::<SetParamReq>(
+            r#"{ "id": "laser_zap", "layer": "sub", "path": "inputs[0].freq", "value": 60 }"#,
+        )
+        .unwrap(),
+    ))
+    .await
+    .unwrap();
+    let err = a
+        .set_param(Parameters(
+            serde_json::from_str::<SetParamReq>(
+                r#"{ "id": "laser_zap", "layer": "sub",
+                     "path": "root.tracks[1].node.inputs[0].freq", "value": 60 }"#,
+            )
+            .unwrap(),
+        ))
+        .await
+        .unwrap_err();
+    assert!(err.contains("drop the 'root.tracks[..]' prefix"), "{err}");
+    let err = a
+        .set_param(Parameters(
+            serde_json::from_str::<SetParamReq>(
+                r#"{ "id": "laser_zap", "layer": "sub", "path": "gain", "value": 0.5 }"#,
+            )
+            .unwrap(),
+        ))
+        .await
+        .unwrap_err();
+    assert!(err.contains("set_layer"), "{err}");
+
+    // Mixer moves + structural ops.
+    a.set_layer(Parameters(
+        serde_json::from_str::<SetLayerReq>(
+            r#"{ "id": "laser_zap", "layer": "sub", "gain": 0.4, "at": 0.02 }"#,
+        )
+        .unwrap(),
+    ))
+    .await
+    .unwrap();
+    a.layer_ops(Parameters(
+        serde_json::from_str::<LayerOpsReq>(
+            r#"{ "id": "laser_zap", "op": "duplicate", "layer": "sub", "new_id": "sub_b" }"#,
+        )
+        .unwrap(),
+    ))
+    .await
+    .unwrap();
+    a.layer_ops(Parameters(
+        serde_json::from_str::<LayerOpsReq>(
+            r#"{ "id": "laser_zap", "op": "remove", "layer": "sub_b" }"#,
+        )
+        .unwrap(),
+    ))
+    .await
+    .unwrap();
+
+    // A failing mixer move leaves history and redo exactly as they were —
+    // no spurious no-op revision, no destroyed redo stack.
+    let before = a
+        .history(Parameters(IdReq {
+            id: "laser_zap".into(),
+        }))
+        .await
+        .unwrap();
+    let err = a
+        .set_layer(Parameters(
+            serde_json::from_str::<SetLayerReq>(
+                r#"{ "id": "laser_zap", "layer": "sub", "gain": 5.0 }"#,
+            )
+            .unwrap(),
+        ))
+        .await
+        .unwrap_err();
+    assert!(err.contains("gain must be in [0, 2]"), "{err}");
+    let after = a
+        .history(Parameters(IdReq {
+            id: "laser_zap".into(),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(
+        (before.0.undo_depth, before.0.redo_depth),
+        (after.0.undo_depth, after.0.redo_depth),
+        "failed edits must not touch history"
+    );
+
+    // The whole layered flow replays byte-identically in a fresh dir.
+    let saved = a
+        .save_session(Parameters(SaveSessionReq { dest: None }))
+        .await
+        .unwrap();
+    let (b, dir_b) = fresh("layers_b");
+    b.replay_session(Parameters(ReplaySessionReq { path: saved.0.path }))
+        .await
+        .unwrap();
+    let wav_a = std::fs::read(dir_a.join("laser_zap.wav")).unwrap();
+    let wav_b = std::fs::read(dir_b.join("laser_zap.wav")).unwrap();
+    assert_eq!(wav_a, wav_b, "layered session must replay byte-identically");
 }
 
 #[tokio::test]

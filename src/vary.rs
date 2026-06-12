@@ -28,18 +28,22 @@ pub fn humanize(doc: &SoundDoc, pitch_cents: f32, gain_db: f32, seed: u64) -> So
     out.name = format!("{}_h", doc.name);
     out.seed = doc.seed.wrapping_add(seed | 1);
     transpose_node(&mut out.root, ratio);
-    let old = std::mem::replace(
-        &mut out.root,
-        Node::Mix { inputs: Vec::new() }, // placeholder, replaced below
-    );
-    out.root = Node::Chain {
-        stages: vec![
-            old,
-            Node::Gain {
-                amount: Value::Const(level),
-            },
-        ],
+    let trim = Node::Gain {
+        amount: Value::Const(level),
     };
+    if let Node::Tracks { master, .. } = &mut out.root {
+        // `tracks` must stay the root, so the level trim joins the master
+        // chain (Gain is an ordinary processor) instead of wrapping the doc.
+        master.push(trim);
+    } else {
+        let old = std::mem::replace(
+            &mut out.root,
+            Node::Mix { inputs: Vec::new() }, // placeholder, replaced below
+        );
+        out.root = Node::Chain {
+            stages: vec![old, trim],
+        };
+    }
     out
 }
 
@@ -310,6 +314,25 @@ mod tests {
             .as_f64()
             .unwrap() as f32;
         assert!(from != 880.0 && (from - 880.0).abs() <= 880.0 * 0.2 + 1.0);
+    }
+
+    #[test]
+    fn humanize_keeps_tracks_at_the_root() {
+        let d: SoundDoc = serde_json::from_str(
+            r#"{ "name": "band", "duration": 0.2, "root": { "type": "tracks",
+                "tracks": [ { "node": { "type": "sine", "freq": 220 } } ],
+                "master": [ { "type": "lowpass", "cutoff": 8000 } ] } }"#,
+        )
+        .unwrap();
+        let h = humanize(&d, 30.0, 1.0, 9);
+        // The level trim joins the master chain — wrapping the root would make
+        // the doc invalid (`tracks` must stay the root node).
+        assert_eq!(h.validate(), Ok(()));
+        let Node::Tracks { master, .. } = &h.root else {
+            panic!("tracks must stay the root");
+        };
+        assert_eq!(master.len(), 2);
+        assert!(matches!(master.last(), Some(Node::Gain { .. })));
     }
 
     #[test]
