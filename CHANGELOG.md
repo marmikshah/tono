@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+Higher-fidelity synthesis, gated so it never breaks byte-stability.
+
+### Engine revisions
+- **New `engine` document field** — a DSP-kernel revision number, independent
+  of the schema `version`. Omitted ⇒ engine 0 (the original kernels): every
+  existing document and session replays **byte-for-byte**. New documents are
+  stamped with the current `ENGINE_VERSION`; `refine_sound` preserves a sound's
+  existing engine. This is what lets a fidelity upgrade ship without altering
+  older renders.
+
+### Anti-aliased distortion (engine 1)
+- **`drive` now uses antiderivative anti-aliasing (ADAA)** on engine-1
+  documents — the `hard` and `fold` shapers no longer spray inharmonic
+  foldback across the spectrum. First-order ADAA with a one-pole DC blocker;
+  per-node `"aa": false` opts back into the raw aliasing curve. Legacy
+  (engine-0) documents are unaffected and stay bit-exact.
+
+### Physical impacts (new nodes)
+- **`modal`** — a resonator bank: N parallel damped sinusoidal partials
+  (`modes: [{freq, decay, gain}]`) excited by the incoming chain signal. Bells,
+  glass, metal, wood, ceramic, coins, and the resonant body of UI/impact
+  sounds — none of which the oscillators voice cleanly. Each mode is a
+  normalised two-pole resonator (impulse-response peak ∝ `gain`, decay exact),
+  so the bank is cheap, stable, and fully deterministic. Modes are individually
+  addressable (`…modes[i].freq`).
+- **`impact`** — a strike exciter: a single unit-area force pulse whose
+  `hardness` shapes its brightness (which modes light up) and `velocity` its
+  energy. The exciter half of the `chain[ impact, modal ]` struck-body pair.
+- New example **`docs/examples/struck-bell.json`** (a struck bell + a coin
+  ding), replayed in CI like every other recipe.
+
 ## 1.1.0 — 2026-06-12
 
 Compositional authoring: a sound is now a document you build up in named,
