@@ -230,6 +230,18 @@ fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
             *room = jitter_unit(*room, amount, rng);
             *mix = jitter_unit(*mix, amount, rng);
         }
+        Node::Modal { modes, mix } => {
+            for m in modes.iter_mut() {
+                m.freq = jitter(m.freq, amount, rng, 0.0);
+                m.decay = jitter(m.decay, amount, rng, 0.0);
+                m.gain = jitter_unit(m.gain, amount, rng);
+            }
+            *mix = jitter_unit(*mix, amount, rng);
+        }
+        Node::Impact { hardness, velocity } => {
+            *hardness = jitter_unit(*hardness, amount, rng);
+            *velocity = jitter_unit(*velocity, amount, rng);
+        }
         Node::RingMod { freq } => mutate_value(freq, amount, rng),
         Node::Chorus { rate, depth, mix } => {
             *rate = jitter(*rate, amount, rng, 0.01);

@@ -6,11 +6,11 @@
 
 use crate::analysis;
 use crate::dsl::{
-    Adsr, Curve, DriveShape, Modulator, Node, NoiseColor, Normalize, Playback, SeqNote, SeqWave,
-    Shape, SoundDoc, Stereo, SuperWave, Value,
+    Adsr, Curve, DriveShape, Mode, Modulator, Node, NoiseColor, Normalize, Playback, SeqNote,
+    SeqWave, Shape, SoundDoc, Stereo, SuperWave, Value,
 };
 use crate::dsp::{Rng, db_to_lin, peak_limit};
-use std::f32::consts::{FRAC_PI_2, TAU};
+use std::f32::consts::{FRAC_PI_2, LN_2, TAU};
 
 /// A block of mono audio samples.
 type Signal = Vec<f32>;
@@ -105,6 +105,7 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
     let sr = doc.sample_rate;
     let n = ((doc.duration * sr as f32).ceil() as usize).max(1);
     let per_track_streams = doc.effective_version() >= 2;
+    let engine = doc.effective_engine();
     let mut rng = Rng::new(doc.seed);
     let (mut left, mut right) = (vec![0.0f32; n], vec![0.0f32; n]);
     let mut layers = Vec::with_capacity(tracks.len());
@@ -121,7 +122,7 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
             // layer would change every later layer's noise. (Cheap shape test:
             // native-stereo sampler tracks never touch the shared stream.)
             if !per_track_streams && !is_native_stereo(&t.node) {
-                let _ = render_node(&t.node, n, sr, &mut rng);
+                let _ = render_node(&t.node, n, sr, &mut rng, engine);
             }
             layers.push(LayerStats {
                 id: layer_id,
@@ -159,9 +160,9 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
         } else {
             let mono = if per_track_streams {
                 let mut trng = Rng::new(track_stream_seed(doc.seed, stream));
-                render_node(&t.node, n, sr, &mut trng)
+                render_node(&t.node, n, sr, &mut trng, engine)
             } else {
-                render_node(&t.node, n, sr, &mut rng)
+                render_node(&t.node, n, sr, &mut rng, engine)
             };
             for (i, x) in mono.into_iter().take(n - off).enumerate() {
                 let (la, ra) = (x * gl, x * gr);
@@ -201,8 +202,8 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
             right = reverb(&right, *room, *mix, sr, 23);
         } else {
             let mut rl = rng.clone();
-            left = apply_processor(m, &left, sr, &mut rl);
-            right = apply_processor(m, &right, sr, &mut rng);
+            left = apply_processor(m, &left, sr, &mut rl, engine);
+            right = apply_processor(m, &right, sr, &mut rng, engine);
         }
     }
     if let Playback::Loop {
@@ -301,7 +302,8 @@ fn render_plain(doc: &SoundDoc) -> Signal {
     let sr = doc.sample_rate;
     let n = ((doc.duration * sr as f32).ceil() as usize).max(1);
     let mut rng = Rng::new(doc.seed);
-    let mut out = render_node(&doc.root, n, sr, &mut rng);
+    let engine = doc.effective_engine();
+    let mut out = render_node(&doc.root, n, sr, &mut rng, engine);
     // A loop is rendered as its seamless body (tail crossfaded onto the head).
     if let Playback::Loop {
         start_secs,
@@ -580,8 +582,11 @@ fn osc(shape: Shape, phase: f32) -> f32 {
     }
 }
 
-/// Render a node into a signal of length `n`.
-fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
+/// Render a node into a signal of length `n`. `engine` is the document's
+/// DSP-kernel revision (see [`crate::dsl::ENGINE_VERSION`]); kernels that
+/// changed output across revisions branch on it so older documents stay
+/// byte-identical.
+fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng, engine: u32) -> Signal {
     match node {
         Node::Square { freq, duty } => square_signal(freq, duty, n, sr),
         Node::Triangle { freq } => tri_signal(freq, n, sr),
@@ -628,12 +633,13 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
             };
             render_seq(*bpm, *steps_per_beat, &voice, notes, n, sr, rng)
         }
+        Node::Impact { hardness, velocity } => impact_signal(*hardness, *velocity, n, sr),
         Node::Env { adsr: env } => adsr(env, n, sr),
         // Validation rejects nested mixers; render defensively as a plain sum.
         Node::Tracks { tracks, .. } => {
             let mut acc = vec![0.0f32; n];
             for t in tracks {
-                let sig = render_node(&t.node, n, sr, rng);
+                let sig = render_node(&t.node, n, sr, rng, engine);
                 for (o, v) in acc.iter_mut().zip(sig) {
                     *o += v * t.gain;
                 }
@@ -643,7 +649,7 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
         Node::Mix { inputs } => {
             let mut acc = vec![0.0f32; n];
             for input in inputs {
-                let s = render_node(input, n, sr, rng);
+                let s = render_node(input, n, sr, rng, engine);
                 for (o, v) in acc.iter_mut().zip(s) {
                     *o += v;
                 }
@@ -653,7 +659,7 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
         Node::Mul { inputs } => {
             let mut acc = vec![1.0f32; n];
             for input in inputs {
-                let s = render_node(input, n, sr, rng);
+                let s = render_node(input, n, sr, rng, engine);
                 for (o, v) in acc.iter_mut().zip(s) {
                     *o *= v;
                 }
@@ -665,9 +671,9 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
             for stage in stages {
                 buf = Some(match (&buf, stage.is_processor()) {
                     // A processor transforms the running signal.
-                    (Some(input), true) => apply_processor(stage, input, sr, rng),
+                    (Some(input), true) => apply_processor(stage, input, sr, rng, engine),
                     // A source/combinator as a later stage replaces the signal.
-                    (_, _) => render_node(stage, n, sr, rng),
+                    (_, _) => render_node(stage, n, sr, rng, engine),
                 });
             }
             buf.unwrap_or_else(|| vec![0.0; n])
@@ -681,8 +687,10 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
 }
 
 /// Apply a processor node to an incoming signal. (`rng` feeds processors that
-/// render an internal side signal, e.g. `duck`'s trigger.)
-fn apply_processor(node: &Node, input: &[f32], sr: u32, rng: &mut Rng) -> Signal {
+/// render an internal side signal, e.g. `duck`'s trigger.) `engine` is the
+/// document's DSP-kernel revision; quality-changing processors branch on it so
+/// older documents stay byte-identical.
+fn apply_processor(node: &Node, input: &[f32], sr: u32, rng: &mut Rng, engine: u32) -> Signal {
     match node {
         Node::Duck {
             trigger,
@@ -692,7 +700,7 @@ fn apply_processor(node: &Node, input: &[f32], sr: u32, rng: &mut Rng) -> Signal
         } => {
             // Render the trigger silently; its loudness envelope steers a
             // gain dip on the chained signal — the sidechain pump.
-            let trig = render_node(trigger, input.len(), sr, rng);
+            let trig = render_node(trigger, input.len(), sr, rng, engine);
             let srf = sr as f32;
             let at = (-1.0 / (attack.max(1e-4) * srf)).exp();
             let rt = (-1.0 / (release.max(1e-4) * srf)).exp();
@@ -760,13 +768,22 @@ fn apply_processor(node: &Node, input: &[f32], sr: u32, rng: &mut Rng) -> Signal
             out
         }
         Node::Reverb { room, mix } => reverb(input, *room, *mix, sr, 0),
-        Node::Drive { amount, shape } => {
+        Node::Modal { modes, mix } => modal_bank(input, modes, *mix, sr),
+        Node::Drive { amount, shape, aa } => {
             let a = eval_value(amount, input.len(), sr);
-            input
-                .iter()
-                .zip(a)
-                .map(|(x, amt)| drive_curve(amt.max(0.0) * x, *shape))
-                .collect()
+            // ADAA is an engine-1 kernel: gated on the document's engine so
+            // legacy (engine-0) documents render the original aliasing curve
+            // byte-for-byte. Within engine 1 it is on unless `aa: false`.
+            let use_adaa = engine >= 1 && aa.unwrap_or(true);
+            if use_adaa {
+                drive_adaa(input, &a, *shape)
+            } else {
+                input
+                    .iter()
+                    .zip(a)
+                    .map(|(x, amt)| drive_curve(amt.max(0.0) * x, *shape))
+                    .collect()
+            }
         }
         Node::RingMod { freq } => {
             let f = eval_value(freq, input.len(), sr);
@@ -973,6 +990,137 @@ fn drive_curve(x: f32, shape: DriveShape) -> f32 {
             y
         }
     }
+}
+
+/// Antiderivative F(x) of each waveshaper, used by [`drive_adaa`]. F'(x) =
+/// `drive_curve(x, shape)`. The additive constant is irrelevant — ADAA only
+/// ever uses differences `F(x1) − F(x0)`.
+fn drive_antideriv(x: f32, shape: DriveShape) -> f32 {
+    match shape {
+        // ∫ tanh = ln(cosh x). Computed as |x| + ln(1+e^{−2|x|}) − ln 2 so it
+        // never overflows for large |x| (cosh would).
+        DriveShape::Tanh => {
+            let a = x.abs();
+            a + (-2.0 * a).exp().ln_1p() - LN_2
+        }
+        // ∫ clamp(x,−1,1): x²/2 inside the linear region, |x|−1/2 outside
+        // (continuous at ±1, both give 1/2).
+        DriveShape::Hard => {
+            let a = x.abs();
+            if a <= 1.0 { 0.5 * x * x } else { a - 0.5 }
+        }
+        // The fold is a period-4 triangle wave; its antiderivative is the
+        // continuous, period-4 piecewise parabola below (zero-mean ⇒ bounded,
+        // so it is safe for arbitrarily large |x|). Reduce x into one period
+        // first: p = (x+1) mod 4 ∈ [0,4).
+        DriveShape::Fold => {
+            let p = (x + 1.0).rem_euclid(4.0);
+            if p <= 2.0 {
+                0.5 * (p - 1.0) * (p - 1.0)
+            } else {
+                1.0 - 0.5 * (p - 3.0) * (p - 3.0)
+            }
+        }
+    }
+}
+
+/// First-order antiderivative anti-aliasing for the memoryless waveshaper.
+///
+/// A pointwise nonlinearity sprays harmonics past Nyquist that fold back as
+/// inharmonic "digital" grit. ADAA replaces `f(x)` with the average of `f`
+/// over `[x[n-1], x[n]]` — `(F(x[n]) − F(x[n-1])) / (x[n] − x[n-1])` — which
+/// band-limits the result, suppressing the foldback. The `f(midpoint)`
+/// fallback avoids the 0/0 (and its catastrophic cancellation) when
+/// consecutive inputs are nearly equal. One sample of state is carried across
+/// the block. A one-pole DC blocker follows: the difference-quotient leaves a
+/// small DC term on asymmetric input.
+fn drive_adaa(input: &[f32], amount: &[f32], shape: DriveShape) -> Signal {
+    const EPS: f32 = 1e-5;
+    // ~5 Hz one-pole DC blocker (y[n] = x[n] − x[n−1] + R·y[n−1]).
+    const R: f32 = 0.9995;
+    let mut x_prev = 0.0f32;
+    let mut f_prev = drive_antideriv(0.0, shape);
+    let (mut dc_x, mut dc_y) = (0.0f32, 0.0f32);
+    let mut out = Vec::with_capacity(input.len());
+    for (&x, &amt) in input.iter().zip(amount) {
+        let xn = amt.max(0.0) * x;
+        let f = drive_antideriv(xn, shape);
+        let d = xn - x_prev;
+        let y = if d.abs() > EPS {
+            (f - f_prev) / d
+        } else {
+            drive_curve(0.5 * (xn + x_prev), shape)
+        };
+        x_prev = xn;
+        f_prev = f;
+        let yb = y - dc_x + R * dc_y;
+        dc_x = y;
+        dc_y = yb;
+        out.push(yb);
+    }
+    out
+}
+
+/// Impact exciter: a single raised-cosine (Hann-lobe) force pulse at the start
+/// of the buffer, the rest silence. `hardness` sets the contact time — a hard
+/// strike is a brief, wide-band click (lights up high modes); a soft strike is
+/// a longer, duller bump. The pulse is normalised to UNIT AREA (× `velocity`),
+/// so `velocity` sets the total impulse delivered and `hardness` only shapes
+/// its spectrum — a downstream [`Node::Modal`] bank then rings to a level set
+/// by its modes' `gain`, independent of the strike width.
+fn impact_signal(hardness: f32, velocity: f32, n: usize, sr: u32) -> Signal {
+    let h = hardness.clamp(0.0, 1.0);
+    let v = velocity.clamp(0.0, 1.0);
+    // Contact time: soft ≈ 8 ms, hard ≈ 0.3 ms.
+    let width_s = 0.008 * (1.0 - h) + 0.0003 * h;
+    let w = ((width_s * sr as f32).round() as usize).max(1);
+    // A Hann lobe sums to ≈ w/2; normalise so the whole pulse has area `v`.
+    let norm = v / (0.5 * w as f32);
+    let mut out = vec![0.0f32; n];
+    for (i, o) in out.iter_mut().enumerate().take(w.min(n)) {
+        let phase = (i as f32 + 0.5) / w as f32;
+        *o = norm * 0.5 * (1.0 - (TAU * phase).cos());
+    }
+    out
+}
+
+/// Modal resonator bank: sum of N parallel two-pole resonators driven by the
+/// incoming signal. Each mode is a complex-conjugate pole pair at radius `r`
+/// and angle `ω`: `y[n] = b0·x[n] + 2r·cos(ω)·y[n-1] − r²·y[n-2]`. The pole
+/// radius sets the decay exactly — `r^(decay·sr) = 0.001`, i.e. −60 dB at the
+/// mode's ring time — and `b0 = gain·sin(ω)` normalises the impulse-response
+/// peak to `gain`, so a mode's loudness is its `gain` regardless of how long
+/// it rings. Coefficients are constant per mode (LTI), so no per-sample
+/// recompute and no zipper. Deterministic: pure f32 arithmetic, fixed
+/// coefficients.
+fn modal_bank(input: &[f32], modes: &[Mode], mix: f32, sr: u32) -> Signal {
+    let srf = sr as f32;
+    let nyq = srf * 0.5;
+    let mix = mix.clamp(0.0, 1.0);
+    let mut wet = vec![0.0f32; input.len()];
+    for m in modes {
+        let f0 = m.freq.clamp(1.0, nyq - 1.0);
+        let decay = m.decay.max(1e-3);
+        let w0 = TAU * f0 / srf;
+        let (sin0, cos0) = (w0.sin(), w0.cos());
+        // r so the ring reaches −60 dB (×0.001) after `decay` seconds.
+        let r = (-6.907_755 / (decay * srf)).exp();
+        let a1 = 2.0 * r * cos0;
+        let a2 = -r * r;
+        let b0 = m.gain * sin0; // impulse-response peak ≈ gain
+        let (mut y1, mut y2) = (0.0f32, 0.0f32);
+        for (o, &x) in wet.iter_mut().zip(input) {
+            let y = b0 * x + a1 * y1 + a2 * y2;
+            y2 = y1;
+            y1 = y;
+            *o += y;
+        }
+    }
+    input
+        .iter()
+        .zip(wet)
+        .map(|(d, w)| d * (1.0 - mix) + w * mix)
+        .collect()
 }
 
 /// Chorus: a single voice of modulated delay mixed with the dry signal.
@@ -2055,6 +2203,126 @@ mod tests {
         let s = render(&d);
         let clipped = s.iter().filter(|x| x.abs() > 0.95).count();
         assert!(clipped > s.len() / 2);
+    }
+
+    #[test]
+    fn drive_antiderivative_matches_its_curve() {
+        // F'(x) ≈ drive_curve(x): a central difference of the antiderivative
+        // must reproduce the waveshaper, the property ADAA relies on.
+        let h = 1e-3f32;
+        for shape in [DriveShape::Tanh, DriveShape::Hard, DriveShape::Fold] {
+            for &x in &[-3.5f32, -1.2, -0.4, 0.0, 0.6, 1.5, 4.2] {
+                let num =
+                    (drive_antideriv(x + h, shape) - drive_antideriv(x - h, shape)) / (2.0 * h);
+                let exact = drive_curve(x, shape);
+                assert!(
+                    (num - exact).abs() < 5e-3,
+                    "{shape:?} at x={x}: dF/dx={num} vs f={exact}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn adaa_engages_only_under_engine_1() {
+        // Identical bright-tone-into-fold graph at engine 0 vs engine 1.
+        let mk = |engine: u32| {
+            doc(&format!(
+                r#"{{ "name": "n", "duration": 0.1, "engine": {engine},
+                     "root": {{ "type": "chain", "stages": [
+                        {{ "type": "sine", "freq": 3000 }},
+                        {{ "type": "drive", "amount": 6, "shape": "fold" }}
+                     ] }} }}"#
+            ))
+        };
+        let legacy = render(&mk(0));
+        let aa = render(&mk(1));
+        // Engine 0 must be byte-identical to the original pointwise curve.
+        let n = legacy.len();
+        let mut rng = Rng::new(0);
+        let reference = {
+            let sine = render_node(
+                &Node::Sine {
+                    freq: Value::Const(3000.0),
+                },
+                n,
+                44_100,
+                &mut rng,
+                0,
+            );
+            let amt = eval_value(&Value::Const(6.0), n, 44_100);
+            let raw: Vec<f32> = sine
+                .iter()
+                .zip(amt)
+                .map(|(x, a)| drive_curve(a.max(0.0) * x, DriveShape::Fold))
+                .collect();
+            // render() applies the default peak-limit; mirror it.
+            let mut r = raw;
+            peak_limit(&mut [&mut r]);
+            r
+        };
+        assert_eq!(legacy, reference, "engine 0 drive must stay bit-exact");
+        // Engine 1 genuinely changes the signal …
+        assert_ne!(legacy, aa, "engine 1 must apply ADAA");
+        // … by band-limiting it: the mean-square of the sample-to-sample
+        // difference (a high-frequency-energy proxy) drops, because the
+        // inharmonic foldback that ADAA removes is the spikiest content.
+        let diff_energy = |s: &[f32]| -> f32 {
+            s.windows(2).map(|w| (w[1] - w[0]).powi(2)).sum::<f32>() / s.len() as f32
+        };
+        assert!(
+            diff_energy(&aa) < diff_energy(&legacy),
+            "ADAA should reduce HF energy: aa={} legacy={}",
+            diff_energy(&aa),
+            diff_energy(&legacy)
+        );
+    }
+
+    #[test]
+    fn impact_is_a_short_unit_area_pulse() {
+        let d = doc(r#"{ "name": "n", "duration": 0.2, "engine": 1,
+                 "root": { "type": "impact", "hardness": 0.5, "velocity": 1.0 } }"#);
+        let s = render(&d);
+        // The pulse is confined to the first ~10 ms; the rest is silence.
+        let head = (0.02 * 44_100.0) as usize;
+        assert!(
+            s[head..].iter().all(|x| x.abs() < 1e-6),
+            "impact must be a short burst"
+        );
+        // Unit area (× velocity 1) — the level guarantee a modal bank rings to.
+        let area: f32 = s.iter().sum();
+        assert!(
+            (area - 1.0).abs() < 0.05,
+            "impact area ≈ velocity, got {area}"
+        );
+    }
+
+    #[test]
+    fn modal_bank_rings_at_its_mode_and_decays() {
+        let d = doc(r#"{ "name": "n", "duration": 0.4, "engine": 1,
+                 "root": { "type": "chain", "stages": [
+                    { "type": "impact", "hardness": 0.8, "velocity": 1.0 },
+                    { "type": "modal", "modes": [ { "freq": 1000, "decay": 0.3, "gain": 1.0 } ] }
+                 ] } }"#);
+        let s = render(&d);
+        // Usable level (not the −44 dBFS the un-normalised first cut produced).
+        let peak = s.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+        assert!(peak > 0.1, "modal ring too quiet: peak {peak}");
+        // Rings at the mode frequency: count zero crossings over a steady
+        // window and convert to Hz (a single mode is a clean decaying sine).
+        let (a, b) = ((0.05 * 44_100.0) as usize, (0.15 * 44_100.0) as usize);
+        let win = &s[a..b];
+        let zc = win
+            .windows(2)
+            .filter(|w| (w[0] <= 0.0) != (w[1] <= 0.0))
+            .count();
+        let hz = zc as f32 / 2.0 / 0.1;
+        assert!((hz - 1000.0).abs() < 80.0, "expected ≈1000 Hz, got {hz}");
+        // Decays: the tail is quieter than the body.
+        assert!(
+            rms(&s[s.len() / 2..]) < rms(&s[..s.len() / 2]),
+            "modal must decay"
+        );
     }
 
     #[test]
