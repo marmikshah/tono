@@ -22,6 +22,21 @@ pub struct Analysis {
     /// Spectral centroid in Hz — the "center of mass" of the spectrum, a proxy
     /// for perceived brightness.
     pub spectral_centroid_hz: f32,
+    /// Spectral flatness, 0..1 — geometric ÷ arithmetic mean of the power
+    /// spectrum. Near 0 = tonal/pitched (energy in a few partials); near 1 =
+    /// noisy/hissy (energy spread evenly). Read it to tell a clean tone from a
+    /// noise texture, or to catch a sound that turned buzzy.
+    #[serde(default)]
+    pub spectral_flatness: f32,
+    /// Off-harmonic energy ratio, 0..1 — the share of spectral energy that does
+    /// NOT sit on the harmonic grid of the detected fundamental. Low for a
+    /// clean pitched tone; high for noise, deliberately inharmonic bodies
+    /// (bells, metal), AND for aliasing/foldback — so it is the meter that
+    /// shows an anti-aliasing fix working (e.g. engine-1 `drive` vs the raw
+    /// curve). Interpret with the sound's intent: high on a "pure tone" means
+    /// alias dirt; high on a bell is just the bell.
+    #[serde(default)]
+    pub inharmonicity: f32,
     /// Inter-sample (true) peak in dBFS, estimated by 4× oversampling. Values
     /// above 0 mean the signal will clip on conversion / playback.
     pub true_peak_dbfs: f32,
@@ -34,6 +49,11 @@ pub struct Analysis {
     /// Attack time in ms: from the onset (envelope > 10% of peak) to first
     /// reaching 90% of peak. Small ⇒ a sharp/punchy transient.
     pub attack_time_ms: f32,
+    /// Attack sharpness in dB/ms — how steeply the onset rises (the ~19 dB from
+    /// 10% to 90% of peak ÷ the attack time). Big = a snappy click/impact;
+    /// small = a slow swell/pad. The transient readout to act on directly.
+    #[serde(default)]
+    pub attack_slope_db_per_ms: f32,
     /// Decay/tail length in ms: from the peak to the last point the envelope is
     /// above 10% of peak. Big ⇒ a long ringing tail.
     pub decay_time_ms: f32,
@@ -75,6 +95,8 @@ pub fn analyze(samples: &[f32], sample_rate: u32, png_path: &Path) -> anyhow::Re
 
     let frames = stft(samples);
     let centroid = spectral_centroid(&frames, srf);
+    let flatness = spectral_flatness(&frames);
+    let inharm = inharmonicity(&frames, srf);
     write_spectrogram(&frames, png_path)?;
 
     // Time-domain feedback: a waveform image + transient descriptors.
@@ -90,10 +112,13 @@ pub fn analyze(samples: &[f32], sample_rate: u32, png_path: &Path) -> anyhow::Re
         peak_dbfs,
         rms_dbfs,
         spectral_centroid_hz: centroid,
+        spectral_flatness: flatness,
+        inharmonicity: inharm,
         true_peak_dbfs: dbfs(true_peak(samples)),
         crest_factor_db: peak_dbfs - rms_dbfs,
         loudness_lufs: loudness_lufs(samples),
         attack_time_ms: t.attack_ms,
+        attack_slope_db_per_ms: t.attack_slope,
         decay_time_ms: t.decay_ms,
         onset_count: t.onsets,
         head_silence_ms: t.head_ms,
@@ -116,11 +141,15 @@ fn waveform_path(png_path: &Path) -> std::path::PathBuf {
 /// Time-domain transient descriptors derived from a one-pole amplitude envelope.
 struct Transients {
     attack_ms: f32,
+    attack_slope: f32,
     decay_ms: f32,
     onsets: u32,
     head_ms: f32,
     tail_ms: f32,
 }
+
+/// dB rise from the 10%-of-peak onset to 90% of peak (20·log10(0.9/0.1)).
+const ATTACK_RISE_DB: f32 = 19.085;
 
 /// A one-pole amplitude-envelope follower: instant attack, ~3 ms release.
 fn envelope(samples: &[f32], sr: u32) -> Vec<f32> {
@@ -139,6 +168,7 @@ fn envelope(samples: &[f32], sr: u32) -> Vec<f32> {
 fn transients(samples: &[f32], sr: u32) -> Transients {
     let zero = Transients {
         attack_ms: 0.0,
+        attack_slope: 0.0,
         decay_ms: 0.0,
         onsets: 0,
         head_ms: 0.0,
@@ -172,6 +202,9 @@ fn transients(samples: &[f32], sr: u32) -> Transients {
         .map(|i| onset + i)
         .unwrap_or(peak_idx);
     let attack_ms = ms(reach90.saturating_sub(onset));
+    // Sharpness in dB/ms; floor the time at one sample so an instant onset
+    // reports a large-but-finite slope instead of dividing by zero.
+    let attack_slope = ATTACK_RISE_DB / attack_ms.max(ms(1));
 
     let last_above = env
         .iter()
@@ -200,6 +233,7 @@ fn transients(samples: &[f32], sr: u32) -> Transients {
 
     Transients {
         attack_ms,
+        attack_slope,
         decay_ms,
         onsets,
         head_ms,
@@ -357,14 +391,107 @@ fn spectral_centroid(frames: &[Vec<f32>], sample_rate: f32) -> f32 {
     }
 }
 
-/// Render STFT magnitude frames to a PNG heatmap (time on X, frequency on Y,
-/// low frequencies at the bottom).
+/// Frame-averaged power per bin (skipping DC), shared by the spectral
+/// descriptors. Length `FFT_SIZE/2`, index 0 (DC) left at 0.
+fn power_spectrum(frames: &[Vec<f32>]) -> Vec<f64> {
+    let bins = FFT_SIZE / 2;
+    let mut power = vec![0.0f64; bins];
+    for frame in frames {
+        for (k, &m) in frame.iter().enumerate().take(bins).skip(1) {
+            power[k] += (m as f64) * (m as f64);
+        }
+    }
+    power
+}
+
+/// Spectral flatness in [0,1]: geometric ÷ arithmetic mean of the (non-DC)
+/// power spectrum. ~0 for a tone (energy in a few bins), ~1 for flat noise.
+fn spectral_flatness(frames: &[Vec<f32>]) -> f32 {
+    if frames.is_empty() {
+        return 0.0;
+    }
+    let power = power_spectrum(frames);
+    let used = &power[1..];
+    let total: f64 = used.iter().sum();
+    if total <= 0.0 {
+        return 0.0;
+    }
+    let n = used.len() as f64;
+    let log_sum: f64 = used.iter().map(|&p| p.max(1e-20).ln()).sum();
+    let geo = (log_sum / n).exp();
+    let arith = total / n;
+    (geo / arith).clamp(0.0, 1.0) as f32
+}
+
+/// Off-harmonic energy ratio in [0,1]: `1 − (energy near harmonics of the
+/// detected fundamental ÷ total energy)`. The fundamental is the strongest
+/// spectral peak above ~40 Hz in the frame-averaged spectrum; each harmonic
+/// contributes a leakage-aware tolerance band, counted once. High for noise,
+/// inharmonic bodies, and aliasing/foldback alike.
+fn inharmonicity(frames: &[Vec<f32>], sample_rate: f32) -> f32 {
+    if frames.is_empty() {
+        return 0.0;
+    }
+    let bins = FFT_SIZE / 2;
+    let bin_hz = sample_rate / FFT_SIZE as f32;
+    let power = power_spectrum(frames);
+    let total: f64 = power.iter().sum();
+    if total <= 0.0 {
+        return 0.0;
+    }
+    // Fundamental = strongest bin above ~40 Hz.
+    let min_bin = ((40.0 / bin_hz).ceil() as usize).max(1);
+    let (mut peak_bin, mut peak_pow) = (min_bin, 0.0f64);
+    for (k, &p) in power.iter().enumerate().take(bins).skip(min_bin) {
+        if p > peak_pow {
+            peak_pow = p;
+            peak_bin = k;
+        }
+    }
+    let f0 = peak_bin as f32 * bin_hz;
+    if f0 <= 0.0 {
+        return 0.0;
+    }
+    // Sum energy within a tolerance band of each harmonic k·f0, each bin once.
+    let nyq = sample_rate * 0.5;
+    let mut counted = vec![false; bins];
+    let mut harm = 0.0f64;
+    let mut k = 1;
+    loop {
+        let fh = f0 * k as f32;
+        if fh >= nyq {
+            break;
+        }
+        let tol = (0.03 * fh).max(1.5 * bin_hz); // leakage-aware
+        let lo = (((fh - tol) / bin_hz).floor().max(0.0)) as usize;
+        let hi = (((fh + tol) / bin_hz).ceil() as usize).min(bins - 1);
+        for (b, c) in counted.iter_mut().enumerate().take(hi + 1).skip(lo) {
+            if !*c {
+                *c = true;
+                harm += power[b];
+            }
+        }
+        k += 1;
+    }
+    (1.0 - (harm / total).min(1.0)).clamp(0.0, 1.0) as f32
+}
+
+/// Render STFT magnitude frames to a PNG heatmap (time on X, LOG frequency on
+/// Y, low frequencies at the bottom). A log axis spreads the bass/low-mids —
+/// where pitched bodies, basslines and modal partials live — instead of
+/// crushing them into the bottom strip a linear axis gives.
 fn write_spectrogram(frames: &[Vec<f32>], path: &Path) -> anyhow::Result<()> {
-    use image::{ImageBuffer, Rgb, RgbImage, imageops};
+    use image::{ImageBuffer, Rgb, RgbImage};
 
     let bins = FFT_SIZE / 2;
-    let w = frames.len().max(1) as u32;
-    let h = bins as u32;
+    let target_w = 800u32;
+    let target_h = 256u32;
+
+    if frames.is_empty() {
+        let img: RgbImage = ImageBuffer::from_pixel(target_w, target_h, Rgb(magma(0.0)));
+        img.save(path)?;
+        return Ok(());
+    }
 
     // Normalize on a dB scale across the whole image for good contrast.
     let max_mag = frames
@@ -372,24 +499,30 @@ fn write_spectrogram(frames: &[Vec<f32>], path: &Path) -> anyhow::Result<()> {
         .flat_map(|f| f.iter())
         .fold(1e-9f32, |m, &x| m.max(x));
 
-    let mut img: RgbImage = ImageBuffer::new(w, h);
-    for (x, frame) in frames.iter().enumerate() {
-        for k in 0..bins {
+    let num_frames = frames.len();
+    // Log-frequency Y: each output row maps to a bin between bin 1 and the
+    // top bin on a log scale (low frequencies at the bottom). `ln_range` is
+    // the log span; `frac` runs 0 (bottom) → 1 (top).
+    let bin_lo = 1.0f32;
+    let bin_hi = (bins - 1) as f32;
+    let ln_range = (bin_hi / bin_lo).ln();
+
+    let mut img: RgbImage = ImageBuffer::new(target_w, target_h);
+    for xo in 0..target_w {
+        let fi = (xo as usize * num_frames / target_w as usize).min(num_frames - 1);
+        let frame = &frames[fi];
+        for yo in 0..target_h {
+            let frac = (target_h - 1 - yo) as f32 / (target_h - 1) as f32;
+            let bin_f = bin_lo * (frac * ln_range).exp();
+            let k = (bin_f.round() as usize).min(bins - 1);
             let mag = frame.get(k).copied().unwrap_or(0.0);
             // dB relative to the loudest bin, mapped into [0, 1] over a 70 dB range.
             let db = 20.0 * (mag / max_mag).max(1e-9).log10();
             let t = ((db + 70.0) / 70.0).clamp(0.0, 1.0);
-            // Low frequencies at the bottom of the image.
-            let y = (bins - 1 - k) as u32;
-            img.put_pixel(x as u32, y, Rgb(magma(t)));
+            img.put_pixel(xo, yo, Rgb(magma(t)));
         }
     }
-
-    // Scale to a readable fixed size (nearest-neighbor keeps it crisp & cheap).
-    let target_w = w.clamp(1, 800).max(256);
-    let target_h = 256u32;
-    let scaled = imageops::resize(&img, target_w, target_h, imageops::FilterType::Nearest);
-    scaled.save(path)?;
+    img.save(path)?;
     Ok(())
 }
 
@@ -462,5 +595,56 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let a = analyze(&samples, sr as u32, &dir.join("bursts.png")).unwrap();
         assert_eq!(a.onset_count, 2);
+    }
+
+    fn tone(sr: u32, hz: f32) -> Vec<f32> {
+        (0..sr)
+            .map(|i| (std::f32::consts::TAU * hz * i as f32 / sr as f32).sin() * 0.5)
+            .collect()
+    }
+
+    fn noise(sr: u32, seed: u64) -> Vec<f32> {
+        let mut rng = crate::dsp::Rng::new(seed);
+        (0..sr).map(|_| rng.bi() * 0.5).collect()
+    }
+
+    #[test]
+    fn spectral_flatness_separates_tone_from_noise() {
+        let sr = 44_100u32;
+        let ft = spectral_flatness(&stft(&tone(sr, 440.0)));
+        let fnz = spectral_flatness(&stft(&noise(sr, 1)));
+        assert!(
+            ft < 0.05,
+            "a pure tone should be tonal (flatness ≈ 0), got {ft}"
+        );
+        assert!(fnz > 0.3, "white noise should be flat, got {fnz}");
+    }
+
+    #[test]
+    fn inharmonicity_low_for_tone_high_for_noise() {
+        let sr = 44_100u32;
+        let it = inharmonicity(&stft(&tone(sr, 440.0)), sr as f32);
+        let inz = inharmonicity(&stft(&noise(sr, 2)), sr as f32);
+        assert!(it < 0.25, "a tone's energy sits on its harmonics, got {it}");
+        assert!(inz > 0.5, "noise has little harmonic energy, got {inz}");
+    }
+
+    #[test]
+    fn attack_slope_is_steeper_for_a_click_than_a_swell() {
+        let sr = 44_100u32;
+        // Instant onset, then a decay.
+        let click: Vec<f32> = (0..sr / 2)
+            .map(|i| (1.0 - i as f32 / (sr as f32 * 0.5)).max(0.0))
+            .collect();
+        // A 200 ms linear swell up to level.
+        let swell: Vec<f32> = (0..sr / 2)
+            .map(|i| (i as f32 / (sr as f32 * 0.2)).min(1.0) * 0.8)
+            .collect();
+        let click_slope = transients(&click, sr).attack_slope;
+        let swell_slope = transients(&swell, sr).attack_slope;
+        assert!(
+            click_slope > swell_slope * 5.0,
+            "click {click_slope} should be far steeper than swell {swell_slope}"
+        );
     }
 }

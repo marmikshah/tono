@@ -33,6 +33,16 @@ Higher-fidelity synthesis, gated so it never breaks byte-stability.
 - New example **`docs/examples/struck-bell.json`** (a struck bell + a coin
   ding), replayed in CI like every other recipe.
 
+### Analyzer (sharper ears)
+- **Log-frequency spectrogram** — the feedback image's frequency axis is now
+  logarithmic, so bass/low-mids and modal partials are legible instead of
+  crushed into the bottom strip. Image-only; audio bytes are unchanged.
+- **New metrics on every render**: `spectral_flatness` (tonal vs. noisy),
+  `inharmonicity` (off-harmonic-grid energy — also an aliasing/foldback
+  indicator), and `attack_slope_db_per_ms` (transient sharpness). All are
+  reporting-only — they never feed the render's loudness/limiting stage, so
+  determinism is untouched.
+
 ## 1.1.0 — 2026-06-12
 
 Compositional authoring: a sound is now a document you build up in named,
