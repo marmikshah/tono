@@ -42,11 +42,19 @@ with `chain`. Any numeric param is a constant or a modulator
 ## Reading the feedback
 
 Every render returns **two images** — a spectrogram (freq×time) and a waveform
-(amplitude×time) — plus numbers. Read the waveform for the *envelope shape*: a
-sharp vertical onset = punchy; a long fade = ringing tail; two humps = a
-double-trigger. The numeric `attack_time_ms` / `decay_time_ms` / `onset_count` /
-`head_silence_ms` / `tail_silence_ms` quantify exactly that. To converge a sound
-toward a reference, call `compare_sounds { a, b }` and drive the reported deltas
+(amplitude×time) — plus numbers. The spectrogram's frequency axis is
+**logarithmic**, so bass and low-mids (basslines, modal partials, the body of a
+sound) get real vertical space instead of being crushed into a bottom strip.
+Read the waveform for the *envelope shape*: a sharp vertical onset = punchy; a
+long fade = ringing tail; two humps = a double-trigger. The numeric
+`attack_time_ms` / `attack_slope_db_per_ms` / `decay_time_ms` / `onset_count` /
+`head_silence_ms` / `tail_silence_ms` quantify exactly that — `attack_slope` is
+the snappiness readout (big = a click/impact, small = a swell). Two spectral
+descriptors round out the picture: `spectral_flatness` (≈0 tonal/pitched, ≈1
+noisy/hissy) and `inharmonicity` (share of energy *off* the harmonic grid — low
+for a clean tone, high for noise, bells/metal, **and aliasing**: it's the meter
+that shows an anti-aliasing fix working). To converge a sound toward a
+reference, call `compare_sounds { a, b }` and drive the reported deltas
 (centroid/brightness, LUFS, attack, …) toward zero.
 
 ## Tips

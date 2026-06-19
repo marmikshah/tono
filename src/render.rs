@@ -2279,6 +2279,38 @@ mod tests {
     }
 
     #[test]
+    fn adaa_lowers_off_harmonic_energy_for_a_folded_tone() {
+        // A 2500 Hz sine folded hard: its true harmonics sit on the 2500 Hz
+        // grid, but the un-band-limited version folds high harmonics back to
+        // OFF-grid frequencies. ADAA suppresses that foldback, so the
+        // analyzer's `inharmonicity` meter reads lower — the feedback loop can
+        // SEE the fix. (The relationship is signal-dependent in general; this
+        // is a clear, reproducible case, not a universal law.)
+        let mk = |engine: u32| {
+            doc(&format!(
+                r#"{{ "name": "n", "duration": 0.3, "engine": {engine},
+                     "root": {{ "type": "chain", "stages": [
+                        {{ "type": "sine", "freq": 2500 }},
+                        {{ "type": "drive", "amount": 8, "shape": "fold" }}
+                     ] }} }}"#
+            ))
+        };
+        let dir = std::env::temp_dir().join("sonarium_adaa_inharm");
+        std::fs::create_dir_all(&dir).unwrap();
+        let inharm = |name: &str, d: &SoundDoc| {
+            crate::analysis::analyze(&render(d), 44_100, &dir.join(name))
+                .unwrap()
+                .inharmonicity
+        };
+        let legacy = inharm("legacy.png", &mk(0));
+        let aa = inharm("aa.png", &mk(1));
+        assert!(
+            aa < legacy - 0.1,
+            "ADAA should clearly lower off-harmonic energy: aa={aa} legacy={legacy}"
+        );
+    }
+
+    #[test]
     fn impact_is_a_short_unit_area_pulse() {
         let d = doc(r#"{ "name": "n", "duration": 0.2, "engine": 1,
                  "root": { "type": "impact", "hardness": 0.5, "velocity": 1.0 } }"#);
