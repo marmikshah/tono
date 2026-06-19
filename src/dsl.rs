@@ -14,6 +14,17 @@ use serde::{Deserialize, Serialize};
 /// order, so editing one track shifts the noise content of its siblings).
 pub const SCHEMA_VERSION: u32 = 2;
 
+/// Current DSP-kernel (engine) revision. Distinct from [`SCHEMA_VERSION`]:
+/// that versions the *document schema* (what fields exist and how the graph is
+/// structured); this versions the *audio kernels* (how a node turns into
+/// samples). Splitting them lets a quality-improving kernel change ship
+/// WITHOUT altering the bytes of any document authored before it. A document's
+/// `engine` is `0` when omitted — the original kernels every shipped sound was
+/// rendered under, byte-identical forever. New documents are stamped with this
+/// value, opting them into the current kernels (e.g. anti-aliased `drive`).
+/// Revision 1 adds antiderivative anti-aliasing to [`Node::Drive`].
+pub const ENGINE_VERSION: u32 = 1;
+
 // Serde `default = "..."` requires free functions. Values with non-obvious
 // origins: q 0.707 is Butterworth (maximally flat), haas 12 ms sits in the
 // precedence-effect sweet spot, ceiling −1 dBTP is the common streaming-safe
@@ -105,6 +116,15 @@ fn default_duck_attack() -> f32 {
 fn default_duck_release() -> f32 {
     0.25
 }
+fn default_mode_decay() -> f32 {
+    0.4
+}
+fn default_modal_mix() -> f32 {
+    1.0
+}
+fn default_impact_hardness() -> f32 {
+    0.5
+}
 
 /// A complete sound: metadata plus a single root node.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -126,6 +146,15 @@ pub struct SoundDoc {
     /// sonarium are rejected by `validate` instead of silently misrendered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<u32>,
+    /// DSP-kernel revision (see [`ENGINE_VERSION`]). Omitted ⇒ 0, the original
+    /// kernels — so every existing document renders byte-for-byte as before.
+    /// The authoring tools stamp new documents with the current
+    /// [`ENGINE_VERSION`]; raising a document's `engine` opts it into newer,
+    /// higher-quality kernels (anti-aliased `drive`, …) and DOES change its
+    /// output. A document from a newer sonarium (engine > `ENGINE_VERSION`) is
+    /// rejected by `validate` rather than silently misrendered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<u32>,
     /// Optional stereo treatment applied to the final mono render. Defaults to
     /// mono (game SFX are usually authored mono and spatialised by the engine;
     /// use stereo for BGM, ambience, and UI stingers).
@@ -480,6 +509,22 @@ pub enum Node {
         notes: Vec<SeqNote>,
     },
 
+    /// Impact exciter: a short excitation burst that models the contact force
+    /// of a strike — a single raised-cosine force pulse whose width is set by
+    /// `hardness` (hard = brief, bright click; soft = wider, duller thud),
+    /// scaled by `velocity`. On its own it is a faint tick; its job is to
+    /// *excite* a resonant body — put it before a `modal` bank (or any
+    /// resonant filter) in a `chain`: `chain[ impact, modal ]` is a struck
+    /// object. The harder the strike, the more high modes it lights up.
+    Impact {
+        /// Strike hardness, 0..1 (1 = hardest / brightest / shortest contact).
+        #[serde(default = "default_impact_hardness")]
+        hardness: f32,
+        /// Strike velocity / level, 0..1.
+        #[serde(default = "default_gain")]
+        velocity: f32,
+    },
+
     // --- Envelope (outputs a 0..1 control signal) ---
     /// ADSR amplitude envelope with an sfxr-style `punch` transient.
     Env {
@@ -613,6 +658,24 @@ pub enum Node {
         #[serde(default)]
         mix: f32,
     },
+    /// Modal resonator bank: a set of damped sinusoidal partials (`modes`)
+    /// excited by the incoming signal — a struck/resonant object's *body*.
+    /// Bells, glass, metal bars, wood, ceramic, coins, and the resonant ping
+    /// of UI/impact sounds, none of which the oscillators can voice cleanly.
+    /// Each mode is one 2-pole resonator (a constant-peak-gain bandpass), so a
+    /// bank is N parallel resonators — cheap, stable, deterministic. Use it as
+    /// a chain stage after an excitation: `chain[ impact, modal ]`. The
+    /// excitation's brightness lights the modes; the modes' frequencies and
+    /// decays define the timbre. Author modes explicitly — the cookbook lists
+    /// frequency/decay tables for common materials to copy and tune.
+    Modal {
+        /// The resonant partials (1..=64). Each is a damped sine.
+        modes: Vec<Mode>,
+        /// Wet/dry mix, 0..1 (1 = pure resonance; lower keeps some of the raw
+        /// excitation transient for extra attack click).
+        #[serde(default = "default_modal_mix")]
+        mix: f32,
+    },
     /// Waveshaper for saturation / distortion. `amount` is pre-gain; `shape`
     /// chooses the curve (warm `tanh`, aggressive `hard` clip, or `fold`back).
     Drive {
@@ -621,6 +684,14 @@ pub enum Node {
         /// Distortion curve.
         #[serde(default)]
         shape: DriveShape,
+        /// Antiderivative anti-aliasing. The waveshaper's harmonics fold back
+        /// as inharmonic alias dirt at the base rate; ADAA suppresses that for
+        /// a clean, hi-fi distortion. Honoured only when the document's
+        /// `engine` is ≥ 1 (so legacy documents stay bit-exact); within an
+        /// engine-1 document it is on by default — set `false` to hear the raw
+        /// aliasing curve. Omitted ⇒ follow the engine.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        aa: Option<bool>,
     },
     /// Ring modulation: multiply the signal by a sine carrier at `freq`. Metallic,
     /// clangorous, robotic textures.
@@ -863,6 +934,22 @@ pub struct Track {
     pub mute: bool,
 }
 
+/// One resonant mode of a [`Node::Modal`] bank: a single damped sinusoidal
+/// partial. A struck object's timbre is the set of these — their frequency
+/// ratios say "metal" vs "wood" vs "glass", their decays say how it rings.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Mode {
+    /// Modal frequency in Hz.
+    pub freq: f32,
+    /// −60 dB ring time in seconds: how long this partial sustains after the
+    /// strike. Higher modes usually decay faster than the fundamental.
+    #[serde(default = "default_mode_decay")]
+    pub decay: f32,
+    /// Relative amplitude of this partial, 0..1.
+    #[serde(default = "default_gain")]
+    pub gain: f32,
+}
+
 /// One note in a [`Node::Seq`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SeqNote {
@@ -896,6 +983,7 @@ impl Node {
                 | Node::Downsample { .. }
                 | Node::Delay { .. }
                 | Node::Reverb { .. }
+                | Node::Modal { .. }
                 | Node::Drive { .. }
                 | Node::RingMod { .. }
                 | Node::Chorus { .. }
@@ -925,6 +1013,13 @@ impl SoundDoc {
     /// The schema version this document's render semantics follow (omitted ⇒ 1).
     pub fn effective_version(&self) -> u32 {
         self.version.unwrap_or(1)
+    }
+
+    /// The DSP-kernel revision this document renders under (omitted ⇒ 0, the
+    /// original kernels). Gates byte-changing kernel upgrades so old documents
+    /// stay bit-exact; see [`ENGINE_VERSION`].
+    pub fn effective_engine(&self) -> u32 {
+        self.engine.unwrap_or(0)
     }
 
     /// Backfill missing track ids deterministically (`layer_<position>`,
@@ -962,6 +1057,13 @@ impl SoundDoc {
             return Err(format!(
                 "version must be in [1, {SCHEMA_VERSION}], got {v} — a document from a newer \
                  sonarium cannot render correctly here; upgrade sonarium"
+            ));
+        }
+        let e = self.effective_engine();
+        if e > ENGINE_VERSION {
+            return Err(format!(
+                "engine must be in [0, {ENGINE_VERSION}], got {e} — a document authored against \
+                 a newer DSP kernel cannot render correctly here; upgrade sonarium"
             ));
         }
         // 600 s covers full songs; the cap exists only to bound render memory.
@@ -1209,6 +1311,10 @@ fn validate_node(node: &Node) -> Result<(), String> {
         Node::Sawtooth { freq } => validate_value(freq, "sawtooth.freq"),
         Node::Sine { freq } => validate_value(freq, "sine.freq"),
         Node::Noise { .. } => Ok(()),
+        Node::Impact { hardness, velocity } => {
+            in_unit("impact.hardness", *hardness)?;
+            in_unit("impact.velocity", *velocity)
+        }
         Node::Fm { freq, ratio, index } => {
             validate_value(freq, "fm.freq")?;
             if *ratio <= 0.0 {
@@ -1361,6 +1467,30 @@ fn validate_node(node: &Node) -> Result<(), String> {
             in_unit("reverb.room", *room)?;
             in_unit("reverb.mix", *mix)
         }
+        Node::Modal { modes, mix } => {
+            if modes.is_empty() {
+                return Err("modal.modes must be non-empty".into());
+            }
+            if modes.len() > 64 {
+                return Err(format!(
+                    "modal.modes must have at most 64 modes, got {}",
+                    modes.len()
+                ));
+            }
+            for (i, m) in modes.iter().enumerate() {
+                if m.freq <= 0.0 {
+                    return Err(format!("modal.modes[{i}].freq must be > 0, got {}", m.freq));
+                }
+                if m.decay <= 0.0 {
+                    return Err(format!(
+                        "modal.modes[{i}].decay must be > 0, got {}",
+                        m.decay
+                    ));
+                }
+                in_unit(&format!("modal.modes[{i}].gain"), m.gain)?;
+            }
+            in_unit("modal.mix", *mix)
+        }
         Node::Drive { amount, .. } => validate_value(amount, "drive.amount"),
         Node::RingMod { freq } => validate_value(freq, "ringmod.freq"),
         Node::Chorus { rate, depth, mix } => {
@@ -1427,6 +1557,13 @@ mod tests {
         serde_json::to_value(&doc).expect("serialize")
     }
 
+    fn doc_with_root(root: &str) -> SoundDoc {
+        serde_json::from_str(&format!(
+            r#"{{ "name": "t", "duration": 0.2, "engine": 1, "root": {root} }}"#
+        ))
+        .expect("deserialize")
+    }
+
     #[test]
     fn doc_defaults_fill_in() {
         let doc: SoundDoc =
@@ -1470,6 +1607,55 @@ mod tests {
         assert!(err.contains("upgrade sonarium"), "unhelpful error: {err}");
         doc.version = Some(0);
         assert!(doc.validate().is_err());
+    }
+
+    #[test]
+    fn engine_defaults_to_zero_and_bounds_at_current_revision() {
+        let mut doc: SoundDoc =
+            serde_json::from_str(r#"{ "name": "beep", "root": { "type": "sine", "freq": 440 } }"#)
+                .unwrap();
+        // Omitted ⇒ engine 0 (the original kernels; existing docs stay bit-exact).
+        assert_eq!(doc.engine, None);
+        assert_eq!(doc.effective_engine(), 0);
+        assert_eq!(doc.validate(), Ok(()));
+        doc.engine = Some(ENGINE_VERSION);
+        assert_eq!(doc.validate(), Ok(()));
+        // A document from a newer DSP kernel is rejected, not misrendered.
+        doc.engine = Some(ENGINE_VERSION + 1);
+        let err = doc.validate().unwrap_err();
+        assert!(err.contains("engine must be in"), "unhelpful error: {err}");
+    }
+
+    #[test]
+    fn modal_and_impact_validate_their_ranges() {
+        let modal = |modes: &str| -> Result<(), String> {
+            doc_with_root(&format!(
+                r#"{{ "type": "chain", "stages": [
+                    {{ "type": "impact" }},
+                    {{ "type": "modal", "modes": {modes} }} ] }}"#
+            ))
+            .validate()
+        };
+        assert!(modal(r#"[ { "freq": 440, "decay": 0.5, "gain": 1.0 } ]"#).is_ok());
+        assert!(modal("[]").unwrap_err().contains("non-empty"));
+        assert!(modal(r#"[ { "freq": -1 } ]"#).unwrap_err().contains("freq"));
+        assert!(
+            modal(r#"[ { "freq": 440, "decay": 0 } ]"#)
+                .unwrap_err()
+                .contains("decay")
+        );
+        assert!(
+            modal(r#"[ { "freq": 440, "gain": 2 } ]"#)
+                .unwrap_err()
+                .contains("gain")
+        );
+        // Impact ranges.
+        assert!(
+            doc_with_root(r#"{ "type": "impact", "hardness": 1.5 }"#)
+                .validate()
+                .unwrap_err()
+                .contains("hardness")
+        );
     }
 
     #[test]

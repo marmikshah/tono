@@ -195,9 +195,9 @@ pub struct NodeInfo {
     pub params: Json,
 }
 
-/// Recognised child-array field names (arrays of nodes / notes).
+/// Recognised child-array field names (arrays of nodes / notes / modal modes).
 fn is_child_array(key: &str) -> bool {
-    matches!(key, "inputs" | "stages" | "notes")
+    matches!(key, "inputs" | "stages" | "notes" | "modes")
 }
 
 /// Join a path prefix and a segment (layer-relative paths start empty: the
@@ -243,6 +243,20 @@ fn walk(json: &Json, path: &str, out: &mut Vec<NodeInfo>) {
         }
         if k == "trigger" || k == "node" {
             walk(v, &join(path, k), out);
+            continue;
+        }
+        if k == "modes" {
+            // Modal partials have no `type` tag (like seq notes); give each its
+            // own addressable row so `set_param modes[i].freq` is discoverable.
+            if let Some(arr) = v.as_array() {
+                for (i, mode) in arr.iter().enumerate() {
+                    out.push(NodeInfo {
+                        path: join(path, &format!("modes[{i}]")),
+                        node_type: "mode".to_string(),
+                        params: mode.clone(),
+                    });
+                }
+            }
             continue;
         }
         if k == "notes" {

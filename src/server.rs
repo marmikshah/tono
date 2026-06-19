@@ -603,6 +603,11 @@ impl Sonarium {
         // `version` predates stamping and was recorded under v1 semantics.
         if !self.replaying.load(std::sync::atomic::Ordering::SeqCst) {
             req.graph.version.get_or_insert(crate::dsl::SCHEMA_VERSION);
+            // New documents render under the current DSP kernels. A journaled
+            // step missing `engine` predates this stamping and was recorded
+            // under engine 0 — so, like `version`, the stamp must NOT run
+            // during replay, or an old session's bytes would shift.
+            req.graph.engine.get_or_insert(crate::dsl::ENGINE_VERSION);
         }
         let args = serde_json::to_value(&req).map_err(|e| e.to_string())?;
         let AuthorReq { mut graph, name } = req;
@@ -630,6 +635,12 @@ impl Sonarium {
         // (refining must never silently re-seed a v1 mixer's noise).
         if req.graph.version.is_none() {
             req.graph.version = existing.graph.version;
+        }
+        // Likewise keep the sound's kernel revision: refining a legacy
+        // (engine-0) sound must not silently anti-alias it. Raise `engine`
+        // explicitly to opt into the newer kernels.
+        if req.graph.engine.is_none() {
+            req.graph.engine = existing.graph.engine;
         }
         let args = serde_json::to_value(&req).map_err(|e| e.to_string())?;
         let RefineReq { id, graph } = req;

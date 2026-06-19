@@ -224,7 +224,8 @@ reproducible.
 
 - **PWM lead:** `square` with a modulated `duty` — `{ "lfo": { "shape": "sine", "rate": 5, "depth": 0.3, "center": 0.5 } }`.
 - **FM bell / e-piano:** `{ "type": "fm", "freq": 440, "ratio": 3.5, "index": { "slide": { "from": 6, "to": 0, "secs": 0.4 } } }` — higher `ratio`/`index` = more metallic; sliding `index` down gives a struck attack.
-- **Warmth / distortion:** `chain` into `drive{amount,shape}` — `tanh` warm, `hard` aggressive, `fold` metallic. Pairs well before a `lowpass`.
+- **Warmth / distortion:** `chain` into `drive{amount,shape}` — `tanh` warm, `hard` aggressive, `fold` metallic. Pairs well before a `lowpass`. On `engine: 1` documents the shaper is anti-aliased (ADAA) so hard/fold stay clean instead of spraying inharmonic foldback; set `"aa": false` on the node to hear the raw aliasing curve.
+- **Struck bodies (bell / glass / metal / coin / UI ping):** the **exciter → resonator** pair — an `impact` into a `modal` bank. `chain[ {type:impact, hardness:0.85}, {type:modal, modes:[{freq,decay,gain}, …]} ]`. Each mode is a damped sine; near-harmonic ratios + a long fundamental = bell, off-harmonic ratios = metal, all-short decays = a glass/UI tick. The hammer's `hardness` sets how far up the bank it reaches; `velocity` its energy. Oscillators can't voice these cleanly — modes can.
 - **Fat lead / pad (supersaw):** `{ "type": "super", "wave": "sawtooth", "freq": 220, "voices": 7, "detune_cents": 20 }` — more `voices` / `detune_cents` = wider and thicker. Great through a `lowpass` filter envelope, or as a `mix` layer under a melody.
 - **Surgical EQ:** `peak{cutoff,q,gain_db}` boosts/cuts a band (e.g. `+6 dB` at 3 kHz for presence); `lowshelf`/`highshelf{cutoff,gain_db}` tilt the lows/highs; `notch{cutoff,q}` removes a resonance or hum. Read `spectral_centroid_hz`, then EQ to hit the brightness you want.
 
@@ -236,7 +237,8 @@ reproducible.
 - **Layered impact:** `mix` a low `sine` (slide pitch down) for body + `noise{color:"brown"}` for weight,
   `mul` by a punchy `env`, then `chain` → `lowpass` (env cutoff) → `drive`. Classic hit design.
 - **Textures by noise colour:** `white` = hiss/steam, `pink` = wind/surf/rumble, `brown` = distant booms.
-- **Metallic / clang:** `fm` with integer-ish `ratio` (3, 3.5) and high `index`, or `ringmod{freq}` on a tone.
+- **Metallic / clang:** a `modal` bank with off-harmonic mode ratios excited by a hard `impact` (the physical way — see "Struck bodies" above); or, cheaper, `fm` with integer-ish `ratio` (3, 3.5) and high `index`, or `ringmod{freq}` on a tone.
+- **Tuning a modal bank:** address one partial at a time — `set_param { id, path: "root.stages[1].modes[0].freq", value: 540 }` (each mode is its own `describe_sound` row). Stretch every `decay` for a cathedral bell, shrink them for a desk bell; raise `hardness` toward 1 to wake the upper modes. Then `generate_variants` for a non-repeating round-robin of hits.
 - **Width / thickening:** `chorus{rate,depth,mix}` on pads and leads.
 - **Glue & loudness:** end a busy chain with `compress{threshold,ratio,attack,release,makeup}`. Watch the
   analysis: keep `true_peak_dbfs` below 0, use `loudness_lufs` to match levels across a set, and read
@@ -359,6 +361,18 @@ manual setup.
 - For melodic BGM, build a `seq` (or layer several with `mix`), give the doc a
   `duration` of an exact number of bars, then loop it. Keep the tail tidy
   (notes that ring past the loop point hurt the seam).
+
+## Engine revisions (fidelity vs. byte-stability)
+
+A document carries two independent version numbers. `version` is the **schema**
+version (document structure). `engine` is the **DSP-kernel** revision — which
+audio kernels render it. They are split so a fidelity upgrade never changes the
+bytes of an older sound: a document with `engine` omitted renders under the
+original kernels (byte-for-byte forever); new documents are stamped with the
+current engine and get the upgrades. Revision 1 adds anti-aliased `drive`
+(ADAA). To modernise an existing sound, set `"engine": 1` on it (its output
+will change — that's the point); to keep a legacy sound bit-exact, leave
+`engine` off. `refine_sound` preserves whatever a sound already had.
 
 ## Reproducible sessions
 
