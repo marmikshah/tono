@@ -83,9 +83,17 @@ to fix.
 - `get_sound { id }` — graph + paths + analysis.
 - `list_sounds {}` — the library inventory.
 - `analyze { id }` — re-run analysis: peak / true-peak / RMS / crest, ≈LUFS,
-  spectral centroid, attack/decay/onset/silence times, plus both images.
+  spectral centroid / flatness / inharmonicity, attack time + slope, decay /
+  onset / silence times, plus both images (log-frequency spectrogram).
 - `compare_sounds { a, b }` — metric deltas (b−a) and a 0..1 similarity score;
   converge a sound toward a reference by driving the deltas to zero.
+- `review_sound { id, archetype? }` — grade a sound against its archetype's
+  targets (attack/centroid/crest/duration) and the universal ship checklist
+  (clipping, true-peak, head/tail silence, onset count, loop seam). Returns
+  PASS/WARN/FAIL findings, each with the measured value, the target, and the
+  concrete fix — a reproducible critique that drives an iterative polish loop
+  (see the `sound-review-loop` skill). Omit `archetype` for the universal
+  checks only.
 
 ## History
 

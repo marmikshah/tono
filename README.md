@@ -59,7 +59,7 @@ Rust binary; no API keys, no network, fully deterministic.
   loudness-matched packs with `sounds.json` manifests, and engine files for
   Godot / Unity / Bevy.
 
-The full tool surface (25 tools) is documented in [docs/TOOLS.md](docs/TOOLS.md).
+The full tool surface (30 tools) is documented in [docs/TOOLS.md](docs/TOOLS.md).
 
 ## Quickstart
 

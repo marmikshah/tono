@@ -19,6 +19,7 @@ pub mod engines;
 pub mod journal;
 pub mod render;
 pub mod resources;
+pub mod review;
 pub mod server;
 pub mod service;
 pub mod session;

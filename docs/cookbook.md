@@ -57,6 +57,26 @@ that shows an anti-aliasing fix working). To converge a sound toward a
 reference, call `compare_sounds { a, b }` and drive the reported deltas
 (centroid/brightness, LUFS, attack, …) toward zero.
 
+## Reviewing & iterating (review → polish → review)
+
+`review_sound { id, archetype }` grades a sound against its archetype's targets
+(attack / centroid / crest / duration) and the universal ship checklist
+(clipping, true-peak, head/tail silence, onset count, loop seam). It returns
+PASS / WARN / FAIL findings — each with the measured value, the target, and the
+**concrete fix to try** — so judging a sound is reproducible, not vibes:
+```json
+{ "id": "laser_zap", "archetype": "laser" }
+→ FAIL: crest 7 dB (target 12–99) → "add punch, shorten attack";
+   centroid 1200 Hz (target 2000–8000) → "raise a filter cutoff / brighter wave"
+```
+Archetypes: `laser` `coin` `jump` `impact` `ui` `ambience` `bgm` (omit for the
+universal checks only). Drive a **polish loop** with it: review → apply the
+highest-severity finding's fix with one `set_param` → review again →
+`undo_sound` if it regressed → repeat until PASS. The **sound-review-loop**
+skill runs exactly this, and lets you hand in review in your own words at any
+step. Don't chase a WARN the sound's character justifies (a bell's long tail, a
+gusting wind's crest) — stop at the targets, not past them.
+
 ## Tips
 - **Punchy/percussive:** `a: 0` (instant attack), short `d`, `s: 0`, add `punch`.
 - **Pitch sweeps:** `slide` with `curve: "exp"` reads as natural pitch glide.
