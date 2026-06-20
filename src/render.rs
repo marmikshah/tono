@@ -539,7 +539,69 @@ fn eval_value(v: &Value, n: usize, sr: u32) -> Vec<f32> {
             let e = adsr(env, n, sr);
             e.iter().map(|x| from + (to - from) * x).collect()
         }
+        Value::Modulated(Modulator::Rand {
+            from,
+            to,
+            rate,
+            seed,
+        }) => {
+            // Smoothstep-interpolated random walk between `from` and `to`,
+            // drawing a fresh target every 1/`rate` seconds. Seeded ONLY from
+            // this modulator's own fields, so it is deterministic and stable
+            // under sibling edits (it never touches the shared render stream).
+            let mut rng = Rng::new(rand_seed(*seed, *from, *to, *rate));
+            let inc = rate.max(1e-4) / srf; // segments per sample
+            let (mut prev, mut next) = (rng.range(*from, *to), rng.range(*from, *to));
+            let mut phase = 0.0f32;
+            (0..n)
+                .map(|_| {
+                    // Smoothstep for organic, slope-continuous motion.
+                    let s = phase * phase * (3.0 - 2.0 * phase);
+                    let v = prev + (next - prev) * s;
+                    phase += inc;
+                    while phase >= 1.0 {
+                        phase -= 1.0;
+                        prev = next;
+                        next = rng.range(*from, *to);
+                    }
+                    v
+                })
+                .collect()
+        }
     }
+}
+
+/// Edit-stable seed for a [`Modulator::Rand`]: a hash of only the modulator's
+/// own fields, so its walk never shifts when sibling nodes are added or
+/// removed (the random stream is not threaded through graph traversal).
+fn rand_seed(seed: u64, from: f32, to: f32, rate: f32) -> u64 {
+    let mut h = seed ^ 0x9E37_79B9_7F4A_7C15;
+    for bits in [from.to_bits(), to.to_bits(), rate.to_bits()] {
+        h = (h ^ bits as u64).wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    h
+}
+
+/// Sparse stochastic impulses — a Poisson click train smoothed by a one-pole
+/// decay so overlapping grains sum. `density` events/sec each fire with random
+/// ± amplitude; `decay` sets the per-grain ring (0 = bare impulses). Draws from
+/// the render stream (like [`noise_signal`]).
+fn dust_signal(density: f32, decay: f32, n: usize, sr: u32, rng: &mut Rng) -> Signal {
+    let srf = sr as f32;
+    let p = (density / srf).clamp(0.0, 1.0); // event probability per sample
+    let g = if decay > 0.0 {
+        (-1.0 / (decay * srf)).exp()
+    } else {
+        0.0
+    };
+    let mut y = 0.0f32;
+    (0..n)
+        .map(|_| {
+            let imp = if rng.unit() < p { rng.bi() } else { 0.0 };
+            y = imp + g * y;
+            y
+        })
+        .collect()
 }
 
 /// PolyBLEP residual for band-limited oscillators: corrects the discontinuity
@@ -634,6 +696,7 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng, engine: u32) -> Si
             render_seq(*bpm, *steps_per_beat, &voice, notes, n, sr, rng)
         }
         Node::Impact { hardness, velocity } => impact_signal(*hardness, *velocity, n, sr),
+        Node::Dust { density, decay } => dust_signal(*density, *decay, n, sr, rng),
         Node::Env { adsr: env } => adsr(env, n, sr),
         // Validation rejects nested mixers; render defensively as a plain sum.
         Node::Tracks { tracks, .. } => {
@@ -2354,6 +2417,42 @@ mod tests {
         assert!(
             rms(&s[s.len() / 2..]) < rms(&s[..s.len() / 2]),
             "modal must decay"
+        );
+    }
+
+    #[test]
+    fn rand_modulator_is_self_seeded_and_bounded() {
+        let v = |seed: u64| {
+            Value::Modulated(Modulator::Rand {
+                from: 200.0,
+                to: 800.0,
+                rate: 5.0,
+                seed,
+            })
+        };
+        // Deterministic from its own fields only — no shared-stream coupling,
+        // so a sibling edit elsewhere in the graph can never shift it.
+        let a = eval_value(&v(1), 4410, 44_100);
+        assert_eq!(a, eval_value(&v(1), 4410, 44_100));
+        // A different seed decorrelates the walk.
+        assert_ne!(a, eval_value(&v(2), 4410, 44_100));
+        // The walk stays inside [from, to].
+        assert!(a.iter().all(|&x| (200.0..=800.0).contains(&x)));
+    }
+
+    #[test]
+    fn dust_is_sparse_and_deterministic() {
+        let mk = || {
+            doc(r#"{ "name": "n", "duration": 1.0, "engine": 1, "seed": 4,
+                     "root": { "type": "dust", "density": 20, "decay": 0.0 } }"#)
+        };
+        let a = render(&mk());
+        assert_eq!(a, render(&mk()), "dust must be deterministic");
+        // ~20 events/sec over 1 s; decay 0 ⇒ one nonzero sample per event.
+        let events = a.iter().filter(|&&x| x.abs() > 1e-6).count();
+        assert!(
+            (5..60).contains(&events),
+            "expected ≈20 sparse events, got {events}"
         );
     }
 

@@ -125,6 +125,9 @@ fn default_modal_mix() -> f32 {
 fn default_impact_hardness() -> f32 {
     0.5
 }
+fn default_dust_decay() -> f32 {
+    0.02
+}
 
 /// A complete sound: metadata plus a single root node.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -387,6 +390,26 @@ pub enum Modulator {
         /// Parameter value when the envelope is at 1.
         to: f32,
     },
+    /// Smooth random walk between `from` and `to`, drifting at `rate` new
+    /// targets per second (smoothstep-interpolated). The organic, NON-periodic
+    /// motion the other modulators lack — wind gusting on a filter cutoff,
+    /// fire flicker on a gain, drifting detune. Deterministic and edit-stable:
+    /// the walk is seeded only from this modulator's own fields, so it never
+    /// shifts when sibling nodes change. Give two `rand`s different `seed`s (or
+    /// rates) to decorrelate them.
+    #[serde(rename = "rand")]
+    Rand {
+        /// Lower bound of the walk.
+        from: f32,
+        /// Upper bound of the walk.
+        to: f32,
+        /// New random targets per second (low = slow drift, high = jittery).
+        rate: f32,
+        /// Decorrelation seed; defaults to 0. Distinct values give independent
+        /// walks for the same `from`/`to`/`rate`.
+        #[serde(default)]
+        seed: u64,
+    },
 }
 
 /// A node in the synthesis graph. Every node evaluates to a mono signal.
@@ -523,6 +546,20 @@ pub enum Node {
         /// Strike velocity / level, 0..1.
         #[serde(default = "default_gain")]
         velocity: f32,
+    },
+    /// Sparse stochastic impulses — a Poisson click train. `density` events per
+    /// second fire at random times with random ± amplitude, each decaying over
+    /// `decay` seconds (0 = bare single-sample impulses). The grain generator
+    /// behind crackle textures: fire, rain, geiger ticks, sparks, debris. Feed
+    /// it through a `bandpass`/`highpass` (for tone) or a `modal` (for pitched
+    /// debris). Its randomness draws from the layer's deterministic stream, so
+    /// like `noise` it is edit-stable within its own mixer layer.
+    Dust {
+        /// Mean events per second.
+        density: f32,
+        /// Per-grain decay time in seconds (0 = single-sample impulses).
+        #[serde(default = "default_dust_decay")]
+        decay: f32,
     },
 
     // --- Envelope (outputs a 0..1 control signal) ---
@@ -1272,6 +1309,12 @@ fn validate_value(v: &Value, what: &str) -> Result<(), String> {
                 Ok(())
             }
             Modulator::EnvMod { adsr, .. } => adsr.validate(&format!("{what}: env")),
+            Modulator::Rand { rate, .. } => {
+                if *rate <= 0.0 {
+                    return Err(format!("{what}: rand.rate must be > 0, got {rate}"));
+                }
+                Ok(())
+            }
         },
     }
 }
@@ -1314,6 +1357,15 @@ fn validate_node(node: &Node) -> Result<(), String> {
         Node::Impact { hardness, velocity } => {
             in_unit("impact.hardness", *hardness)?;
             in_unit("impact.velocity", *velocity)
+        }
+        Node::Dust { density, decay } => {
+            if *density <= 0.0 {
+                return Err(format!("dust.density must be > 0, got {density}"));
+            }
+            if *decay < 0.0 {
+                return Err(format!("dust.decay must be >= 0, got {decay}"));
+            }
+            Ok(())
         }
         Node::Fm { freq, ratio, index } => {
             validate_value(freq, "fm.freq")?;
@@ -1655,6 +1707,37 @@ mod tests {
                 .validate()
                 .unwrap_err()
                 .contains("hardness")
+        );
+    }
+
+    #[test]
+    fn dust_and_rand_validate_their_ranges() {
+        // dust: density must be positive, decay non-negative.
+        assert!(
+            doc_with_root(r#"{ "type": "dust", "density": 50 }"#)
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            doc_with_root(r#"{ "type": "dust", "density": 0 }"#)
+                .validate()
+                .unwrap_err()
+                .contains("density")
+        );
+        // rand modulator: rate must be positive.
+        let with_cutoff = |m: &str| {
+            doc_with_root(&format!(
+                r#"{{ "type": "chain", "stages": [
+                    {{ "type": "noise" }},
+                    {{ "type": "lowpass", "cutoff": {m} }} ] }}"#
+            ))
+            .validate()
+        };
+        assert!(with_cutoff(r#"{ "rand": { "from": 200, "to": 1200, "rate": 0.8 } }"#).is_ok());
+        assert!(
+            with_cutoff(r#"{ "rand": { "from": 200, "to": 1200, "rate": 0 } }"#)
+                .unwrap_err()
+                .contains("rand.rate")
         );
     }
 
