@@ -33,6 +33,15 @@ Higher-fidelity synthesis, gated so it never breaks byte-stability.
 - New example **`docs/examples/struck-bell.json`** (a struck bell + a coin
   ding), replayed in CI like every other recipe.
 
+### Craft tooling
+- **New `scaffold_layered_sfx { base_freq?, seed?, name? }` tool** — generates a
+  blank, band-disciplined 4-layer SFX document (sub / body / top / transient),
+  each a mixer layer with a stable id, a band-splitting filter, a one-shot
+  envelope, and a starting gain. Sources are neutral placeholders the agent
+  swaps out: a correct multi-layer *structure*, not a preset. Stamped schema v2
+  (independent per-layer noise) + the current engine; journaled and replayable.
+  New CI-replayed example `docs/examples/layered-sfx-scaffold.json`.
+
 ### Analyzer (sharper ears)
 - **Log-frequency spectrogram** — the feedback image's frequency axis is now
   logarithmic, so bass/low-mids and modal partials are legible instead of

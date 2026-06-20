@@ -36,6 +36,11 @@ The complete tool surface, as advertised to MCP clients.
 - `author_sound { graph, name? }` — validate → render → analyze in one call.
   Returns a text summary, the spectrogram and waveform images inline, and
   structured `{ id, wav_path, analysis }`. The primary tool.
+- `scaffold_layered_sfx { base_freq?, seed?, name? }` — generate a blank,
+  band-disciplined 4-layer SFX document (sub / body / top / transient), each a
+  mixer layer with a stable id, a band-splitting filter, a one-shot envelope,
+  and a starting gain. The sources are neutral placeholders to swap out — a
+  correct multi-layer starting point, not a preset.
 - `refine_sound { id, graph }` — replace a sound's graph and re-render
   (pushes an undo revision).
 - `set_param { id, layer?, path, value }` — change ONE parameter or node by
