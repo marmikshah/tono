@@ -28,7 +28,7 @@ use serde_json::json;
 use crate::analysis::{self, Analysis};
 use crate::audio;
 use crate::bank::{Bank, BankMember, ManifestEntry};
-use crate::dsl::{Node, Normalize, Playback, SoundDoc, Stereo, Track};
+use crate::dsl::{Adsr, Node, NoiseColor, Normalize, Playback, SoundDoc, Stereo, Track, Value};
 use crate::dsp::dbfs;
 use crate::edit::{self, EditOp, NodeInfo};
 use crate::engines::{self, EngineTarget};
@@ -69,6 +69,21 @@ pub struct AuthorReq {
     /// The synthesis graph to render.
     pub graph: SoundDoc,
     /// Optional display name (overrides the graph's `name`).
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// Scaffold a blank 4-layer SFX document (sub / body / top / transient).
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ScaffoldReq {
+    /// Fundamental of the body layer in Hz (the sub sits an octave below).
+    /// Defaults to 220.
+    #[serde(default)]
+    pub base_freq: Option<f32>,
+    /// Seed for the noise layers' deterministic streams. Defaults to 0.
+    #[serde(default)]
+    pub seed: Option<u64>,
+    /// Display name for the new sound. Defaults to `"layered_sfx"`.
     #[serde(default)]
     pub name: Option<String>,
 }
@@ -618,6 +633,33 @@ impl Sonarium {
         let rec = self.build(id, graph, now_secs())?;
         self.jlog("author_sound", args);
         Ok(sound_result(&rec, false))
+    }
+
+    /// Scaffold a blank, band-disciplined 4-layer SFX document the agent fills
+    /// in — pure structure, not a preset.
+    #[tool(
+        name = "scaffold_layered_sfx",
+        description = "Create a blank 4-layer SFX document — sub (weight), body (identity), top (air), transient (click) — each on its own mixer layer with a stable id, a band-splitting filter, a one-shot envelope, and a sensible starting gain. The sources are neutral PLACEHOLDERS (sines + noise): swap real sources into each layer with set_param/set_layer, then balance using the per-layer stats every render returns. A correct multi-layer starting point, not a finished sound."
+    )]
+    pub async fn scaffold_layered_sfx(
+        &self,
+        params: Parameters<ScaffoldReq>,
+    ) -> Result<CallToolResult, String> {
+        let req = params.0;
+        let base = req.base_freq.unwrap_or(220.0);
+        if !(20.0..=20_000.0).contains(&base) {
+            return Err(format!("base_freq must be in [20, 20000] Hz, got {base}"));
+        }
+        let args = serde_json::to_value(&req).map_err(|e| e.to_string())?;
+        let name = req
+            .name
+            .clone()
+            .unwrap_or_else(|| "layered_sfx".to_string());
+        let graph = scaffold_layered_doc(name, base, req.seed.unwrap_or(0));
+        let id = self.store.unique_id(&graph.name);
+        let rec = self.build(id, graph, now_secs())?;
+        self.jlog("scaffold_layered_sfx", args);
+        Ok(sound_result(&rec, true))
     }
 
     /// Replace the graph for an existing sound and re-render.
@@ -1580,6 +1622,10 @@ impl Sonarium {
         let a = &step.args;
         match step.tool.as_str() {
             "author_sound" => self.author_sound(Parameters(de(a)?)).await.map(drop),
+            "scaffold_layered_sfx" => self
+                .scaffold_layered_sfx(Parameters(de(a)?))
+                .await
+                .map(drop),
             "refine_sound" => self.refine_sound(Parameters(de(a)?)).await.map(drop),
             "set_param" => self.set_param(Parameters(de(a)?)).await.map(drop),
             "edit_sound" => self.edit_sound(Parameters(de(a)?)).await.map(drop),
@@ -2031,6 +2077,129 @@ fn write_export(
 /// the sound). When `include_graph` is set, the graph is added to the
 /// structured output (used by mutate/edit so the agent can refine without a
 /// `get_sound` round-trip).
+/// Build a blank 4-layer SFX scaffold: sub / body / top / transient, each a
+/// mixer layer with a band-splitting filter, a one-shot envelope, and a
+/// starting gain. Sources are neutral placeholders (sine / noise) the agent
+/// replaces. Stamped schema v2 (per-layer RNG streams keep the two noise
+/// layers independent) and the current engine.
+fn scaffold_layered_doc(name: String, base_freq: f32, seed: u64) -> SoundDoc {
+    // One role's graph: mul[ chain[source, filter], env ].
+    let role = |source: Node, filter: Node, a: f32, d: f32, r: f32, punch: f32| Node::Mul {
+        inputs: vec![
+            Node::Chain {
+                stages: vec![source, filter],
+            },
+            Node::Env {
+                adsr: Adsr {
+                    a,
+                    d,
+                    s: 0.0,
+                    r,
+                    punch,
+                },
+            },
+        ],
+    };
+    let sine = |f: f32| Node::Sine {
+        freq: Value::Const(f),
+    };
+    let noise = || Node::Noise {
+        color: NoiseColor::White,
+    };
+    let track = |id: &str, node: Node, gain: f32| Track {
+        id: Some(id.to_string()),
+        node,
+        pan: 0.0,
+        gain,
+        at: 0.0,
+        mute: false,
+    };
+
+    let tracks = vec![
+        // Sub: an octave-down sine, lowpassed — the weight you feel.
+        track(
+            "sub",
+            role(
+                sine(base_freq * 0.5),
+                Node::Lowpass {
+                    cutoff: Value::Const(140.0),
+                    q: 0.7,
+                },
+                0.0,
+                0.18,
+                0.06,
+                0.0,
+            ),
+            0.8,
+        ),
+        // Body: the identity. PLACEHOLDER sine through a bandpass at the
+        // fundamental — swap the sine for the real source (fm/super/saw/…).
+        track(
+            "body",
+            role(
+                sine(base_freq),
+                Node::Bandpass {
+                    cutoff: Value::Const(base_freq),
+                    q: 1.0,
+                },
+                0.004,
+                0.22,
+                0.1,
+                0.0,
+            ),
+            1.0,
+        ),
+        // Top: highpassed noise — air / sizzle.
+        track(
+            "top",
+            role(
+                noise(),
+                Node::Highpass {
+                    cutoff: Value::Const(4000.0),
+                    q: 0.7,
+                },
+                0.0,
+                0.07,
+                0.04,
+                0.0,
+            ),
+            0.35,
+        ),
+        // Transient: a short, punchy noise click — the "now".
+        track(
+            "transient",
+            role(
+                noise(),
+                Node::Highpass {
+                    cutoff: Value::Const(2000.0),
+                    q: 0.7,
+                },
+                0.0,
+                0.012,
+                0.006,
+                0.7,
+            ),
+            0.7,
+        ),
+    ];
+
+    SoundDoc {
+        name,
+        duration: 0.5,
+        sample_rate: 44_100,
+        seed,
+        version: Some(crate::dsl::SCHEMA_VERSION),
+        engine: Some(crate::dsl::ENGINE_VERSION),
+        stereo: Stereo::Mono,
+        normalize: None,
+        playback: Playback::OneShot,
+        root: Node::Tracks {
+            tracks,
+            master: Vec::new(),
+        },
+    }
+}
+
 fn sound_result(rec: &Record, include_graph: bool) -> CallToolResult {
     let a = &rec.analysis;
     let summary = format!(

@@ -286,7 +286,18 @@ A sound persists across restarts and has a stable slug id (from its name, e.g.
 
 Pro SFX are stacks: a transient (the click that says "now"), a body (the
 identity), a tail (the space). Build them as **layers** — each one a mixer
-track with a stable id you address directly:
+track with a stable id you address directly.
+
+**Quick start:** `scaffold_layered_sfx { base_freq?, seed? }` drops a blank,
+band-disciplined skeleton — four layers (`sub` / `body` / `top` / `transient`),
+each with a band-splitting filter, a one-shot envelope, and a starting gain
+already wired. The sources are neutral placeholders; `describe_sound` the
+result, swap the real source into each role with `set_param` (e.g. replace the
+`body` layer's placeholder sine with an `fm` or `super`), and rebalance with
+`set_layer` using the per-layer stats. It is structure, not a sound — you fill
+it in.
+
+To build by hand instead:
 
 1. `author_sound` with the FIRST layer's graph (the body, usually).
 2. `add_layer { id, layer: "crack", node: {...}, at: 0.0 }` for each next
