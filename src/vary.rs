@@ -70,6 +70,10 @@ fn transpose_value(v: &mut Value, ratio: f32) {
                 *from *= ratio;
                 *to *= ratio;
             }
+            Modulator::Rand { from, to, .. } => {
+                *from *= ratio;
+                *to *= ratio;
+            }
         },
     }
 }
@@ -158,6 +162,11 @@ fn mutate_value(value: &mut Value, amount: f32, rng: &mut Rng) {
             *from = jitter(*from, amount, rng, 0.0);
             *to = jitter(*to, amount, rng, 0.0);
         }
+        Value::Modulated(Modulator::Rand { from, to, rate, .. }) => {
+            *from = jitter(*from, amount, rng, 0.0);
+            *to = jitter(*to, amount, rng, 0.0);
+            *rate = jitter(*rate, amount, rng, 0.01);
+        }
     }
 }
 
@@ -241,6 +250,10 @@ fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
         Node::Impact { hardness, velocity } => {
             *hardness = jitter_unit(*hardness, amount, rng);
             *velocity = jitter_unit(*velocity, amount, rng);
+        }
+        Node::Dust { density, decay } => {
+            *density = jitter(*density, amount, rng, 1.0);
+            *decay = jitter(*decay, amount, rng, 0.0);
         }
         Node::RingMod { freq } => mutate_value(freq, amount, rng),
         Node::Chorus { rate, depth, mix } => {

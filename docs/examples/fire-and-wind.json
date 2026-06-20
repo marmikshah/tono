@@ -1,0 +1,35 @@
+{
+  "name": "fire-and-wind",
+  "description": "Two procedural environment textures from the new stochastic primitives: `dust` (a Poisson click train) for fire crackle, and a `rand` random-walk modulator for non-periodic wind gusting. Replay with: sonarium replay docs/examples/fire-and-wind.json",
+  "steps": [
+    {
+      "tool": "author_sound",
+      "args": { "graph": {
+        "name": "campfire", "duration": 3.0, "engine": 1, "seed": 5,
+        "playback": { "mode": "loop", "crossfade_secs": 0.4 },
+        "root": { "type": "mix", "inputs": [
+          { "type": "chain", "stages": [
+            { "type": "dust", "density": 80, "decay": 0.025 },
+            { "type": "bandpass", "cutoff": 1800, "q": 1.5 } ] },
+          { "type": "chain", "stages": [
+            { "type": "noise", "color": "brown" },
+            { "type": "lowpass", "q": 1.0,
+              "cutoff": { "rand": { "from": 200, "to": 700, "rate": 2.5, "seed": 9 } } },
+            { "type": "gain", "amount": 0.6 } ] } ] } } },
+      "note": "Fire = two layers: a `dust` crackle (80 sparse grains/sec, each ringing 25 ms, bandpassed to the snap region) over a low brown-noise roar whose lowpass cutoff is driven by a `rand` walk so it breathes instead of sitting still. Looped seamlessly."
+    },
+    {
+      "tool": "author_sound",
+      "args": { "graph": {
+        "name": "wind", "duration": 4.0, "engine": 1, "seed": 3,
+        "playback": { "mode": "loop", "crossfade_secs": 0.6 },
+        "root": { "type": "chain", "stages": [
+          { "type": "noise", "color": "pink" },
+          { "type": "lowpass", "q": 1.3,
+            "cutoff": { "rand": { "from": 250, "to": 1500, "rate": 0.7, "seed": 1 } } },
+          { "type": "gain",
+            "amount": { "rand": { "from": 0.4, "to": 1.0, "rate": 0.5, "seed": 2 } } } ] } } },
+      "note": "Wind = pink noise through a lowpass whose cutoff gusts on a slow `rand` walk, with a second `rand` riding the gain for swelling intensity. The two walks have different seeds so they decorrelate. Non-periodic by construction — no audible loop in the motion itself."
+    }
+  ]
+}
