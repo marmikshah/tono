@@ -1,0 +1,11 @@
+{
+  "name": "layered-sfx-scaffold",
+  "description": "scaffold_layered_sfx builds a blank, band-disciplined 4-layer SFX skeleton (sub/body/top/transient) the agent then fills in — pure structure, not a preset. Replay with: sonarium replay docs/examples/layered-sfx-scaffold.json",
+  "steps": [
+    {
+      "tool": "scaffold_layered_sfx",
+      "args": { "base_freq": 200, "seed": 7, "name": "impact_skeleton" },
+      "note": "Returns a Tracks document with four mixer layers, each a mul[chain[placeholder source, band filter], one-shot env] at a sensible starting gain: sub (sine an octave down, lowpassed — weight), body (PLACEHOLDER sine through a bandpass at the fundamental — swap in fm/super/saw for the real identity), top (highpassed noise — air), transient (short punchy noise click — the 'now'). From here: set_param to replace the body source, set_layer to rebalance using the per-layer stats every render reports."
+    }
+  ]
+}

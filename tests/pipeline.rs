@@ -7,7 +7,7 @@ use std::sync::Arc;
 use rmcp::handler::server::wrapper::Parameters;
 use sonarium::server::{
     AddToBankReq, AuthorReq, CreateBankReq, EditReq, ExportBankReq, ExportReq, IdReq, MakeLoopReq,
-    ReplaySessionReq, SaveSessionReq, SetParamReq, Sonarium, VariantsReq, rehydrate,
+    ReplaySessionReq, SaveSessionReq, ScaffoldReq, SetParamReq, Sonarium, VariantsReq, rehydrate,
 };
 use sonarium::session::Store;
 
@@ -34,6 +34,45 @@ const LASER: &str = r#"{
       { "type": "mul", "inputs": [
         { "type": "noise" },
         { "type": "env", "a": 0.0, "d": 0.04, "s": 0.0, "r": 0.0 } ] } ] } }"#;
+
+#[tokio::test]
+async fn scaffold_layered_sfx_builds_four_editable_layers() {
+    let (srv, _dir) = fresh("scaffold");
+    let res = srv
+        .scaffold_layered_sfx(Parameters(ScaffoldReq {
+            base_freq: Some(200.0),
+            seed: Some(7),
+            name: Some("impact_skeleton".into()),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(result_id(&res), "impact_skeleton");
+
+    let structured = res.structured_content.as_ref().unwrap();
+    // Four named, band-disciplined layers in role order — a usable balance.
+    let layers = structured["analysis"]["layers"].as_array().unwrap();
+    let ids: Vec<&str> = layers.iter().map(|l| l["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["sub", "body", "top", "transient"]);
+    assert!(structured["analysis"]["peak_dbfs"].as_f64().unwrap() <= 0.0);
+
+    // The whole structure rides back in the result, exposed for editing, and
+    // is stamped current (schema v2 per-layer streams + engine 1).
+    let g = &structured["graph"];
+    assert_eq!(g["version"], 2);
+    assert_eq!(g["engine"], 1);
+    assert_eq!(g["root"]["tracks"].as_array().unwrap().len(), 4);
+
+    // base_freq out of range is rejected, not silently clamped.
+    assert!(
+        srv.scaffold_layered_sfx(Parameters(ScaffoldReq {
+            base_freq: Some(0.0),
+            seed: None,
+            name: None,
+        }))
+        .await
+        .is_err()
+    );
+}
 
 /// Extract the structured `id` from an authoring tool result.
 fn result_id(res: &rmcp::model::CallToolResult) -> String {
