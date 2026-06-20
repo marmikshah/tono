@@ -33,6 +33,21 @@ Higher-fidelity synthesis, gated so it never breaks byte-stability.
 - New example **`docs/examples/struck-bell.json`** (a struck bell + a coin
   ding), replayed in CI like every other recipe.
 
+### Texture & environmental synthesis (new primitives)
+- **`dust`** — a sparse stochastic source: a Poisson click train (`density`
+  events/sec, each decaying over `decay` seconds; 0 = bare impulses), smoothed
+  so overlapping grains sum. The generator behind fire crackle, rain, geiger
+  ticks, sparks, and debris. Draws from the layer's deterministic stream like
+  `noise`.
+- **`rand`** — a random-walk modulator: smooth, NON-periodic drift between
+  `from` and `to` at `rate` targets/sec. The organic motion the periodic
+  modulators lack — wind gusting, fire flicker, drifting detune. Seeded only
+  from its own fields (with an optional `seed` to decorrelate), so it is
+  deterministic and stable under sibling edits.
+- New example **`docs/examples/fire-and-wind.json`** — a looped campfire
+  (`dust` crackle + `rand`-driven roar) and gusting wind (two decorrelated
+  `rand` walks), replayed in CI.
+
 ### Craft tooling
 - **New `scaffold_layered_sfx { base_freq?, seed?, name? }` tool** — generates a
   blank, band-disciplined 4-layer SFX document (sub / body / top / transient),

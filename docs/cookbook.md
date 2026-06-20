@@ -6,7 +6,7 @@ A sound is one `SoundDoc`:
 `root` is a single node; every node is a mono signal. Multiply a source by an
 envelope (`mul`), layer sources with `mix`, and pipe a source through processors
 with `chain`. Any numeric param is a constant or a modulator
-(`slide` / `lfo` / `arp` / `env`).
+(`slide` / `lfo` / `arp` / `env` / `rand`).
 
 ## Laser zap — descending square + noise transient
 ```json
@@ -245,6 +245,8 @@ reproducible.
 - **Layered impact:** `mix` a low `sine` (slide pitch down) for body + `noise{color:"brown"}` for weight,
   `mul` by a punchy `env`, then `chain` → `lowpass` (env cutoff) → `drive`. Classic hit design.
 - **Textures by noise colour:** `white` = hiss/steam, `pink` = wind/surf/rumble, `brown` = distant booms.
+- **Crackle / sparse events (`dust`):** `{ "type": "dust", "density": 80, "decay": 0.025 }` is a Poisson click train — `density` grains/sec, each ringing `decay` seconds (0 = bare impulses). Fire crackle, rain, geiger ticks, sparks, debris. Band-shape it through a `bandpass`/`highpass`, or feed a `modal` for pitched debris.
+- **Organic motion (`rand`):** a random-walk modulator — `{ "rand": { "from": 250, "to": 1500, "rate": 0.7, "seed": 1 } }` — drifts non-periodically between `from` and `to`, `rate` new targets/sec. The gusting the periodic `lfo` can't do: wind (on a lowpass `cutoff`), fire flicker (on a `gain`), drifting detune. Give two `rand`s different `seed`s to decorrelate them; the walk is deterministic and edit-stable (seeded from its own fields, never shifts when siblings change).
 - **Metallic / clang:** a `modal` bank with off-harmonic mode ratios excited by a hard `impact` (the physical way — see "Struck bodies" above); or, cheaper, `fm` with integer-ish `ratio` (3, 3.5) and high `index`, or `ringmod{freq}` on a tone.
 - **Tuning a modal bank:** address one partial at a time — `set_param { id, path: "root.stages[1].modes[0].freq", value: 540 }` (each mode is its own `describe_sound` row). Stretch every `decay` for a cathedral bell, shrink them for a desk bell; raise `hardness` toward 1 to wake the upper modes. Then `generate_variants` for a non-repeating round-robin of hits.
 - **Width / thickening:** `chorus{rate,depth,mix}` on pads and leads.
