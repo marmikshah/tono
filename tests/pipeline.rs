@@ -5,9 +5,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rmcp::handler::server::wrapper::Parameters;
+use sonarium::review::Archetype;
 use sonarium::server::{
     AddToBankReq, AuthorReq, CreateBankReq, EditReq, ExportBankReq, ExportReq, IdReq, MakeLoopReq,
-    ReplaySessionReq, SaveSessionReq, ScaffoldReq, SetParamReq, Sonarium, VariantsReq, rehydrate,
+    ReplaySessionReq, ReviewReq, SaveSessionReq, ScaffoldReq, SetParamReq, Sonarium, VariantsReq,
+    rehydrate,
 };
 use sonarium::session::Store;
 
@@ -68,6 +70,47 @@ async fn scaffold_layered_sfx_builds_four_editable_layers() {
             base_freq: Some(0.0),
             seed: None,
             name: None,
+        }))
+        .await
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn review_sound_grades_through_the_server() {
+    let (srv, _dir) = fresh("review");
+    srv.scaffold_layered_sfx(Parameters(ScaffoldReq {
+        base_freq: Some(200.0),
+        seed: Some(1),
+        name: Some("imp".into()),
+    }))
+    .await
+    .unwrap();
+    let rev = srv
+        .review_sound(Parameters(ReviewReq {
+            id: "imp".into(),
+            archetype: Some(Archetype::Impact),
+        }))
+        .await
+        .unwrap()
+        .0;
+    // The universal checks always run; the archetype adds its own.
+    assert!(rev.findings.iter().any(|f| f.criterion == "peak"));
+    assert!(rev.findings.iter().any(|f| f.criterion == "crest"));
+    assert_eq!(
+        rev.pass + rev.warn + rev.fail,
+        rev.findings.len() as u32,
+        "tally must match the findings"
+    );
+    // A non-pass finding always carries a concrete fix.
+    for f in &rev.findings {
+        assert_eq!(f.fix.is_empty(), format!("{:?}", f.status) == "Pass");
+    }
+    // A non-existent id is an error, not a panic.
+    assert!(
+        srv.review_sound(Parameters(ReviewReq {
+            id: "nope".into(),
+            archetype: None,
         }))
         .await
         .is_err()

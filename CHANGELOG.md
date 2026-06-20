@@ -48,6 +48,18 @@ Higher-fidelity synthesis, gated so it never breaks byte-stability.
   (`dust` crackle + `rand`-driven roar) and gusting wind (two decorrelated
   `rand` walks), replayed in CI.
 
+### Review loop
+- **New `review_sound { id, archetype? }` tool** — a deterministic critique
+  engine. Grades a sound against its archetype targets (laser / coin / jump /
+  impact / ui / ambience / bgm) and the universal ship checklist (clipping,
+  true-peak, head/tail silence, onset count, loop seam), returning PASS / WARN /
+  FAIL findings each with the measured value, the target, and the concrete fix.
+  Reproducible — a given sound always reviews the same way. Read-only.
+- **New `sound-review-loop` skill** — drives Review → Polish → Review:
+  `review_sound` → apply the top finding's fix with one `set_param` → re-review
+  → `undo_sound` on a regression → repeat until PASS. The user can supply review
+  in their own words at any iteration and it takes over.
+
 ### Craft tooling
 - **New `scaffold_layered_sfx { base_freq?, seed?, name? }` tool** — generates a
   blank, band-disciplined 4-layer SFX document (sub / body / top / transient),

@@ -35,6 +35,7 @@ use crate::engines::{self, EngineTarget};
 use crate::journal::{self, Journal};
 use crate::render;
 use crate::resources;
+use crate::review::{self, Archetype, Review};
 use crate::session::{Record, Store, now_secs, slugify};
 use crate::vary;
 
@@ -432,6 +433,18 @@ pub struct CompareReq {
     pub a: String,
     /// Id of the second sound, compared against `a`.
     pub b: String,
+}
+
+/// Review a sound against archetype targets + the ship checklist.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReviewReq {
+    /// Id of the sound to review.
+    pub id: String,
+    /// Archetype to grade against (`laser` / `coin` / `jump` / `impact` /
+    /// `ui` / `ambience` / `bgm`). Omit to run only the universal checks
+    /// (clipping, true-peak, head/tail silence, loop seam).
+    #[serde(default)]
+    pub archetype: Option<Archetype>,
 }
 
 /// Metric deltas (`b − a`) plus an overall similarity score.
@@ -1211,6 +1224,35 @@ impl Sonarium {
             decay_delta_ms: round2(decay_delta_ms),
             duration_delta_ms: round2(duration_delta_ms),
         }))
+    }
+
+    /// Grade a sound against archetype targets + the universal ship checklist —
+    /// the automated "Review" half of a review → polish → review loop.
+    #[tool(
+        name = "review_sound",
+        description = "Grade a sound against its archetype's targets (attack/centroid/crest/duration) and the universal ship checklist (clipping, true-peak, head/tail silence, onset count, loop seam). Returns PASS/WARN/FAIL findings, each with the measured value, the target, and the concrete fix to try — a deterministic, reproducible critique to drive an iterative polish loop. Pass an archetype (laser/coin/jump/impact/ui/ambience/bgm) for the full review, or omit it for the universal checks only."
+    )]
+    pub async fn review_sound(
+        &self,
+        params: Parameters<ReviewReq>,
+    ) -> Result<Json<Review>, String> {
+        let ReviewReq { id, archetype } = params.0;
+        let rec = self.require(&id)?;
+        // The loop-seam check needs the rendered samples (the stored Analysis
+        // doesn't carry it); render once, only when the document loops.
+        let seam = if matches!(rec.graph.playback, Playback::Loop { .. }) {
+            Some(render::loop_seam_db(
+                &render::render_product(&rec.graph).mono,
+            ))
+        } else {
+            None
+        };
+        Ok(Json(review::review(
+            &rec.graph,
+            &rec.analysis,
+            archetype,
+            seam,
+        )))
     }
 
     /// Create in-between sounds along the line between two designs.
