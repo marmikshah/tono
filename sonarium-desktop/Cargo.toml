@@ -15,6 +15,7 @@ base64 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 cpal = "0.15.3"
+midir = "0.10"
 tauri = "2"
 
 [build-dependencies]

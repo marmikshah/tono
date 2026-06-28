@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use midir::{MidiInput, MidiInputConnection};
 use sonarium_core::dsl::{Adsr, Shape, SoundDoc};
 use sonarium_core::stream::Player;
 use sonarium_core::voice::PolySynth;
@@ -120,6 +121,7 @@ pub fn spawn(doc: SoundDoc) -> Result<AudioHandle> {
         .name("sonarium-audio".into())
         .spawn(move || match build_stream(doc) {
             Ok((stream, handle)) => {
+                let _midi = connect_midi(handle.clone()); // keep MIDI connections alive
                 tx.send(Ok(handle)).ok();
                 let _stream = stream;
                 loop {
@@ -232,5 +234,50 @@ fn mix(
         for c in 2..channels {
             data[base + c] = 0.0;
         }
+    }
+}
+
+/// Connect every MIDI input port present at startup to the live synth. Failures
+/// (no MIDI backend, no devices) degrade gracefully to "keyboard only". Devices
+/// plugged in later aren't hot-detected in v1.
+fn connect_midi(handle: AudioHandle) -> Vec<MidiInputConnection<()>> {
+    let mut conns = Vec::new();
+    let Ok(scan) = MidiInput::new("sonarium-scan") else {
+        return conns;
+    };
+    for port in scan.ports() {
+        let Ok(input) = MidiInput::new("sonarium") else {
+            continue;
+        };
+        let name = input.port_name(&port).unwrap_or_else(|_| "midi".into());
+        let h = handle.clone();
+        match input.connect(
+            &port,
+            "sonarium-in",
+            move |_t, msg, _| midi_message(msg, &h),
+            (),
+        ) {
+            Ok(conn) => {
+                eprintln!("sonarium: MIDI connected — {name}");
+                conns.push(conn);
+            }
+            Err(e) => eprintln!("sonarium: MIDI connect failed ({name}): {e}"),
+        }
+    }
+    conns
+}
+
+/// Translate a raw MIDI channel message into synth note events. Note-on with
+/// zero velocity is treated as note-off (running-status convention).
+fn midi_message(msg: &[u8], handle: &AudioHandle) {
+    if msg.len() < 3 {
+        return;
+    }
+    let note = msg[1] as u32;
+    let freq = 440.0 * 2f32.powf((note as f32 - 69.0) / 12.0);
+    match (msg[0] & 0xF0, msg[2]) {
+        (0x90, vel) if vel > 0 => handle.note_on(note, freq),
+        (0x80, _) | (0x90, 0) => handle.note_off(note),
+        _ => {}
     }
 }
