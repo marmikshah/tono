@@ -186,6 +186,26 @@ pub struct ExportResp {
     pub path: String,
 }
 
+/// Export a document's seqs to a MIDI file.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ExportMidiReq {
+    /// Id of the sound to export.
+    pub id: String,
+    /// Destination `.mid` path. Defaults to `<id>.mid` in the working dir.
+    #[serde(default)]
+    pub dest: Option<String>,
+}
+
+/// Result of a MIDI export.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ExportMidiResp {
+    pub path: String,
+    /// One MIDI track per seq in the document.
+    pub tracks: usize,
+    /// Total notes written.
+    pub notes: usize,
+}
+
 fn default_amount() -> f32 {
     0.2
 }
@@ -1859,6 +1879,31 @@ impl Sonarium {
                 .await
             }
         }
+    }
+
+    /// Export a document's seqs to a Standard MIDI File.
+    #[tool(
+        name = "export_midi",
+        description = "Write every seq in a sound to a Standard MIDI File (one track per seq) so a melody / drum pattern round-trips into a DAW. Notes map by (step, len) on a 480-PPQ grid; the first seq's bpm is the global tempo. dest defaults to <id>.mid in the working dir. Errors if the sound has no seq."
+    )]
+    pub async fn export_midi(
+        &self,
+        params: Parameters<ExportMidiReq>,
+    ) -> Result<Json<ExportMidiResp>, String> {
+        let ExportMidiReq { id, dest } = params.0;
+        let rec = self.require(&id)?;
+        let path = dest
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| self.store.dir().join(format!("{id}.mid")));
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let summary = crate::midi::export_midi(&rec.graph, &path).map_err(|e| e.to_string())?;
+        Ok(Json(ExportMidiResp {
+            path: path.to_string_lossy().into_owned(),
+            tracks: summary.tracks,
+            notes: summary.notes,
+        }))
     }
 
     /// Snapshot the session journal to a portable session file.

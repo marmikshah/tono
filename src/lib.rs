@@ -17,6 +17,7 @@ pub mod audio;
 pub mod bank;
 pub mod engines;
 pub mod journal;
+pub mod midi;
 pub mod resources;
 pub mod server;
 pub mod service;
