@@ -258,15 +258,49 @@ function impNode(d){
 }
 
 /* ── topological auto-layout (output rightmost) ── */
-function layout(){
+function levels(){
   const lvl={[OUT]:0}; let changed=true;
-  for(let i=0;i<200 && changed;i++){ changed=false;
+  for(let i=0;i<400 && changed;i++){ changed=false;
     for(const w of wires){ const want=(lvl[w.to]??0)+1; if((lvl[w.from]??-1)<want){ lvl[w.from]=want; changed=true; } }
   }
-  const maxL=Math.max(0,...Object.values(lvl));
-  const byL={}; for(const uid in nodes){ const l=lvl[uid]??0; (byL[l]=byL[l]||[]).push(uid); }
+  return lvl;
+}
+/* provisional layout (no measured heights — used before the first draw) */
+function layout(){
+  const lvl=levels(), maxL=Math.max(0,...Object.values(lvl)), byL={};
+  for(const uid in nodes){ const l=lvl[uid]??0; (byL[l]=byL[l]||[]).push(uid); }
   const COLW=250, ROWH=150;
   for(const l in byL){ byL[l].forEach((uid,i)=>{ nodes[uid].x=40+(maxL-l)*COLW; nodes[uid].y=40+i*ROWH; }); }
+}
+/* height-aware tidy-tree layout: leaves stack by traversal order with real
+   node heights, parents center over their children. Run after a draw so
+   offsetHeight is known; eliminates the overlaps the level grid produced. */
+function nodeH(uid){ const el=canvas.querySelector(`.node[data-uid="${cssEsc(uid)}"]`); return el?el.offsetHeight:80; }
+function tidyLayout(){
+  const lvl=levels(), maxL=Math.max(0,...Object.values(lvl));
+  const COLW=250, GAP=26; let cursor=30; const seen=new Set();
+  // pass 1: tree-centering gives a nice vertical *ordering* per column
+  (function place(uid){
+    if(seen.has(uid)) return; seen.add(uid);
+    const kids=wires.filter(w=>w.to===uid).sort((a,b)=>(''+a.slot).localeCompare(''+b.slot,undefined,{numeric:true})).map(w=>w.from);
+    kids.forEach(place);
+    const h=nodeH(uid);
+    if(!kids.length){ nodes[uid].y=cursor; cursor+=h+GAP; }
+    else { const cy=kids.map(k=>nodes[k].y+nodeH(k)/2); nodes[uid].y=(Math.min(...cy)+Math.max(...cy))/2-h/2; }
+    nodes[uid].x=40+(maxL-(lvl[uid]??0))*COLW;
+  })(OUT);
+  // pass 2: pack each column top-down by that ordering, using real heights —
+  // guarantees no overlaps (tall nodes can't collide with column siblings)
+  const cols={};
+  for(const uid in nodes){ const c=lvl[uid]??0; (cols[c]=cols[c]||[]).push(uid); }
+  for(const c in cols){ cols[c].sort((a,b)=>nodes[a].y-nodes[b].y); let y=30;
+    for(const uid of cols[c]){ nodes[uid].y=y; y+=nodeH(uid)+GAP; } }
+}
+/* the one entry for loading a document: import → draw → tidy → redraw → render */
+function loadDoc(doc){
+  importDoc(doc);
+  $('#name').value=meta.name; $('#dur').value=meta.duration;
+  draw(); tidyLayout(); draw(); runEngine();
 }
 
 /* ── DOM render ── */
@@ -448,13 +482,13 @@ function buildPalette(){
 
 /* ── JSON drawer ── */
 function syncJson(){ if($('#json').open){ try{ jsonText.value=JSON.stringify(buildDoc(),null,2); }catch(e){ jsonText.value='// '+e.message; } } }
-$('#applyjson').onclick=()=>{ try{ const d=JSON.parse(jsonText.value); importDoc(d); $('#name').value=meta.name; $('#dur').value=meta.duration; draw(); runEngine(); }catch(e){ setStatus('err','JSON: '+e.message); } };
+$('#applyjson').onclick=()=>{ try{ loadDoc(JSON.parse(jsonText.value)); }catch(e){ setStatus('err','JSON: '+e.message); } };
 $('#fromcanvas').onclick=syncJson;
 $('#json').addEventListener('toggle',syncJson);
 
 /* ── top bar ── */
 const exs=$('#examples'); for(const k of Object.keys(EXAMPLES)){ const o=document.createElement('option'); o.textContent=k; exs.appendChild(o); }
-exs.onchange=()=>{ if(!exs.value){ blank(); return; } importDoc(structuredClone(EXAMPLES[exs.value])); $('#name').value=meta.name; $('#dur').value=meta.duration; draw(); runEngine(); };
+exs.onchange=()=>{ if(!exs.value){ blank(); return; } loadDoc(structuredClone(EXAMPLES[exs.value])); };
 $('#play').onclick=play;
 $('#name').oninput=scheduleRender; $('#dur').oninput=scheduleRender;
 $('#wrap').onmousedown=e=>{ if(e.target.id==='canvas'||e.target.id==='wires'){ sel=null; markSel(); } };
@@ -467,7 +501,7 @@ function blank(){ nodes={}; wires=[]; uidc=0; sel=null; nodes[OUT]={uid:OUT,type
 
 /* ── boot ── */
 buildPalette();
-init().then(()=>{ importDoc(structuredClone(EXAMPLES['laser zap'])); $('#name').value=meta.name; $('#dur').value=meta.duration; draw(); runEngine(); })
+init().then(()=>{ loadDoc(structuredClone(EXAMPLES['laser zap'])); })
   .catch(e=>setStatus('err','engine load failed: '+e));
 </script>
 </body>
