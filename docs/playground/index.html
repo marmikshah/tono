@@ -61,6 +61,14 @@
   .stat .k{ font-size:.6rem; color:var(--mut) } .stat .v{ font-size:.86rem; font-variant-numeric:tabular-nums }
   #status{ font-size:.76rem; padding:.3rem .7rem; border-top:1px solid var(--line); min-height:1.5em; }
   #status.err{ color:#ff8092; font-family:ui-monospace,monospace; } #status.ok{ color:var(--acc); }
+  .rollbtn{ width:100%; margin-top:.25rem; font-size:.72rem; padding:.3rem; background:#241f3a; border:1px solid #3a3360; border-radius:6px; color:#dfe3ea; cursor:pointer; }
+  .rollbtn:hover{ border-color:var(--acc); color:var(--acc); }
+  #rollModal{ position:fixed; inset:0; background:#0a0812f2; z-index:50; display:none; flex-direction:column; }
+  #rollModal.open{ display:flex; }
+  #rollHead{ display:flex; gap:.6rem; align-items:center; padding:.55rem .9rem; border-bottom:1px solid var(--line); }
+  #rollHead strong{ letter-spacing:.04em; }
+  #rollWrap{ flex:1; overflow:auto; padding:.5rem; }
+  #rollCanvas{ background:#0d0b16; cursor:crosshair; display:block; border:1px solid var(--line); border-radius:6px; }
   details#json{ position:absolute; bottom:1.9rem; right:308px; width:340px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.4rem .6rem; z-index:5; }
   details#json textarea{ width:100%; height:200px; margin-top:.3rem; background:#0d0b16; color:#cdd3df; border:1px solid var(--line); border-radius:6px; padding:.5rem; font:11px/1.45 ui-monospace,Menlo,monospace; }
 </style>
@@ -87,6 +95,18 @@
 </main>
 
 <div id="status"></div>
+<div id="rollModal">
+  <div id="rollHead">
+    <strong>piano roll</strong>
+    <label class="mut">bpm <input class="num" type="number" id="rollBpm" min="20" max="300"></label>
+    <label class="mut">steps/beat <input class="num" type="number" id="rollSpb" min="1" max="16"></label>
+    <button id="rollPlay" class="primary">▶ Play</button>
+    <span style="flex:1"></span>
+    <span class="mut">click empty = add · drag = length · click a note = delete · Esc closes</span>
+    <button id="rollClose">✕ close</button>
+  </div>
+  <div id="rollWrap"><canvas id="rollCanvas"></canvas></div>
+</div>
 <details id="json"><summary class="mut">JSON (the document an agent edits)</summary>
   <textarea id="jsontext" spellcheck="false"></textarea>
   <div style="margin-top:.3rem"><button id="applyjson">Apply → canvas</button> <button id="fromcanvas">Canvas → JSON</button></div>
@@ -441,7 +461,7 @@ function bodyHtml(n,sp){
   if(sp.idField) h+=`<div class="prow"><label>id</label><input type="text" class="tiny" style="flex:1" data-k="id" data-kind="text" value="${n.f.id||''}" placeholder="layer id"></div>`;
   for(const [k,m] of Object.entries(sp.p||{})) h+=prow(n,k,m);
   if(sp.muteField) h+=`<div class="prow"><label>mute</label><input type="checkbox" data-k="mute" data-kind="bool" ${n.f.mute?'checked':''}></div>`;
-  if(sp.seqNotes) h+=`<div class="mut">${(n.f.notes||[]).length} notes · edit in JSON</div>`;
+  if(sp.seqNotes) h+=`<button class="rollbtn" data-roll="1">✎ piano roll (${(n.f.notes||[]).length})</button>`;
   if(sp.modes) h+=`<div class="mut">${(n.f.modes||[]).length} modes · edit in JSON</div>`;
   return h;
 }
@@ -533,6 +553,7 @@ function bindBody(el,uid){
       n.f[key][mk][f]= f==='steps'?inp.value.split(',').map(Number).filter(x=>!isNaN(x)): (inp.type==='number'?+inp.value:inp.value);
       scheduleRender(); });
   });
+  el.querySelector('[data-roll]')?.addEventListener('click',ev=>{ ev.stopPropagation(); openRoll(uid); });
 }
 function drawNodeRefresh(uid){ const el=canvas.querySelector(`.node[data-uid="${cssEsc(uid)}"]`); el.querySelector('.nbody').innerHTML=bodyHtml(nodes[uid],SPECS[nodes[uid].type]); bindBody(el,uid); drawWires(); }
 function switchMode(n,key,mode){
@@ -623,6 +644,62 @@ document.addEventListener('keyup',e=>{
   if(window.__TAURI__ && backend) backend.noteOff(60+semis);
 });
 function blank(){ nodes={}; wires=[]; uidc=0; sel=null; nodes[OUT]={uid:OUT,type:OUT,x:560,y:220,f:{}}; meta={name:'sound',duration:0.5,sample_rate:44100}; $('#name').value=meta.name; $('#dur').value=meta.duration; draw(); setStatus('mut','empty patch — add nodes from the palette, wire them to OUT ▶'); }
+
+/* ── piano roll (seq note editor) ── */
+const NOTE_NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const midiToName=m=>NOTE_NAMES[((m%12)+12)%12]+(Math.floor(m/12)-1);
+function nameToMidi(s){ const m=/^([A-Ga-g])([#b]?)(-?\d+)?$/.exec(String(s).trim()); if(!m) return 60;
+  const base={C:0,D:2,E:4,F:5,G:7,A:9,B:11}[m[1].toUpperCase()];
+  const semis=base+(m[2]==='#'?1:m[2]==='b'?-1:0); const oct=m[3]!==undefined?parseInt(m[3],10):4;
+  return (oct+1)*12+semis; }
+function pitchToMidi(p){ if(typeof p==='number') return Math.round(69+12*Math.log2(p/440)); return nameToMidi(p); }
+const ROLL={ top:84, rows:37, cw:24, ch:15, gutter:46 };  // C6 (top) → C3 (bottom)
+let rollUid=null, rollDrag=null;
+const rollNode=()=>nodes[rollUid];
+function openRoll(uid){ rollUid=uid; const f=rollNode().f;
+  $('#rollBpm').value=f.bpm||120; $('#rollSpb').value=f.steps_per_beat||4;
+  $('#rollModal').classList.add('open'); drawRoll(); }
+function closeRoll(){ $('#rollModal').classList.remove('open'); if(rollUid){ drawNodeRefresh(rollUid); } rollUid=null; rollDrag=null; }
+function rollSteps(){ const notes=rollNode().f.notes||[]; const mx=notes.reduce((a,n)=>Math.max(a,n.step+(n.len||1)),0); return Math.max(32,mx+8); }
+function drawRoll(){
+  const cv=$('#rollCanvas'), f=rollNode().f, notes=f.notes||[], spb=Math.max(1,f.steps_per_beat||4);
+  const N=rollSteps(), W=ROLL.gutter+N*ROLL.cw, H=ROLL.rows*ROLL.ch;
+  cv.width=W; cv.height=H; const c=cv.getContext('2d');
+  c.fillStyle='#0d0b16'; c.fillRect(0,0,W,H);
+  for(let r=0;r<ROLL.rows;r++){ const midi=ROLL.top-r, y=r*ROLL.ch, black=NOTE_NAMES[((midi%12)+12)%12].includes('#');
+    c.fillStyle=black?'#15121f':'#181527'; c.fillRect(ROLL.gutter,y,W-ROLL.gutter,ROLL.ch);
+    c.fillStyle='#2c2746'; c.fillRect(ROLL.gutter,y+ROLL.ch-1,W-ROLL.gutter,1);
+    if(midi%12===0){ c.fillStyle='#6f7891'; c.font='10px ui-monospace,monospace'; c.fillText(midiToName(midi),6,y+11); } }
+  for(let s=0;s<=N;s++){ const x=ROLL.gutter+s*ROLL.cw;
+    c.fillStyle = s%(spb*4)===0?'#3a3360':(s%spb===0?'#2c2746':'#1c1830'); c.fillRect(x,0,1,H); }
+  const drawNote=(step,len,midi,col)=>{ const r=ROLL.top-midi; if(r<0||r>=ROLL.rows) return;
+    c.fillStyle=col; c.fillRect(ROLL.gutter+step*ROLL.cw+1,r*ROLL.ch+1,len*ROLL.cw-2,ROLL.ch-2); };
+  for(const n of notes) drawNote(n.step,n.len||1,pitchToMidi(n.pitch),'#50dca0');
+  if(rollDrag){ const s=Math.min(rollDrag.startCol,rollDrag.curCol), len=Math.abs(rollDrag.curCol-rollDrag.startCol)+1;
+    drawNote(s,len,ROLL.top-rollDrag.row,'#6ee7b4'); }
+}
+function rollCell(e){ const cv=$('#rollCanvas'), rect=cv.getBoundingClientRect();
+  const x=e.clientX-rect.left, y=e.clientY-rect.top; if(x<ROLL.gutter) return null;
+  const col=Math.floor((x-ROLL.gutter)/ROLL.cw), row=Math.floor(y/ROLL.ch);
+  if(col<0||row<0||row>=ROLL.rows) return null; return {col,row}; }
+function noteIndexAt(col,row){ const notes=rollNode().f.notes||[];
+  return notes.findIndex(n=>ROLL.top-pitchToMidi(n.pitch)===row && n.step<=col && col<n.step+(n.len||1)); }
+function rollChanged(){ scheduleRender(); drawRoll(); }
+$('#rollCanvas').addEventListener('mousedown',e=>{ const cell=rollCell(e); if(!cell) return;
+  const f=rollNode().f; f.notes=f.notes||[];
+  const hit=noteIndexAt(cell.col,cell.row);
+  if(hit>=0){ f.notes.splice(hit,1); rollChanged(); }
+  else { rollDrag={startCol:cell.col,curCol:cell.col,row:cell.row}; drawRoll(); } });
+window.addEventListener('mousemove',e=>{ if(!rollDrag) return; const cell=rollCell(e);
+  if(cell && cell.row===rollDrag.row){ rollDrag.curCol=cell.col; drawRoll(); } });
+window.addEventListener('mouseup',()=>{ if(!rollDrag) return;
+  const f=rollNode().f, s=Math.min(rollDrag.startCol,rollDrag.curCol), len=Math.abs(rollDrag.curCol-rollDrag.startCol)+1;
+  f.notes.push({step:s,len,pitch:midiToName(ROLL.top-rollDrag.row)}); rollDrag=null; rollChanged(); });
+$('#rollBpm').addEventListener('input',()=>{ rollNode().f.bpm=+$('#rollBpm').value||120; rollChanged(); });
+$('#rollSpb').addEventListener('input',()=>{ rollNode().f.steps_per_beat=Math.round(+$('#rollSpb').value)||4; rollChanged(); });
+$('#rollPlay').addEventListener('click',play);
+$('#rollClose').addEventListener('click',closeRoll);
+document.addEventListener('keydown',e=>{ if(e.key==='Escape' && $('#rollModal').classList.contains('open')) closeRoll(); });
 
 /* ── boot ── */
 buildPalette();
