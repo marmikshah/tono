@@ -134,6 +134,10 @@ to fix.
   member of that bank; omit `bank_id` for the whole library. `engine:
   "godot" | "unity" | "bevy"` also emits `.import` sidecars, `.meta` sidecars
   (stable GUIDs), or a generated `sonarium_sounds.rs`.
+- `export_midi { id, dest? }` — write every `seq` in the sound to a Standard
+  MIDI File (one track per seq) so a melody / drum pattern round-trips into a
+  DAW. Notes map by `(step, len)` on a 480-PPQ grid; the first seq's `bpm` is
+  the global tempo. `dest` defaults to `<id>.mid`.
 
 ## Sessions
 
