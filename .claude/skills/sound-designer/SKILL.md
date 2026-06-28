@@ -12,7 +12,7 @@ its analysis, and let every edit be a hypothesis the next render confirms.
 ## The loop
 
 1. **Author** the smallest graph that could work (`author_sound`). For layered
-   work, author the BODY first, then stack (`add_layer` where available,
+   work, author the BODY first, then stack (`layer { op: "add" }` where available,
    `mix` inputs otherwise).
 2. **Read the numbers, then look at both images.** Numbers tell you *what*;
    the spectrogram tells you *where in frequency*; the waveform tells you
@@ -84,7 +84,7 @@ its analysis, and let every edit be a hypothesis the next render confirms.
 
 One layer per thing you'd fade, pan, time-shift, or analyze separately —
 transient / body / tail for SFX, one instrument per layer for music. Address
-layers by id (`set_layer` for gain/pan/at/mute; `set_param {layer, path}` for
+layers by id (`layer { op: "set" }` for gain/pan/at/mute; `set_param {layer, path}` for
 the instrument). Read the `layers (post-fader, pre-master)` line every render:
 balance moves beat EQ surgery. On older servers without layer tools, the same
 design maps to `mix` inputs — keep components as separate inputs so paths

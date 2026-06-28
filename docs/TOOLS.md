@@ -56,23 +56,23 @@ The complete tool surface, as advertised to MCP clients.
 ## Layers (compositional authoring)
 
 The flow: `author_sound` creates the sound with its **first** layer's graph;
-`add_layer` stacks every next one. One layer per thing you'd fade, pan,
+`layer { op: "add" }` stacks every next one. One layer per thing you'd fade, pan,
 time-shift, or analyze separately — an instrument in a song; the
 crack/body/tail of an SFX. Use `mix` only for sub-signals that share one
 envelope or filter. Every render reports each layer's post-fader, pre-master
 contribution (peak / RMS / energy share), so balance problems name the layer
 to fix.
 
-- `add_layer { id, layer, node, gain?, pan?, at? }` — stack a new instrument
-  layer. The first call on a plain sound wraps its existing graph as a
-  level-compensated layer named after the sound (announced in the response).
-  Duplicate layer ids are rejected with the current listing.
-- `set_layer { id, layer, gain?, pan?, at?, mute? }` — mixer moves without
-  touching the layer's graph. `mute` is rendered state: exports ship without
-  muted layers.
-- `layer_ops { id, op: "remove" | "duplicate", layer, new_id? }` — structural
-  changes; duplicating re-grains noise deterministically from the new id (a
-  built-in variation).
+- `layer { id, op, layer, node?, gain?, pan?, at?, mute?, new_id? }` — one tool
+  over a sound's mixer layers, addressed by stable id:
+  - `op: "add"` — stack a new instrument layer (requires `node`). The first add
+    on a plain sound wraps its existing graph as a level-compensated layer named
+    after the sound (announced in the response).
+  - `op: "set"` — mixer moves (`gain`/`pan`/`at`/`mute`) without touching the
+    layer's graph. `mute` is rendered state: exports ship without muted layers.
+  - `op: "remove"` — delete a layer (a mixer keeps at least one).
+  - `op: "duplicate"` — copy a layer into `new_id`; re-grains noise
+    deterministically from the new id (a built-in variation).
 
 ## Inspection
 
