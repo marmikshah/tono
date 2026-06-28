@@ -1196,7 +1196,6 @@ dependencies = [
  "base64",
  "flacenc",
  "hound",
- "image",
  "rmcp",
  "schemars",
  "serde",

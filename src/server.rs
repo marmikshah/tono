@@ -1569,7 +1569,6 @@ impl Sonarium {
         Ok(res)
     }
 
-    /// Step a sound back to its previous graph.
     /// Revert a sound to its previous graph (kept as the implementation behind
     /// `history { op: "undo" }`; journals "undo_sound" so sessions replay).
     pub async fn undo_sound(&self, params: Parameters<IdReq>) -> Result<CallToolResult, String> {
@@ -2393,11 +2392,6 @@ fn write_export(
     }
 }
 
-/// Build a tool result carrying a text summary, the structured record, and the
-/// spectrogram + waveform images (so the agent can both read stats and "see"
-/// the sound). When `include_graph` is set, the graph is added to the
-/// structured output (used by mutate/edit so the agent can refine without a
-/// `get_sound` round-trip).
 /// Build a blank 4-layer SFX scaffold: sub / body / top / transient, each a
 /// mixer layer with a band-splitting filter, a one-shot envelope, and a
 /// starting gain. Sources are neutral placeholders (sine / noise) the agent
@@ -2521,6 +2515,11 @@ fn scaffold_layered_doc(name: String, base_freq: f32, seed: u64) -> SoundDoc {
     }
 }
 
+/// Build a tool result carrying a text summary, the structured record, and the
+/// spectrogram + waveform images (so the agent can both read stats and "see"
+/// the sound). When `include_graph` is set, the graph is added to the
+/// structured output (used by mutate/edit so the agent can refine without a
+/// `get_sound` round-trip).
 fn sound_result(rec: &Record, include_graph: bool) -> CallToolResult {
     let a = &rec.analysis;
     let summary = format!(
