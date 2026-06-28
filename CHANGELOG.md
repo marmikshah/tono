@@ -18,8 +18,11 @@ workspace split and a browser playground that runs the engine in WASM.
   style**: drop nodes from a palette (oscillators, envelopes, filters,
   mix/mul…), drag them anywhere, **wire output ports to input ports manually**,
   and tweak each node's parameters inline (sliders / dropdowns / modulator
-  pickers) — everything flowing into an `OUT ▶` terminal. The patch serializes
-  to a `SoundDoc` (serial effect runs auto-fold into a `chain`) and renders live
+  pickers) — everything flowing into an `OUT ▶` terminal. Multi-track sounds
+  work too: a `mixer` node sums `layer` nodes (each with pan / gain / start
+  offset / mute), and the serial processors between the mixer and `OUT` become
+  the master chain — i.e. a `tracks` document. The patch serializes to a
+  `SoundDoc` (serial effect runs auto-fold into a `chain`) and renders live
   to audio plus the same spectrogram / waveform / analysis an agent sees,
   **byte-identically to the native engine**; a two-way JSON drawer exposes the
   exact document an agent edits. The SoundFont sampler voice is the only one

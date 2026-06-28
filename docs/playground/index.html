@@ -36,8 +36,8 @@
   .node.sel{ border-color:var(--acc); box-shadow:0 0 0 2px #50dca055; }
   .node.out{ width:96px; background:#15233a; border-color:#3a587e; }
   .nhead{ display:flex; align-items:center; gap:.35rem; padding:.32rem .5rem; cursor:grab; border-bottom:1px solid #00000033; border-radius:9px 9px 0 0; }
-  .nhead.src{ background:#1d2c3b } .nhead.env{ background:#33291a } .nhead.comb{ background:#173027 } .nhead.proc{ background:#281d36 } .nhead.out{ background:#1a2b44 }
-  .nhead .ty{ font-weight:600; font-size:.8rem; flex:1; } .nhead .ty.src{ color:#7fd1ff } .nhead .ty.env{ color:#ffce6e } .nhead .ty.comb{ color:var(--acc) } .nhead .ty.proc{ color:#c79bff }
+  .nhead.src{ background:#1d2c3b } .nhead.env{ background:#33291a } .nhead.comb{ background:#173027 } .nhead.proc{ background:#281d36 } .nhead.out{ background:#1a2b44 } .nhead.layer{ background:#2a2540 } .nhead.mixer{ background:#16302a }
+  .nhead .ty{ font-weight:600; font-size:.8rem; flex:1; } .nhead .ty.src{ color:#7fd1ff } .nhead .ty.env{ color:#ffce6e } .nhead .ty.comb{ color:var(--acc) } .nhead .ty.proc{ color:#c79bff } .nhead .ty.layer{ color:#b9a7ff } .nhead .ty.mixer{ color:#5be0b0 }
   .nhead .x{ cursor:pointer; color:var(--mut); font-size:.9rem; padding:0 .2rem; } .nhead .x:hover{ color:#ff8092; }
   .nbody{ padding:.3rem .5rem .45rem; }
   .prow{ display:flex; align-items:center; gap:.3rem; margin:.18rem 0; }
@@ -134,15 +134,19 @@ const SPECS={
   compress:{kind:'proc',p:{threshold:N(-60,0,0.1),ratio:N(1,20,0.1),attack:N(0,0.2,0.001),release:N(0,1,0.001),makeup:N(0,24,0.1)},d:{threshold:-18,ratio:4,attack:0.005,release:0.12,makeup:3}},
   modal:{kind:'proc',modes:true,p:{mix:N(0,1)},d:{mix:1,modes:[{freq:440,decay:0.6,gain:1},{freq:1100,decay:0.3,gain:0.5}]}},
   duck:{kind:'proc',trig:true,p:{amount:N(0,1),attack:N(0,0.1,0.001),release:N(0,1,0.001)},d:{amount:0.8,attack:0.005,release:0.15}},
+  // mixing (UI-only: a `mixer` summing `layer`s → master procs → OUT becomes a tracks root)
+  layer:{kind:'layer',idField:true,muteField:true,p:{gain:N(0,2,0.01),pan:N(-1,1,0.01),at:N(0,10,0.01)},d:{gain:1,pan:0,at:0,mute:false}},
+  mixer:{kind:'mixer',d:{}},
 };
-const KCLASS={src:'src',env:'env',comb:'comb',proc:'proc'};
-const KCOLOR={src:'#7fd1ff',env:'#ffce6e',comb:'#50dca0',proc:'#c79bff'};
+const KCLASS={src:'src',env:'env',comb:'comb',proc:'proc',layer:'layer',mixer:'mixer'};
+const KCOLOR={src:'#7fd1ff',env:'#ffce6e',comb:'#50dca0',proc:'#c79bff',layer:'#b9a7ff',mixer:'#5be0b0'};
 const PAL=[
   ['sources',['sine','square','triangle','sawtooth','noise','fm','super','impact','dust','seq']],
   ['envelope',['env']],
   ['combine',['mix','mul']],
   ['filters',['lowpass','highpass','bandpass','notch','peak','lowshelf','highshelf']],
   ['effects',['gain','drive','bitcrush','downsample','delay','reverb','chorus','flanger','phaser','ringmod','compress','modal','duck']],
+  ['mixing',['mixer','layer']],
 ];
 
 const EXAMPLES={
@@ -156,6 +160,10 @@ const EXAMPLES={
     {type:'env',a:0,d:0.5,s:0,r:0.1,punch:0.6}]}},
   'struck bell':{name:'bell',duration:1.2,sample_rate:44100,root:{type:'chain',stages:[
     {type:'impact',hardness:0.8,velocity:0.9},{type:'modal',mix:1,modes:[{freq:440,decay:1,gain:1},{freq:1108,decay:0.6,gain:0.6},{freq:2200,decay:0.3,gain:0.3}]}]}},
+  'duo (mixer)':{name:'duo',duration:1.1,sample_rate:44100,root:{type:'tracks',tracks:[
+    {id:'lead',pan:-0.3,gain:0.9,node:{type:'mul',inputs:[{type:'square',freq:'A4',duty:0.4},{type:'env',a:0.01,d:0.3,s:0.2,r:0.12}]}},
+    {id:'bass',pan:0.3,gain:1,node:{type:'mul',inputs:[{type:'sine',freq:'A2'},{type:'env',a:0.01,d:0.4,s:0.3,r:0.12}]}}],
+    master:[{type:'compress',threshold:-16,ratio:3,attack:0.005,release:0.08,makeup:2},{type:'reverb',room:0.4,mix:0.12}]}},
 };
 
 /* ── state ── */
@@ -170,7 +178,9 @@ const canvas=$('#canvas'), wires_svg=$('#wires'), statusEl=$('#status'), jsonTex
 const newUid=t=>`${t}_${uidc++}`;
 function addNode(type,x,y,fields){
   const uid=newUid(type);
-  const f=fields? {...fields} : {...(SPECS[type]?.d||{})};
+  // defaults under provided fields, so an imported node missing an optional
+  // (serde-default) param still gets an editable value, not `undefined`.
+  const f={...(SPECS[type]?.d||{}),...(fields||{})};
   delete f.inputs; delete f.stages; delete f.trigger; delete f.type;
   nodes[uid]={uid,type,x,y,f};
   return uid;
@@ -191,30 +201,62 @@ function inSlots(uid){
   if(uid===OUT) return [{slot:'root',label:''}];
   const sp=SPECS[nodes[uid].type];
   if(sp.kind==='src'||sp.kind==='env') return [];
-  if(sp.kind==='comb'){
+  if(sp.kind==='comb'||sp.kind==='mixer'){
     const used=wires.filter(w=>w.to===uid).map(w=>+w.slot);
     const n=Math.max(2,(used.length?Math.max(...used):0)+2);
     return Array.from({length:n},(_,i)=>({slot:String(i),label:''}));
   }
+  if(sp.kind==='layer') return [{slot:'in',label:'graph'}];
   if(sp.trig) return [{slot:'in',label:'sig'},{slot:'trigger',label:'trig'}];
   return [{slot:'in',label:''}];
 }
 
 /* ── serialize canvas → SoundDoc ── */
+const ordIns=uid=>wires.filter(w=>w.to===uid).sort((a,b)=>(+a.slot)-(+b.slot)).map(w=>w.from);
 function buildDoc(){
   const rw=wires.find(w=>w.to===OUT && w.slot==='root');
   if(!rw) throw new Error('connect a node to OUT ▶');
-  const root=resolve(rw.from,new Set());
+  // walk serial processors back from OUT collecting the master chain; if they
+  // land on a mixer, this is a multi-track (tracks) document.
+  let uid=rw.from, master=[];
+  while(SPECS[nodes[uid]?.type]?.kind==='proc'){
+    const sig=wires.find(w=>w.to===uid && w.slot==='in'); if(!sig) break;
+    master.unshift(procDoc(uid,new Set())); uid=sig.from;
+  }
+  let root;
+  if(nodes[uid] && SPECS[nodes[uid].type]?.kind==='mixer'){
+    const tracks=ordIns(uid).map(layerToTrack);
+    if(!tracks.length) throw new Error('mixer has no layers');
+    root={type:'tracks',tracks,...(master.length?{master}:{})};
+  } else {
+    root=resolve(rw.from,new Set());   // single graph; resolve folds procs itself
+  }
   return {name:meta.name||'sound',duration:meta.duration,sample_rate:meta.sample_rate,root};
 }
+function layerToTrack(luid){
+  if(SPECS[nodes[luid]?.type]?.kind!=='layer') throw new Error('a mixer input is not a layer');
+  const n=nodes[luid], gw=wires.find(w=>w.to===luid && w.slot==='in');
+  if(!gw) throw new Error('a layer has no graph wired in');
+  const t={node:resolve(gw.from,new Set())};
+  if(n.f.id) t.id=n.f.id;
+  for(const k of ['gain','pan','at']) if(n.f[k]!==undefined) t[k]=n.f[k];
+  if(n.f.mute) t.mute=true;
+  return t;
+}
 function leafDoc(n){ return {type:n.type,...n.f}; }
+function procDoc(uid,seen){
+  const n=nodes[uid], sp=SPECS[n.type], pd={type:n.type,...n.f};
+  if(sp.trig){ const tw=wires.find(w=>w.to===uid && w.slot==='trigger'); if(!tw) throw new Error('duck needs a trigger'); pd.trigger=resolve(tw.from,seen); }
+  return pd;
+}
 function resolve(uid,seen){
   if(seen.has(uid)) throw new Error('cycle in patch');
   seen=new Set(seen); seen.add(uid);
   const n=nodes[uid], sp=SPECS[n.type];
+  if(sp.kind==='layer'||sp.kind==='mixer') throw new Error(`${n.type} only connects into a mixer → OUT`);
   if(sp.kind==='src'||sp.kind==='env') return leafDoc(n);
   if(sp.kind==='comb'){
-    const ins=wires.filter(w=>w.to===uid).sort((a,b)=>(+a.slot)-(+b.slot)).map(w=>resolve(w.from,seen));
+    const ins=ordIns(uid).map(u=>resolve(u,seen));
     if(!ins.length) throw new Error(`${n.type} has no inputs`);
     return {type:n.type,inputs:ins};
   }
@@ -222,8 +264,7 @@ function resolve(uid,seen){
   const sig=wires.find(w=>w.to===uid && w.slot==='in');
   if(!sig) throw new Error(`${n.type} needs a signal input`);
   const base=resolve(sig.from,seen);
-  const pd={type:n.type,...n.f};
-  if(sp.trig){ const tw=wires.find(w=>w.to===uid && w.slot==='trigger'); if(!tw) throw new Error('duck needs a trigger'); pd.trigger=resolve(tw.from,seen); }
+  const pd=procDoc(uid,seen);
   if(base.type==='chain'){ base.stages.push(pd); return base; }
   return {type:'chain',stages:[base,pd]};
 }
@@ -233,8 +274,22 @@ function importDoc(doc){
   nodes={}; wires=[]; uidc=0; sel=null;
   nodes[OUT]={uid:OUT,type:OUT,x:0,y:0,f:{}};
   meta={name:doc.name||'sound',duration:doc.duration||0.5,sample_rate:doc.sample_rate||44100};
-  const top=impNode(doc.root);
-  addWire(top,OUT,'root');
+  if(doc.root.type==='tracks'){
+    const mx=addNode('mixer',0,0,{});
+    (doc.root.tracks||[]).forEach((t,i)=>{
+      const lay=addNode('layer',0,0,{id:t.id,gain:t.gain??1,pan:t.pan??0,at:t.at??0,mute:!!t.mute});
+      addWire(impNode(t.node),lay,'in'); addWire(lay,mx,String(i));
+    });
+    let prev=mx;                                   // master chain = serial procs mixer → OUT
+    for(const proc of (doc.root.master||[])){
+      const cur=addNode(proc.type,0,0,proc);
+      if(proc.type==='duck' && proc.trigger) addWire(impNode(proc.trigger),cur,'trigger');
+      addWire(prev,cur,'in'); prev=cur;
+    }
+    addWire(prev,OUT,'root');
+  } else {
+    addWire(impNode(doc.root),OUT,'root');
+  }
   layout();
 }
 function impNode(d){
@@ -335,7 +390,9 @@ function drawNode(uid){
 }
 function bodyHtml(n,sp){
   let h='';
+  if(sp.idField) h+=`<div class="prow"><label>id</label><input type="text" class="tiny" style="flex:1" data-k="id" data-kind="text" value="${n.f.id||''}" placeholder="layer id"></div>`;
   for(const [k,m] of Object.entries(sp.p||{})) h+=prow(n,k,m);
+  if(sp.muteField) h+=`<div class="prow"><label>mute</label><input type="checkbox" data-k="mute" data-kind="bool" ${n.f.mute?'checked':''}></div>`;
   if(sp.seqNotes) h+=`<div class="mut">${(n.f.notes||[]).length} notes · edit in JSON</div>`;
   if(sp.modes) h+=`<div class="mut">${(n.f.modes||[]).length} modes · edit in JSON</div>`;
   return h;
@@ -416,7 +473,7 @@ function bindBody(el,uid){
     inp.addEventListener(kind==='vnote'?'change':'input',()=>{
       if(kind==='enum') n.f[key]=inp.value;
       else if(kind==='bool') n.f[key]=inp.checked;
-      else if(kind==='vnote') n.f[key]=inp.value;
+      else if(kind==='vnote'||kind==='text') n.f[key]=inp.value;
       else if(kind==='int') n.f[key]=Math.round(+inp.value);
       else if(kind==='number'||kind==='vconst') n.f[key]=+inp.value;
       else if(kind==='vmode'){ switchMode(n,key,inp.value); drawNodeRefresh(uid); }
