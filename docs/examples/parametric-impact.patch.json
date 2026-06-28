@@ -1,0 +1,41 @@
+{
+  "doc": {
+    "name": "impact",
+    "duration": 1.2,
+    "root": {
+      "type": "chain",
+      "stages": [
+        { "type": "impact", "hardness": 0.6, "velocity": 0.9 },
+        {
+          "type": "modal",
+          "mix": 1.0,
+          "modes": [
+            { "freq": 440, "decay": 0.6, "gain": 1.0 },
+            { "freq": 1108, "decay": 0.4, "gain": 0.6 },
+            { "freq": 2200, "decay": 0.25, "gain": 0.3 }
+          ]
+        }
+      ]
+    }
+  },
+  "params": [
+    {
+      "name": "hardness",
+      "paths": ["root.stages[0].hardness"],
+      "min": 0.1,
+      "max": 1.0,
+      "default": 0.6
+    },
+    {
+      "name": "size",
+      "paths": [
+        "root.stages[1].modes[0].decay",
+        "root.stages[1].modes[1].decay",
+        "root.stages[1].modes[2].decay"
+      ],
+      "min": 0.1,
+      "max": 1.5,
+      "default": 0.5
+    }
+  ]
+}

@@ -461,6 +461,11 @@ async fn every_example_recipe_replays() {
             continue;
         }
         let stem = path.file_stem().unwrap().to_string_lossy().to_string();
+        // `*.patch.json` are parametric-patch templates (docs/runtime.md), not
+        // session recipes — they're covered by the patch crate's own tests.
+        if stem.ends_with(".patch") {
+            continue;
+        }
         let (srv, _d) = fresh(&format!("sweep_{stem}"));
         let res = srv
             .replay_session(Parameters(ReplaySessionReq {
