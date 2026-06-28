@@ -5,22 +5,19 @@
 //! that graph deterministically to audio and feeds back analysis so the agent
 //! can iterate by inspection, like a sound designer at a DAW.
 //!
-//! The crate is a library plus a thin binary (`src/main.rs`). Modules are
-//! added bottom-up: the DSL data model first, then DSP, rendering, state,
-//! and finally the MCP tool surface.
+//! This crate is the **shell**: the MCP tool surface, file encoders, bank /
+//! session persistence, engine emitters, and the daemon. The pure, headless
+//! engine — graph DSL, DSP, renderer, analysis, critique, and graph transforms
+//! — lives in the [`sonarium_core`] crate and is re-exported here so existing
+//! `crate::dsl` / `sonarium::render` paths resolve unchanged.
 
-pub mod analysis;
+pub use sonarium_core::{analysis, dsl, dsp, edit, render, review, vary};
+
 pub mod audio;
 pub mod bank;
-pub mod dsl;
-pub mod dsp;
-pub mod edit;
 pub mod engines;
 pub mod journal;
-pub mod render;
 pub mod resources;
-pub mod review;
 pub mod server;
 pub mod service;
 pub mod session;
-pub mod vary;
