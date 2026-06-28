@@ -20,3 +20,4 @@ pub mod render;
 pub mod review;
 pub mod stream;
 pub mod vary;
+pub mod voice;
