@@ -100,7 +100,6 @@ const V=(min,max,step=0.001)=>({t:'value',min,max,step});
 const N=(min,max,step=0.001)=>({t:'number',min,max,step});
 const I=(min,max)=>({t:'int',min,max,step:1});
 const E=(...o)=>({t:'enum',options:o});
-const B=()=>({t:'bool'});
 const SPECS={
   sine:{kind:'src',p:{freq:V(20,8000,1)},d:{freq:440}},
   square:{kind:'src',p:{freq:V(20,8000,1),duty:V(0.01,0.99)},d:{freq:440,duty:0.5}},
@@ -401,7 +400,6 @@ function fmt(v){ if(typeof v==='number') return Math.abs(v)>=100?Math.round(v):+
 function prow(n,key,m){
   const v=n.f[key];
   if(m.t==='enum') return `<div class="prow"><label>${key}</label><select data-k="${key}" data-kind="enum">${m.options.map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('')}</select></div>`;
-  if(m.t==='bool') return `<div class="prow"><label>${key}</label><input type="checkbox" data-k="${key}" data-kind="bool" ${v?'checked':''}></div>`;
   if(m.t==='value'){
     const kind=typeof v==='number'?'const':(typeof v==='string'?'note':(v&&typeof v==='object'?Object.keys(v)[0]:'const'));
     let inner;
