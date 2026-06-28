@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sonarium — patch</title>
+<style>
+  :root { color-scheme: dark; --bg:#100e1a; --panel:#181527; --line:#2c2746; --ink:#dfe3ea;
+          --mut:#6f7891; --acc:#50dca0; --vio:#8c6ee6; --node:#211c38; }
+  * { box-sizing: border-box; }
+  html,body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--ink); display:flex; flex-direction:column; overflow:hidden;
+         font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  .topbar { display:flex; gap:.4rem; align-items:center; padding:.5rem .7rem; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .topbar img{ image-rendering:pixelated; }
+  .topbar .sp{ flex:1; } .pill{ font-size:.66rem; color:var(--mut); border:1px solid var(--line); border-radius:20px; padding:.05rem .45rem; }
+  input,select,button{ font:inherit; color:var(--ink); background:#241f3a; border:1px solid #3a3360; border-radius:6px; padding:.35rem .5rem; }
+  input[type=text]{ width:8rem; } input.num{ width:4.4rem; } button{ cursor:pointer; transition:.1s; }
+  button:hover{ border-color:var(--acc); } button.primary{ background:var(--acc); color:#0c1019; border-color:var(--acc); font-weight:600; }
+  button.primary:hover{ background:#6ee7b4; }
+  .mut{ color:var(--mut); font-size:.8rem; } a{ color:var(--vio); text-decoration:none; }
+  main{ flex:1; display:grid; grid-template-columns:148px 1fr 300px; min-height:0; }
+  /* palette */
+  #palette{ border-right:1px solid var(--line); background:var(--panel); overflow:auto; padding:.5rem; }
+  #palette h4{ margin:.6rem .2rem .3rem; font-size:.66rem; letter-spacing:.08em; text-transform:uppercase; color:var(--mut); }
+  #palette button{ display:block; width:100%; text-align:left; margin:.15rem 0; padding:.3rem .45rem; font-size:.8rem; border-color:var(--line); }
+  #palette button:hover{ background:#2f284c; }
+  .sw{ display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:.4rem; vertical-align:middle; }
+  /* canvas */
+  #wrap{ position:relative; overflow:auto; background:
+     radial-gradient(circle at 1px 1px,#1c1830 1px,transparent 0) 0 0/24px 24px var(--bg); }
+  #canvas{ position:relative; width:2600px; height:1700px; }
+  #wires{ position:absolute; inset:0; width:100%; height:100%; }
+  .node{ position:absolute; width:194px; background:var(--node); border:1px solid #3a3360; border-radius:9px;
+         box-shadow:0 3px 10px #0006; user-select:none; }
+  .node.sel{ border-color:var(--acc); box-shadow:0 0 0 2px #50dca055; }
+  .node.out{ width:96px; background:#15233a; border-color:#3a587e; }
+  .nhead{ display:flex; align-items:center; gap:.35rem; padding:.32rem .5rem; cursor:grab; border-bottom:1px solid #00000033; border-radius:9px 9px 0 0; }
+  .nhead.src{ background:#1d2c3b } .nhead.env{ background:#33291a } .nhead.comb{ background:#173027 } .nhead.proc{ background:#281d36 } .nhead.out{ background:#1a2b44 }
+  .nhead .ty{ font-weight:600; font-size:.8rem; flex:1; } .nhead .ty.src{ color:#7fd1ff } .nhead .ty.env{ color:#ffce6e } .nhead .ty.comb{ color:var(--acc) } .nhead .ty.proc{ color:#c79bff }
+  .nhead .x{ cursor:pointer; color:var(--mut); font-size:.9rem; padding:0 .2rem; } .nhead .x:hover{ color:#ff8092; }
+  .nbody{ padding:.3rem .5rem .45rem; }
+  .prow{ display:flex; align-items:center; gap:.3rem; margin:.18rem 0; }
+  .prow label{ width:3.4rem; font-size:.68rem; color:var(--mut); flex:none; overflow:hidden; }
+  .prow input[type=range]{ flex:1; min-width:0; accent-color:var(--acc); height:3px; }
+  .prow .val{ width:2.8rem; text-align:right; font-size:.68rem; font-variant-numeric:tabular-nums; }
+  .prow select,.prow input[type=text],.prow input.tiny{ flex:1; min-width:0; padding:.15rem .3rem; font-size:.72rem; }
+  .prow input.tiny{ width:3rem; flex:none; }
+  .modgrid{ display:grid; grid-template-columns:1fr 1fr; gap:.2rem; margin:.15rem 0 .25rem; padding:.25rem; background:#0d0b16; border-radius:6px; }
+  .modgrid label{ font-size:.6rem; color:var(--mut); } .modgrid input,.modgrid select{ width:100%; padding:.1rem .2rem; font-size:.68rem; }
+  .port{ position:absolute; width:12px; height:12px; border-radius:50%; border:2px solid #0d0b16; cursor:crosshair; z-index:2; }
+  .port.in{ left:-7px; background:#5b6b8c; } .port.in:hover{ background:#7fd1ff; }
+  .port.out{ right:-7px; background:var(--acc); } .port.out:hover{ background:#6ee7b4; }
+  .port .lbl{ position:absolute; left:14px; top:-3px; font-size:.58rem; color:var(--mut); white-space:nowrap; }
+  /* side */
+  #side{ border-left:1px solid var(--line); background:var(--panel); overflow:auto; padding:.6rem .7rem; }
+  figure{ margin:0 0 .5rem; } figure img{ width:100%; display:block; border-radius:7px; background:#0d0b16; border:1px solid var(--line); }
+  figcaption{ font-size:.64rem; color:var(--mut); margin-top:.18rem; letter-spacing:.04em; }
+  .stats{ display:grid; grid-template-columns:1fr 1fr; gap:.3rem; }
+  .stat{ background:#0d0b16; border:1px solid var(--line); border-radius:6px; padding:.25rem .4rem; }
+  .stat .k{ font-size:.6rem; color:var(--mut) } .stat .v{ font-size:.86rem; font-variant-numeric:tabular-nums }
+  #status{ font-size:.76rem; padding:.3rem .7rem; border-top:1px solid var(--line); min-height:1.5em; }
+  #status.err{ color:#ff8092; font-family:ui-monospace,monospace; } #status.ok{ color:var(--acc); }
+  details#json{ position:absolute; bottom:1.9rem; right:308px; width:340px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.4rem .6rem; z-index:5; }
+  details#json textarea{ width:100%; height:200px; margin-top:.3rem; background:#0d0b16; color:#cdd3df; border:1px solid var(--line); border-radius:6px; padding:.5rem; font:11px/1.45 ui-monospace,Menlo,monospace; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <img src="../logo.png" width="24" alt=""><strong style="letter-spacing:.03em">sonarium</strong><span class="pill">patch</span>
+  <button id="play" class="primary">▶ Play</button>
+  <select id="examples" title="Load an example patch"><option value="">— blank —</option></select>
+  <label class="mut">name <input type="text" id="name"></label>
+  <label class="mut">dur <input class="num" type="number" id="dur" min="0.02" max="30" step="0.01"></label>
+  <span class="sp"></span>
+  <span class="mut">drag a port → a port to wire · <kbd>Del</kbd> removes selected · <a href="../cookbook.md">cookbook</a></span>
+</div>
+
+<main>
+  <div id="palette"></div>
+  <div id="wrap"><div id="canvas"><svg id="wires"></svg></div></div>
+  <aside id="side">
+    <figure><img id="spec" alt=""><figcaption>SPECTROGRAM</figcaption></figure>
+    <figure><img id="wave" alt=""><figcaption>WAVEFORM</figcaption></figure>
+    <div class="stats" id="stats"></div>
+  </aside>
+</main>
+
+<div id="status"></div>
+<details id="json"><summary class="mut">JSON (the document an agent edits)</summary>
+  <textarea id="jsontext" spellcheck="false"></textarea>
+  <div style="margin-top:.3rem"><button id="applyjson">Apply → canvas</button> <button id="fromcanvas">Canvas → JSON</button></div>
+</details>
+
+<script type="module">
+import init, { render } from './pkg/sonarium_wasm.js';
+
+/* ── node metadata (mirrors the Rust Node enum) ── */
+const V=(min,max,step=0.001)=>({t:'value',min,max,step});
+const N=(min,max,step=0.001)=>({t:'number',min,max,step});
+const I=(min,max)=>({t:'int',min,max,step:1});
+const E=(...o)=>({t:'enum',options:o});
+const B=()=>({t:'bool'});
+const SPECS={
+  sine:{kind:'src',p:{freq:V(20,8000,1)},d:{freq:440}},
+  square:{kind:'src',p:{freq:V(20,8000,1),duty:V(0.01,0.99)},d:{freq:440,duty:0.5}},
+  triangle:{kind:'src',p:{freq:V(20,8000,1)},d:{freq:440}},
+  sawtooth:{kind:'src',p:{freq:V(20,8000,1)},d:{freq:440}},
+  noise:{kind:'src',p:{color:E('white','pink','brown')},d:{color:'white'}},
+  fm:{kind:'src',p:{freq:V(20,8000,1),ratio:N(0.1,16,0.01),index:V(0,20,0.01)},d:{freq:220,ratio:2,index:4}},
+  super:{kind:'src',p:{wave:E('sawtooth','square'),freq:V(20,8000,1),voices:I(1,16),detune_cents:N(0,50,0.5)},d:{wave:'sawtooth',freq:220,voices:7,detune_cents:18}},
+  impact:{kind:'src',p:{hardness:N(0,1),velocity:N(0,1)},d:{hardness:0.6,velocity:0.9}},
+  dust:{kind:'src',p:{density:N(1,2000,1),decay:N(0,0.2,0.001)},d:{density:60,decay:0.01}},
+  seq:{kind:'src',p:{bpm:N(20,300,1),steps_per_beat:I(1,16)},seqNotes:true,d:{bpm:120,steps_per_beat:4,wave:'square',duty:0.5,env:{a:0.005,d:0.1,s:0.3,r:0.05},notes:[{step:0,len:2,pitch:'C4'},{step:2,len:2,pitch:'E4'},{step:4,len:4,pitch:'G4'}]}},
+  env:{kind:'env',p:{a:N(0,2),d:N(0,2),s:N(0,1),r:N(0,2),punch:N(0,1)},d:{a:0.01,d:0.1,s:0,r:0.05,punch:0}},
+  mix:{kind:'comb',d:{}}, mul:{kind:'comb',d:{}},
+  lowpass:{kind:'proc',p:{cutoff:V(20,18000,1),q:N(0.1,12,0.1)},d:{cutoff:1200,q:0.7}},
+  highpass:{kind:'proc',p:{cutoff:V(20,18000,1),q:N(0.1,12,0.1)},d:{cutoff:400,q:0.7}},
+  bandpass:{kind:'proc',p:{cutoff:V(20,18000,1),q:N(0.1,12,0.1)},d:{cutoff:1200,q:1.5}},
+  notch:{kind:'proc',p:{cutoff:V(20,18000,1),q:N(0.1,12,0.1)},d:{cutoff:1200,q:2}},
+  peak:{kind:'proc',p:{cutoff:V(20,18000,1),q:N(0.1,12,0.1),gain_db:N(-24,24,0.1)},d:{cutoff:1200,q:1,gain_db:6}},
+  lowshelf:{kind:'proc',p:{cutoff:V(20,18000,1),gain_db:N(-24,24,0.1)},d:{cutoff:200,gain_db:4}},
+  highshelf:{kind:'proc',p:{cutoff:V(20,18000,1),gain_db:N(-24,24,0.1)},d:{cutoff:4000,gain_db:4}},
+  gain:{kind:'proc',p:{amount:V(0,4,0.01)},d:{amount:1}},
+  bitcrush:{kind:'proc',p:{bits:I(1,16)},d:{bits:6}},
+  downsample:{kind:'proc',p:{factor:I(1,64)},d:{factor:8}},
+  delay:{kind:'proc',p:{secs:N(0,1,0.001),feedback:N(0,0.95)},d:{secs:0.12,feedback:0.4}},
+  reverb:{kind:'proc',p:{room:N(0,1),mix:N(0,1)},d:{room:0.6,mix:0.3}},
+  drive:{kind:'proc',p:{amount:V(0,40,0.1),shape:E('tanh','hard','fold')},d:{amount:4,shape:'tanh'}},
+  ringmod:{kind:'proc',p:{freq:V(20,4000,1)},d:{freq:300}},
+  flanger:{kind:'proc',p:{rate:N(0.05,8,0.01),depth:N(0,1),feedback:N(0,0.95),mix:N(0,1)},d:{rate:0.4,depth:0.6,feedback:0.5,mix:0.5}},
+  phaser:{kind:'proc',p:{rate:N(0.05,8,0.01),depth:N(0,1),feedback:N(0,0.95),mix:N(0,1)},d:{rate:0.3,depth:0.7,feedback:0.4,mix:0.5}},
+  chorus:{kind:'proc',p:{rate:N(0.05,8,0.01),depth:N(0,1),mix:N(0,1)},d:{rate:1.2,depth:0.4,mix:0.4}},
+  compress:{kind:'proc',p:{threshold:N(-60,0,0.1),ratio:N(1,20,0.1),attack:N(0,0.2,0.001),release:N(0,1,0.001),makeup:N(0,24,0.1)},d:{threshold:-18,ratio:4,attack:0.005,release:0.12,makeup:3}},
+  modal:{kind:'proc',modes:true,p:{mix:N(0,1)},d:{mix:1,modes:[{freq:440,decay:0.6,gain:1},{freq:1100,decay:0.3,gain:0.5}]}},
+  duck:{kind:'proc',trig:true,p:{amount:N(0,1),attack:N(0,0.1,0.001),release:N(0,1,0.001)},d:{amount:0.8,attack:0.005,release:0.15}},
+};
+const KCLASS={src:'src',env:'env',comb:'comb',proc:'proc'};
+const KCOLOR={src:'#7fd1ff',env:'#ffce6e',comb:'#50dca0',proc:'#c79bff'};
+const PAL=[
+  ['sources',['sine','square','triangle','sawtooth','noise','fm','super','impact','dust','seq']],
+  ['envelope',['env']],
+  ['combine',['mix','mul']],
+  ['filters',['lowpass','highpass','bandpass','notch','peak','lowshelf','highshelf']],
+  ['effects',['gain','drive','bitcrush','downsample','delay','reverb','chorus','flanger','phaser','ringmod','compress','modal','duck']],
+];
+
+const EXAMPLES={
+  'laser zap':{name:'laser_zap',duration:0.22,sample_rate:44100,root:{type:'mix',inputs:[
+    {type:'mul',inputs:[{type:'square',duty:0.25,freq:{slide:{from:880,to:180,secs:0.18,curve:'exp'}}},{type:'env',a:0,d:0.18,s:0,r:0.02,punch:0.3}]},
+    {type:'mul',inputs:[{type:'noise',color:'white'},{type:'env',a:0,d:0.04,s:0,r:0}]}]}},
+  'coin pickup':{name:'coin',duration:0.18,sample_rate:44100,root:{type:'mul',inputs:[
+    {type:'square',duty:0.5,freq:{arp:{steps:[988,1319],rate:14}}},{type:'env',a:0,d:0.16,s:0,r:0,punch:0.2}]}},
+  'explosion':{name:'explosion',duration:0.6,sample_rate:44100,root:{type:'mul',inputs:[
+    {type:'chain',stages:[{type:'noise',color:'white'},{type:'lowpass',cutoff:{slide:{from:1800,to:120,secs:0.5,curve:'exp'}},q:0.7}]},
+    {type:'env',a:0,d:0.5,s:0,r:0.1,punch:0.6}]}},
+  'struck bell':{name:'bell',duration:1.2,sample_rate:44100,root:{type:'chain',stages:[
+    {type:'impact',hardness:0.8,velocity:0.9},{type:'modal',mix:1,modes:[{freq:440,decay:1,gain:1},{freq:1108,decay:0.6,gain:0.6},{freq:2200,decay:0.3,gain:0.3}]}]}},
+};
+
+/* ── state ── */
+let nodes={};                 // uid -> {uid,type,x,y,f:{...fields}}
+let wires=[];                 // {from,to,slot}
+let uidc=0, sel=null, meta={name:'sound',duration:0.5,sample_rate:44100};
+let lastBuf=null, actx=null, specUrl=null, waveUrl=null, rtimer=null;
+const OUT='__out__';
+const $=s=>document.querySelector(s);
+const canvas=$('#canvas'), wires_svg=$('#wires'), statusEl=$('#status'), jsonText=$('#jsontext');
+
+const newUid=t=>`${t}_${uidc++}`;
+function addNode(type,x,y,fields){
+  const uid=newUid(type);
+  const f=fields? {...fields} : {...(SPECS[type]?.d||{})};
+  delete f.inputs; delete f.stages; delete f.trigger; delete f.type;
+  nodes[uid]={uid,type,x,y,f};
+  return uid;
+}
+function delNode(uid){
+  if(uid===OUT) return;
+  delete nodes[uid];
+  wires=wires.filter(w=>w.from!==uid && w.to!==uid);
+  if(sel===uid) sel=null;
+}
+function addWire(from,to,slot){
+  wires=wires.filter(w=>!(w.to===to && w.slot===slot)); // one source per input slot
+  wires.push({from,to,slot});
+}
+
+/* ── input-slot model ── */
+function inSlots(uid){
+  if(uid===OUT) return [{slot:'root',label:''}];
+  const sp=SPECS[nodes[uid].type];
+  if(sp.kind==='src'||sp.kind==='env') return [];
+  if(sp.kind==='comb'){
+    const used=wires.filter(w=>w.to===uid).map(w=>+w.slot);
+    const n=Math.max(2,(used.length?Math.max(...used):0)+2);
+    return Array.from({length:n},(_,i)=>({slot:String(i),label:''}));
+  }
+  if(sp.trig) return [{slot:'in',label:'sig'},{slot:'trigger',label:'trig'}];
+  return [{slot:'in',label:''}];
+}
+
+/* ── serialize canvas → SoundDoc ── */
+function buildDoc(){
+  const rw=wires.find(w=>w.to===OUT && w.slot==='root');
+  if(!rw) throw new Error('connect a node to OUT ▶');
+  const root=resolve(rw.from,new Set());
+  return {name:meta.name||'sound',duration:meta.duration,sample_rate:meta.sample_rate,root};
+}
+function leafDoc(n){ return {type:n.type,...n.f}; }
+function resolve(uid,seen){
+  if(seen.has(uid)) throw new Error('cycle in patch');
+  seen=new Set(seen); seen.add(uid);
+  const n=nodes[uid], sp=SPECS[n.type];
+  if(sp.kind==='src'||sp.kind==='env') return leafDoc(n);
+  if(sp.kind==='comb'){
+    const ins=wires.filter(w=>w.to===uid).sort((a,b)=>(+a.slot)-(+b.slot)).map(w=>resolve(w.from,seen));
+    if(!ins.length) throw new Error(`${n.type} has no inputs`);
+    return {type:n.type,inputs:ins};
+  }
+  // processor → fold serial procs into a chain
+  const sig=wires.find(w=>w.to===uid && w.slot==='in');
+  if(!sig) throw new Error(`${n.type} needs a signal input`);
+  const base=resolve(sig.from,seen);
+  const pd={type:n.type,...n.f};
+  if(sp.trig){ const tw=wires.find(w=>w.to===uid && w.slot==='trigger'); if(!tw) throw new Error('duck needs a trigger'); pd.trigger=resolve(tw.from,seen); }
+  if(base.type==='chain'){ base.stages.push(pd); return base; }
+  return {type:'chain',stages:[base,pd]};
+}
+
+/* ── import SoundDoc → canvas ── */
+function importDoc(doc){
+  nodes={}; wires=[]; uidc=0; sel=null;
+  nodes[OUT]={uid:OUT,type:OUT,x:0,y:0,f:{}};
+  meta={name:doc.name||'sound',duration:doc.duration||0.5,sample_rate:doc.sample_rate||44100};
+  const top=impNode(doc.root);
+  addWire(top,OUT,'root');
+  layout();
+}
+function impNode(d){
+  if(d.type==='chain'){
+    let prev=impNode(d.stages[0]);
+    for(let k=1;k<d.stages.length;k++){
+      const cur=addNode(d.stages[k].type,0,0,d.stages[k]);
+      if(d.stages[k].type==='duck' && d.stages[k].trigger){ addWire(impNode(d.stages[k].trigger),cur,'trigger'); }
+      addWire(prev,cur,'in'); prev=cur;
+    }
+    return prev;
+  }
+  if(d.type==='mix'||d.type==='mul'){
+    const uid=addNode(d.type,0,0,{});
+    (d.inputs||[]).forEach((inp,i)=>addWire(impNode(inp),uid,String(i)));
+    return uid;
+  }
+  const uid=addNode(d.type,0,0,d);
+  if(d.type==='duck' && d.trigger) addWire(impNode(d.trigger),uid,'trigger');
+  return uid;
+}
+
+/* ── topological auto-layout (output rightmost) ── */
+function layout(){
+  const lvl={[OUT]:0}; let changed=true;
+  for(let i=0;i<200 && changed;i++){ changed=false;
+    for(const w of wires){ const want=(lvl[w.to]??0)+1; if((lvl[w.from]??-1)<want){ lvl[w.from]=want; changed=true; } }
+  }
+  const maxL=Math.max(0,...Object.values(lvl));
+  const byL={}; for(const uid in nodes){ const l=lvl[uid]??0; (byL[l]=byL[l]||[]).push(uid); }
+  const COLW=250, ROWH=150;
+  for(const l in byL){ byL[l].forEach((uid,i)=>{ nodes[uid].x=40+(maxL-l)*COLW; nodes[uid].y=40+i*ROWH; }); }
+}
+
+/* ── DOM render ── */
+const portEls={};
+function draw(){
+  canvas.querySelectorAll('.node').forEach(n=>n.remove());
+  for(const k in portEls) delete portEls[k];
+  for(const uid in nodes) drawNode(uid);
+  drawWires();
+}
+function drawNode(uid){
+  const n=nodes[uid], isOut=uid===OUT, sp=isOut?{kind:'out'}:SPECS[n.type];
+  const el=document.createElement('div');
+  el.className='node'+(sp.kind==='out'?' out':'')+(sel===uid?' sel':''); el.dataset.uid=uid;
+  el.style.left=n.x+'px'; el.style.top=n.y+'px';
+  const kc=KCLASS[sp.kind]||'out';
+  let h=`<div class="nhead ${kc}"><span class="ty ${kc}">${isOut?'OUT ▶':n.type}</span>`+(isOut?'':'<span class="x" title="delete">✕</span>')+`</div>`;
+  if(!isOut){ h+=`<div class="nbody">${bodyHtml(n,sp)}</div>`; }
+  el.innerHTML=h;
+  canvas.appendChild(el);
+  // ports
+  const ins=inSlots(uid);
+  const bodyH=el.offsetHeight;
+  ins.forEach((s,i)=>{
+    const p=document.createElement('div'); p.className='port in'; p.dataset.uid=uid; p.dataset.slot=s.slot;
+    p.style.top=(28+i*16)+'px';
+    if(s.label) p.innerHTML=`<span class="lbl">${s.label}</span>`;
+    el.appendChild(p); portEls[`${uid}:${s.slot}`]=p;
+  });
+  if(!isOut){ const o=document.createElement('div'); o.className='port out'; o.dataset.uid=uid; o.style.top='14px'; el.appendChild(o); portEls[`${uid}:out`]=o; }
+  wireNodeEvents(el,uid,sp);
+}
+function bodyHtml(n,sp){
+  let h='';
+  for(const [k,m] of Object.entries(sp.p||{})) h+=prow(n,k,m);
+  if(sp.seqNotes) h+=`<div class="mut">${(n.f.notes||[]).length} notes · edit in JSON</div>`;
+  if(sp.modes) h+=`<div class="mut">${(n.f.modes||[]).length} modes · edit in JSON</div>`;
+  return h;
+}
+function fmt(v){ if(typeof v==='number') return Math.abs(v)>=100?Math.round(v):+v.toFixed(2); if(typeof v==='string') return v; if(v&&typeof v==='object') return Object.keys(v)[0]; return v; }
+function prow(n,key,m){
+  const v=n.f[key];
+  if(m.t==='enum') return `<div class="prow"><label>${key}</label><select data-k="${key}" data-kind="enum">${m.options.map(o=>`<option ${o===v?'selected':''}>${o}</option>`).join('')}</select></div>`;
+  if(m.t==='bool') return `<div class="prow"><label>${key}</label><input type="checkbox" data-k="${key}" data-kind="bool" ${v?'checked':''}></div>`;
+  if(m.t==='value'){
+    const kind=typeof v==='number'?'const':(typeof v==='string'?'note':(v&&typeof v==='object'?Object.keys(v)[0]:'const'));
+    let inner;
+    if(kind==='const') inner=`<input type="range" data-k="${key}" data-kind="vconst" min="${m.min}" max="${m.max}" step="${m.step}" value="${v}"><span class="val">${fmt(v)}</span>`;
+    else if(kind==='note') inner=`<input type="text" class="tiny" data-k="${key}" data-kind="vnote" value="${v}">`;
+    else inner=`<span class="val mut" style="flex:1;text-align:left">${kind}</span>`;
+    return `<div class="prow"><label>${key}</label>${inner}<select data-k="${key}" data-kind="vmode" title="value type">${['const','note','slide','lfo','arp','env','rand'].map(o=>`<option ${o===kind?'selected':''}>${o}</option>`).join('')}</select></div>`+modGrid(n,key,v,kind);
+  }
+  return `<div class="prow"><label>${key}</label><input type="range" data-k="${key}" data-kind="${m.t}" min="${m.min}" max="${m.max}" step="${m.step}" value="${v}"><span class="val">${fmt(v)}</span></div>`;
+}
+function modGrid(n,key,v,kind){
+  if(kind==='const'||kind==='note'||!v||typeof v!=='object') return '';
+  const inner=v[kind]; let h=`<div class="modgrid">`;
+  for(const [fk,fv] of Object.entries(inner)){
+    if(fk==='curve') h+=`<label>${fk}<select data-mk="${key}" data-mf="${fk}">${['lin','exp'].map(o=>`<option ${o===fv?'selected':''}>${o}</option>`).join('')}</select></label>`;
+    else if(fk==='shape') h+=`<label>${fk}<select data-mk="${key}" data-mf="${fk}">${['sine','square','triangle','saw'].map(o=>`<option ${o===fv?'selected':''}>${o}</option>`).join('')}</select></label>`;
+    else if(fk==='steps') h+=`<label style="grid-column:1/3">${fk}<input data-mk="${key}" data-mf="${fk}" value="${fv.join(',')}"></label>`;
+    else h+=`<label>${fk}<input type="number" step="0.01" data-mk="${key}" data-mf="${fk}" value="${fv}"></label>`;
+  }
+  return h+`</div>`;
+}
+
+/* ── wires ── */
+function center(key){ const p=portEls[key]; if(!p) return null; const r=p.getBoundingClientRect(), c=canvas.getBoundingClientRect();
+  return {x:r.left+r.width/2-c.left, y:r.top+r.height/2-c.top}; }
+function drawWires(tmp){
+  let s='';
+  for(let i=0;i<wires.length;i++){ const w=wires[i]; const a=center(`${w.from}:out`), b=center(`${w.to}:${w.slot}`); if(!a||!b) continue;
+    const mx=(a.x+b.x)/2;
+    s+=`<path d="M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}" fill="none" stroke="#50dca0aa" stroke-width="2" data-wi="${i}" style="pointer-events:stroke;cursor:pointer"/>`;
+  }
+  if(tmp) s+=`<path d="M${tmp.a.x},${tmp.a.y} C${(tmp.a.x+tmp.b.x)/2},${tmp.a.y} ${(tmp.a.x+tmp.b.x)/2},${tmp.b.y} ${tmp.b.x},${tmp.b.y}" fill="none" stroke="#6ee7b4" stroke-width="2" stroke-dasharray="4 3"/>`;
+  wires_svg.innerHTML=s;
+  wires_svg.querySelectorAll('[data-wi]').forEach(p=>p.onclick=e=>{ e.stopPropagation(); wires.splice(+p.dataset.wi,1); drawWires(); scheduleRender(); });
+}
+
+/* ── interaction: drag nodes, drag wires ── */
+let drag=null, wiring=null;
+function wireNodeEvents(el,uid,sp){
+  el.querySelector('.nhead')?.addEventListener('mousedown',e=>{
+    if(e.target.classList.contains('x')) return;
+    sel=uid; markSel();
+    const c=canvas.getBoundingClientRect();
+    drag={uid,dx:e.clientX-c.left-nodes[uid].x,dy:e.clientY-c.top-nodes[uid].y};
+    e.preventDefault();
+  });
+  el.querySelector('.x')?.addEventListener('click',e=>{ e.stopPropagation(); delNode(uid); draw(); scheduleRender(); });
+  el.querySelectorAll('.port.out').forEach(p=>p.addEventListener('mousedown',e=>{ e.stopPropagation();
+    wiring={from:uid}; const a=center(`${uid}:out`); const c=canvas.getBoundingClientRect();
+    wiring.cur={x:e.clientX-c.left,y:e.clientY-c.top}; wiring.a=a; drawWires({a,b:wiring.cur}); e.preventDefault(); }));
+  el.querySelectorAll('.port.in').forEach(p=>p.addEventListener('mouseup',e=>{
+    if(wiring && wiring.from!==uid){ addWire(wiring.from,uid,p.dataset.slot); wiring=null; draw(); scheduleRender(); e.stopPropagation(); }
+  }));
+  bindBody(el,uid);
+}
+document.addEventListener('mousemove',e=>{
+  const c=canvas.getBoundingClientRect();
+  if(drag){ const n=nodes[drag.uid]; n.x=Math.max(0,e.clientX-c.left-drag.dx); n.y=Math.max(0,e.clientY-c.top-drag.dy);
+    const el=canvas.querySelector(`.node[data-uid="${cssEsc(drag.uid)}"]`); el.style.left=n.x+'px'; el.style.top=n.y+'px'; drawWires(); }
+  if(wiring){ wiring.cur={x:e.clientX-c.left,y:e.clientY-c.top}; drawWires({a:wiring.a,b:wiring.cur}); }
+});
+document.addEventListener('mouseup',()=>{ drag=null; if(wiring){ wiring=null; drawWires(); } });
+const cssEsc=s=>s.replace(/([^\w-])/g,'\\$1');
+
+function bindBody(el,uid){
+  const n=nodes[uid];
+  el.querySelectorAll('[data-k]').forEach(inp=>{
+    const key=inp.dataset.k, kind=inp.dataset.kind;
+    inp.addEventListener(kind==='vnote'?'change':'input',()=>{
+      if(kind==='enum') n.f[key]=inp.value;
+      else if(kind==='bool') n.f[key]=inp.checked;
+      else if(kind==='vnote') n.f[key]=inp.value;
+      else if(kind==='int') n.f[key]=Math.round(+inp.value);
+      else if(kind==='number'||kind==='vconst') n.f[key]=+inp.value;
+      else if(kind==='vmode'){ switchMode(n,key,inp.value); drawNodeRefresh(uid); }
+      if(kind!=='vmode'){ const ve=inp.parentElement.querySelector('.val'); if(ve) ve.textContent=fmt(n.f[key]); }
+      scheduleRender();
+    });
+  });
+  el.querySelectorAll('[data-mk]').forEach(inp=>{
+    inp.addEventListener('input',()=>{ const key=inp.dataset.mk, f=inp.dataset.mf, mk=Object.keys(n.f[key])[0];
+      n.f[key][mk][f]= f==='steps'?inp.value.split(',').map(Number).filter(x=>!isNaN(x)): (inp.type==='number'?+inp.value:inp.value);
+      scheduleRender(); });
+  });
+}
+function drawNodeRefresh(uid){ const el=canvas.querySelector(`.node[data-uid="${cssEsc(uid)}"]`); el.querySelector('.nbody').innerHTML=bodyHtml(nodes[uid],SPECS[nodes[uid].type]); bindBody(el,uid); drawWires(); }
+function switchMode(n,key,mode){
+  const cur=typeof n.f[key]==='number'?n.f[key]:440;
+  if(mode==='const') n.f[key]=cur;
+  else if(mode==='note') n.f[key]='A4';
+  else if(mode==='slide') n.f[key]={slide:{from:cur,to:Math.max(20,cur/3),secs:0.2,curve:'exp'}};
+  else if(mode==='lfo') n.f[key]={lfo:{shape:'sine',rate:5,depth:Math.max(1,cur*0.05),center:cur}};
+  else if(mode==='arp') n.f[key]={arp:{steps:[cur,Math.round(cur*1.5)],rate:12}};
+  else if(mode==='env') n.f[key]={env:{a:0,d:0.2,s:0,r:0.05,from:cur,to:Math.max(20,cur/4)}};
+  else if(mode==='rand') n.f[key]={rand:{from:cur*0.85,to:cur*1.15,rate:4,seed:0}};
+}
+function markSel(){ canvas.querySelectorAll('.node').forEach(el=>el.classList.toggle('sel',el.dataset.uid===sel)); }
+
+/* ── render via wasm ── */
+function scheduleRender(){ clearTimeout(rtimer); rtimer=setTimeout(runEngine,250); syncJson(); }
+function runEngine(){
+  meta.name=$('#name').value||'sound'; meta.duration=+$('#dur').value||0.5;
+  let doc; try{ doc=buildDoc(); }catch(e){ setStatus('err',e.message); return; }
+  let res; try{ res=render(JSON.stringify(doc)); }catch(e){ setStatus('err',String(e)); return; }
+  if(!res.ok){ setStatus('err',res.error||'render failed'); return; }
+  lastBuf={left:res.left,right:res.right,sampleRate:res.sampleRate,channels:res.channels};
+  specUrl=showImg('#spec',res.spectrogramPng,specUrl); waveUrl=showImg('#wave',res.waveformPng,waveUrl);
+  paintStats(JSON.parse(res.statsJson));
+  setStatus('ok',`✓ ${res.duration.toFixed(2)}s · ${res.channels===2?'stereo':'mono'} · ${Object.keys(nodes).length-1} nodes`);
+}
+function showImg(sel,bytes,prev){ const el=$(sel); if(!el||!bytes||!bytes.length) return prev; const u=URL.createObjectURL(new Blob([bytes],{type:'image/png'})); el.src=u; if(prev) URL.revokeObjectURL(prev); return u; }
+const STAT=[['peak_dbfs','peak dB',1],['loudness_lufs','LUFS',1],['spectral_centroid_hz','centroid',0],['crest_factor_db','crest dB',1],['attack_time_ms','attack ms',1],['onset_count','onsets',0]];
+function paintStats(s){ $('#stats').innerHTML=STAT.map(([k,l,d])=>`<div class="stat"><div class="k">${l}</div><div class="v">${typeof s[k]==='number'?s[k].toFixed(d):'—'}</div></div>`).join(''); }
+function setStatus(c,m){ statusEl.className=c; statusEl.textContent=m; }
+
+/* ── audio ── */
+function play(){ if(!lastBuf) runEngine(); if(!lastBuf) return;
+  actx=actx||new (window.AudioContext||window.webkitAudioContext)(); actx.resume();
+  const {left,right,sampleRate,channels}=lastBuf; const b=actx.createBuffer(channels,left.length,sampleRate);
+  b.getChannelData(0).set(left); if(channels===2) b.getChannelData(1).set(right);
+  const s=actx.createBufferSource(); s.buffer=b; s.connect(actx.destination); s.start(); }
+
+/* ── palette ── */
+function buildPalette(){
+  const pal=$('#palette'); let h='';
+  for(const [grp,types] of PAL){ h+=`<h4>${grp}</h4>`;
+    for(const t of types){ h+=`<button data-add="${t}"><span class="sw" style="background:${KCOLOR[SPECS[t].kind]}"></span>${t}</button>`; } }
+  pal.innerHTML=h;
+  pal.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>{
+    const t=b.dataset.add; const wrap=$('#wrap');
+    const x=wrap.scrollLeft+60, y=wrap.scrollTop+60;
+    const uid=addNode(t,x,y); sel=uid; draw(); scheduleRender();
+  });
+}
+
+/* ── JSON drawer ── */
+function syncJson(){ if($('#json').open){ try{ jsonText.value=JSON.stringify(buildDoc(),null,2); }catch(e){ jsonText.value='// '+e.message; } } }
+$('#applyjson').onclick=()=>{ try{ const d=JSON.parse(jsonText.value); importDoc(d); $('#name').value=meta.name; $('#dur').value=meta.duration; draw(); runEngine(); }catch(e){ setStatus('err','JSON: '+e.message); } };
+$('#fromcanvas').onclick=syncJson;
+$('#json').addEventListener('toggle',syncJson);
+
+/* ── top bar ── */
+const exs=$('#examples'); for(const k of Object.keys(EXAMPLES)){ const o=document.createElement('option'); o.textContent=k; exs.appendChild(o); }
+exs.onchange=()=>{ if(!exs.value){ blank(); return; } importDoc(structuredClone(EXAMPLES[exs.value])); $('#name').value=meta.name; $('#dur').value=meta.duration; draw(); runEngine(); };
+$('#play').onclick=play;
+$('#name').oninput=scheduleRender; $('#dur').oninput=scheduleRender;
+$('#wrap').onmousedown=e=>{ if(e.target.id==='canvas'||e.target.id==='wires'){ sel=null; markSel(); } };
+document.addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){ e.preventDefault(); runEngine(); play(); }
+  if((e.key==='Delete'||e.key==='Backspace') && sel && document.activeElement.tagName!=='INPUT' && document.activeElement.tagName!=='SELECT' && document.activeElement.tagName!=='TEXTAREA'){
+    e.preventDefault(); delNode(sel); draw(); scheduleRender(); }
+});
+function blank(){ nodes={}; wires=[]; uidc=0; sel=null; nodes[OUT]={uid:OUT,type:OUT,x:560,y:220,f:{}}; meta={name:'sound',duration:0.5,sample_rate:44100}; $('#name').value=meta.name; $('#dur').value=meta.duration; draw(); setStatus('mut','empty patch — add nodes from the palette, wire them to OUT ▶'); }
+
+/* ── boot ── */
+buildPalette();
+init().then(()=>{ importDoc(structuredClone(EXAMPLES['laser zap'])); $('#name').value=meta.name; $('#dur').value=meta.duration; draw(); runEngine(); })
+  .catch(e=>setStatus('err','engine load failed: '+e));
+</script>
+</body>
+</html>
