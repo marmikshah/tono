@@ -2,7 +2,31 @@
 
 ## Unreleased
 
-Higher-fidelity synthesis, gated so it never breaks byte-stability.
+Higher-fidelity synthesis, gated so it never breaks byte-stability — plus a
+workspace split and a browser playground that runs the engine in WASM.
+
+### Workspace + browser playground
+- **`sonarium-core` crate** — the pure, headless engine (graph DSL, DSP,
+  deterministic renderer, analysis, critique, graph transforms) extracted into
+  its own crate with **no I/O, no MCP, no transport**. The `sonarium` binary is
+  now a thin shell (MCP server, encoders, persistence, daemon) that re-exports
+  it, so every existing path is unchanged. One core, three targets: native MCP,
+  WASM, and a future in-engine runtime.
+- **WASM build + manual node patcher** — `sonarium-wasm` compiles the core to
+  WebAssembly; `make wasm` emits it into `docs/playground/`, a zero-install
+  browser studio where a human **builds a sound effect by hand, modular-synth
+  style**: drop nodes from a palette (oscillators, envelopes, filters,
+  mix/mul…), drag them anywhere, **wire output ports to input ports manually**,
+  and tweak each node's parameters inline (sliders / dropdowns / modulator
+  pickers) — everything flowing into an `OUT ▶` terminal. The patch serializes
+  to a `SoundDoc` (serial effect runs auto-fold into a `chain`) and renders live
+  to audio plus the same spectrogram / waveform / analysis an agent sees,
+  **byte-identically to the native engine**; a two-way JSON drawer exposes the
+  exact document an agent edits. The SoundFont sampler voice is the only one
+  unavailable in the browser.
+- **In-memory analysis** — `analysis::stats` (numbers, no filesystem) and
+  `spectrogram_png` / `waveform_png` (PNG bytes) split out of the disk-writing
+  `analyze`, so a render can hand back feedback without a disk round-trip.
 
 ### Engine revisions
 - **New `engine` document field** — a DSP-kernel revision number, independent
