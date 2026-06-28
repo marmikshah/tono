@@ -50,7 +50,6 @@ axum = { workspace = true }
 base64 = { workspace = true }
 flacenc = { workspace = true }
 hound = { workspace = true }
-image = { workspace = true }
 rmcp = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
