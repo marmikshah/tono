@@ -63,6 +63,13 @@
   #status.err{ color:#ff8092; font-family:ui-monospace,monospace; } #status.ok{ color:var(--acc); }
   .rollbtn{ width:100%; margin-top:.25rem; font-size:.72rem; padding:.3rem; background:#241f3a; border:1px solid #3a3360; border-radius:6px; color:#dfe3ea; cursor:pointer; }
   .rollbtn:hover{ border-color:var(--acc); color:var(--acc); }
+  .modes{ margin-top:.3rem; }
+  .modes .modehead, .moderow{ display:grid; grid-template-columns:1fr 1fr 1fr 14px; gap:.2rem; align-items:center; }
+  .modes .modehead{ font-size:.56rem; color:var(--mut); margin-bottom:.1rem; padding:0 .1rem; }
+  .moderow{ margin:.12rem 0; }
+  .mnum{ width:100%; padding:.12rem .2rem; font-size:.68rem; background:#0d0b16; border:1px solid var(--line); border-radius:4px; color:var(--ink); }
+  .mdel{ cursor:pointer; color:var(--mut); text-align:center; font-size:.85rem; }
+  .mdel:hover{ color:#ff8092; }
   #rollModal{ position:fixed; inset:0; background:#0a0812f2; z-index:50; display:none; flex-direction:column; }
   #rollModal.open{ display:flex; }
   #rollHead{ display:flex; gap:.6rem; align-items:center; padding:.55rem .9rem; border-bottom:1px solid var(--line); }
@@ -482,7 +489,7 @@ function bodyHtml(n,sp){
   for(const [k,m] of Object.entries(sp.p||{})) h+=prow(n,k,m);
   if(sp.muteField) h+=`<div class="prow"><label>mute</label><input type="checkbox" data-k="mute" data-kind="bool" ${n.f.mute?'checked':''}></div>`;
   if(sp.seqNotes) h+=`<button class="rollbtn" data-roll="1">✎ piano roll (${(n.f.notes||[]).length})</button>`;
-  if(sp.modes) h+=`<div class="mut">${(n.f.modes||[]).length} modes · edit in JSON</div>`;
+  if(sp.modes) h+=modesTable(n);
   return h;
 }
 function fmt(v){ if(typeof v==='number') return Math.abs(v)>=100?Math.round(v):+v.toFixed(2); if(typeof v==='string') return v; if(v&&typeof v==='object') return Object.keys(v)[0]; return v; }
@@ -509,6 +516,18 @@ function modGrid(n,key,v,kind){
     else h+=`<label>${fk}<input type="number" step="0.01" data-mk="${key}" data-mf="${fk}" value="${fv}"></label>`;
   }
   return h+`</div>`;
+}
+/* Inline editor for a modal resonator bank: a row of freq/decay/gain per partial. */
+function modesTable(n){
+  let h=`<div class="modes"><div class="modehead"><span>Hz</span><span>decay</span><span>gain</span><span></span></div>`;
+  (n.f.modes||[]).forEach((m,i)=>{
+    h+=`<div class="moderow">
+      <input class="mnum" type="number" data-modei="${i}" data-modef="freq" value="${m.freq}">
+      <input class="mnum" type="number" step="0.05" data-modei="${i}" data-modef="decay" value="${m.decay??0.6}">
+      <input class="mnum" type="number" step="0.05" data-modei="${i}" data-modef="gain" value="${m.gain??1}">
+      <span class="mdel" data-modedel="${i}" title="remove">×</span></div>`;
+  });
+  return h+`<button class="rollbtn" data-modeadd="1">+ mode</button></div>`;
 }
 
 /* ── wires ── */
@@ -574,6 +593,13 @@ function bindBody(el,uid){
       scheduleRender(); });
   });
   el.querySelector('[data-roll]')?.addEventListener('click',ev=>{ ev.stopPropagation(); openRoll(uid); });
+  el.querySelectorAll('[data-modei]').forEach(inp=>{
+    inp.addEventListener('input',()=>{ n.f.modes[+inp.dataset.modei][inp.dataset.modef]=+inp.value; scheduleRender(); });
+  });
+  el.querySelectorAll('[data-modedel]').forEach(b=>b.addEventListener('click',ev=>{ ev.stopPropagation();
+    n.f.modes.splice(+b.dataset.modedel,1); drawNodeRefresh(uid); scheduleRender(); }));
+  el.querySelector('[data-modeadd]')?.addEventListener('click',ev=>{ ev.stopPropagation();
+    (n.f.modes=n.f.modes||[]).push({freq:880,decay:0.4,gain:0.5}); drawNodeRefresh(uid); scheduleRender(); });
 }
 function drawNodeRefresh(uid){ const el=canvas.querySelector(`.node[data-uid="${cssEsc(uid)}"]`); el.querySelector('.nbody').innerHTML=bodyHtml(nodes[uid],SPECS[nodes[uid].type]); bindBody(el,uid); drawWires(); }
 function switchMode(n,key,mode){
