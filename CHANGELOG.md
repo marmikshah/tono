@@ -5,6 +5,18 @@
 Higher-fidelity synthesis, gated so it never breaks byte-stability — plus a
 workspace split and a browser playground that runs the engine in WASM.
 
+### Tool surface consolidation (30 → 23)
+- **Op-based merges** for the admin clusters, so the agent picks from a smaller,
+  cleaner surface: `history { id, op: status|undo|redo }` (was undo_sound /
+  redo_sound / history); `layer { id, op: add|set|remove|duplicate, … }` (was
+  add_layer / set_layer / layer_ops); `bank { op: create|add|list, … }` (was
+  create_bank / add_to_bank / list_banks); `export_pack { bank_id?, … }` (was
+  export_bank / export_all — omit `bank_id` for the whole library). The hot
+  authoring loop (author_sound, set_param, edit_sound, analyze, review_sound,
+  …) is untouched, and `export` (single sound) stays its own tool.
+- **Replay is unaffected.** Each merged op still journals under its original
+  name, so every saved session and shipped recipe replays byte-for-byte.
+
 ### Workspace + browser playground
 - **`sonarium-core` crate** — the pure, headless engine (graph DSL, DSP,
   deterministic renderer, analysis, critique, graph transforms) extracted into
