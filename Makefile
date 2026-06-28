@@ -8,7 +8,7 @@ BIND    ?= 127.0.0.1:8787
 WORKDIR ?= ./sounds
 
 .DEFAULT_GOAL := run
-.PHONY: help run serve stdio build release test fmt lint check verify hooks clean install daemon daemon-status daemon-uninstall
+.PHONY: help run serve stdio build release wasm desktop branding test fmt lint check pre-commit-checks verify hooks clean install daemon daemon-status daemon-uninstall
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -34,7 +34,10 @@ WASM_BINDGEN_VERSION := 0.2.126
 wasm: ## Build the browser playground (sonarium-core → WASM into docs/playground/pkg)
 	rustup target add wasm32-unknown-unknown
 	command -v wasm-bindgen >/dev/null || cargo install wasm-bindgen-cli --version $(WASM_BINDGEN_VERSION) --locked
-	cargo build -p sonarium-wasm --target wasm32-unknown-unknown --release
+	# Remap the builder's home out of embedded panic-location strings so the
+	# committed binary carries no machine paths / usernames.
+	RUSTFLAGS='--remap-path-prefix=$(HOME)=~' \
+		cargo build -p sonarium-wasm --target wasm32-unknown-unknown --release
 	wasm-bindgen target/wasm32-unknown-unknown/release/sonarium_wasm.wasm \
 		--out-dir docs/playground/pkg --target web --no-typescript
 	@echo "→ serve it:  python3 -m http.server -d docs/playground 8080"
@@ -42,6 +45,9 @@ wasm: ## Build the browser playground (sonarium-core → WASM into docs/playgrou
 desktop: ## Build the optional native studio (cpal real-time audio) — NOT in the default build/CI
 	cargo build -p sonarium-desktop --release
 	@echo "→ native preview:  target/release/sonarium-desktop play docs/examples/retro-coin.json"
+
+branding: wasm ## Refresh demo/branding assets — the WASM playground (logo + wordmark are hand-authored in atelier under docs/)
+	@echo "branding: playground rebuilt; logo + wordmark live in docs/ (authored in atelier)"
 
 test: ## Run the test suite
 	cargo test
@@ -52,12 +58,13 @@ fmt: ## Format all sources
 lint: ## Clippy with warnings denied
 	cargo clippy --all-targets -- -D warnings
 
-check: fmt lint test ## Pre-commit gate: format + clippy + tests
+check: fmt lint test ## Pre-commit gate (mutating): format + clippy + tests
 
-verify: ## Exactly what CI runs (fmt --check + clippy + test) - non-mutating
+pre-commit-checks: ## CI lint gate (non-mutating): fmt --check + clippy. Pair with 'make test'.
 	cargo fmt --all -- --check
 	cargo clippy --all-targets -- -D warnings
-	cargo test
+
+verify: pre-commit-checks test ## Exactly what CI runs (fmt --check + clippy + test) - non-mutating
 
 hooks: ## Enable the pre-push gate (runs 'make verify' before every push)
 	git config core.hooksPath .githooks
