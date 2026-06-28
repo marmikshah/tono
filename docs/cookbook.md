@@ -72,7 +72,7 @@ PASS / WARN / FAIL findings — each with the measured value, the target, and th
 Archetypes: `laser` `coin` `jump` `impact` `ui` `ambience` `bgm` (omit for the
 universal checks only). Drive a **polish loop** with it: review → apply the
 highest-severity finding's fix with one `set_param` → review again →
-`undo_sound` if it regressed → repeat until PASS. The **sound-review-loop**
+`history { op: "undo" }` if it regressed → repeat until PASS. The **sound-review-loop**
 skill runs exactly this, and lets you hand in review in your own words at any
 step. Don't chase a WARN the sound's character justifies (a bell's long tail, a
 gusting wind's crest) — stop at the targets, not past them.
@@ -316,32 +316,32 @@ each with a band-splitting filter, a one-shot envelope, and a starting gain
 already wired. The sources are neutral placeholders; `describe_sound` the
 result, swap the real source into each role with `set_param` (e.g. replace the
 `body` layer's placeholder sine with an `fm` or `super`), and rebalance with
-`set_layer` using the per-layer stats. It is structure, not a sound — you fill
+`layer { op: "set" }` using the per-layer stats. It is structure, not a sound — you fill
 it in.
 
 To build by hand instead:
 
 1. `author_sound` with the FIRST layer's graph (the body, usually).
-2. `add_layer { id, layer: "crack", node: {...}, at: 0.0 }` for each next
+2. `layer { op: "add", layer: "crack", node: {...}, at: 0.0 }` for each next
    component — `at` places it in time (a tail layer 20 ms late, a pre-click
    5 ms early relative to a body at `at: 0.005`).
 3. Balance with the per-layer feedback every render returns
    (`crack 38% • peak −8.1 dBFS | body 52% … | tail 10%`):
-   `set_layer { id, layer: "tail", gain: 0.4 }`.
+   `layer { op: "set", layer: "tail", gain: 0.4 }`.
 4. Edit inside a layer with layer-relative paths:
    `set_param { id, layer: "crack", path: "env.d", value: 0.03 }`.
 
 **One layer per thing you'd fade, pan, time-shift, or analyze separately** —
 an instrument in a song, a component in an SFX. Use `mix` only for sub-signals
 that share one envelope/filter; never one layer holding a mix of seqs (it
-makes the per-layer feedback useless). The first `add_layer` on a plain sound
+makes the per-layer feedback useless). The first `layer { op: "add" }` on a plain sound
 wraps the existing graph as a layer named after the sound — level-compensated
 and announced, nothing changes audibly.
 
 Layers are independent by construction: each has its own deterministic RNG
 stream keyed by its id, so muting, removing, duplicating, or editing one layer
 never changes a sibling's noise grains. `mute` is rendered state (exports ship
-without muted layers); `layer_ops {op:"duplicate"}` is a built-in variation —
+without muted layers); `layer { op: "duplicate" }` is a built-in variation —
 the copy re-grains its noise deterministically from the new id.
 
 ## Level-matched, click-safe output
