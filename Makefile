@@ -29,6 +29,16 @@ build: ## Debug build
 release: ## Optimized release build → target/release/sonarium
 	cargo build --release
 
+WASM_BINDGEN_VERSION := 0.2.126
+
+wasm: ## Build the browser playground (sonarium-core → WASM into docs/playground/pkg)
+	rustup target add wasm32-unknown-unknown
+	command -v wasm-bindgen >/dev/null || cargo install wasm-bindgen-cli --version $(WASM_BINDGEN_VERSION) --locked
+	cargo build -p sonarium-wasm --target wasm32-unknown-unknown --release
+	wasm-bindgen target/wasm32-unknown-unknown/release/sonarium_wasm.wasm \
+		--out-dir docs/playground/pkg --target web --no-typescript
+	@echo "→ serve it:  python3 -m http.server -d docs/playground 8080"
+
 test: ## Run the test suite
 	cargo test
 
