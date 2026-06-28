@@ -13,7 +13,11 @@
   <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-8c6ee6" alt="license">
 </p>
 
-<p align="center"><a href="https://marmikshah.github.io/sonarium/listen.html"><strong>▶ Listen to everything in your browser</strong></a></p>
+<p align="center">
+  <a href="https://marmikshah.github.io/sonarium/listen.html"><strong>▶ Listen to everything in your browser</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://marmikshah.github.io/sonarium/playground/"><strong>✎ Design a sound live (WASM playground)</strong></a>
+</p>
 
 <p align="center">
   <img src="docs/river-flows-spectrogram.png" width="640" alt="spectrogram of River Flows in You, 800 notes on the sampled piano">
