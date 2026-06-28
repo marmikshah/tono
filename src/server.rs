@@ -567,6 +567,52 @@ pub struct BanksResp {
     pub banks: Vec<Bank>,
 }
 
+/// Unified result of the `bank` tool: a single bank (`create` / `add`) or the
+/// full inventory (`list`).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct BankResp {
+    /// The affected bank, for `create` / `add`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bank: Option<Bank>,
+    /// Every bank, for `list`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub banks: Option<Vec<Bank>>,
+}
+
+/// Operation for the unified `bank` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum BankKind {
+    /// Create a named bank (requires `name`).
+    Create,
+    /// Add/update a sound's membership (requires `bank_id`, `sound_id`).
+    Add,
+    /// List all banks and their members.
+    List,
+}
+
+/// Create a bank, add a sound to one, or list them.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BankReq {
+    /// What to do.
+    pub op: BankKind,
+    /// Bank name — `create`.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Bank id — `add`.
+    #[serde(default)]
+    pub bank_id: Option<String>,
+    /// Sound id to add — `add`.
+    #[serde(default)]
+    pub sound_id: Option<String>,
+    /// Logical category (`ui`, `weapon`, ...) — `add`.
+    #[serde(default)]
+    pub category: Option<String>,
+    /// Round-robin group (interchangeable takes) — `add`.
+    #[serde(default)]
+    pub rr_group: Option<String>,
+}
+
 /// Export a bank to a directory + manifest.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExportBankReq {
@@ -1565,11 +1611,7 @@ impl Sonarium {
         }
     }
 
-    /// Create a named sound bank (a pack).
-    #[tool(
-        name = "create_bank",
-        description = "Create a named sound bank (a pack): a first-class group of sounds you can export together with a manifest. Returns the bank with its stable id."
-    )]
+    /// Create a named sound bank (behind `bank { op: "create" }`).
     pub async fn create_bank(
         &self,
         params: Parameters<CreateBankReq>,
@@ -1589,11 +1631,7 @@ impl Sonarium {
         Ok(Json(bank))
     }
 
-    /// Add or update a sound's membership in a bank.
-    #[tool(
-        name = "add_to_bank",
-        description = "Add (or update) a sound in a bank with an optional category and round-robin group. Returns the updated bank."
-    )]
+    /// Add or update a sound's membership in a bank (behind `bank { op: "add" }`).
     pub async fn add_to_bank(
         &self,
         params: Parameters<AddToBankReq>,
@@ -1627,15 +1665,63 @@ impl Sonarium {
         Ok(Json(bank))
     }
 
-    /// List all sound banks.
-    #[tool(
-        name = "list_banks",
-        description = "List all sound banks and their members."
-    )]
+    /// List all sound banks (behind `bank { op: "list" }`).
     pub async fn list_banks(&self) -> Json<BanksResp> {
         Json(BanksResp {
             banks: self.store.list_banks(),
         })
+    }
+
+    /// Create a bank, add a sound to one, or list them.
+    #[tool(
+        name = "bank",
+        description = "Manage sound banks (engine-facing packs). op=create makes a named bank (requires `name`; returns it with a stable id). op=add adds/updates a sound's membership (requires `bank_id` + `sound_id`; optional `category` and `rr_group` round-robin group). op=list returns every bank and its members. Export a bank with export_pack."
+    )]
+    pub async fn bank(&self, params: Parameters<BankReq>) -> Result<Json<BankResp>, String> {
+        let BankReq {
+            op,
+            name,
+            bank_id,
+            sound_id,
+            category,
+            rr_group,
+        } = params.0;
+        match op {
+            BankKind::Create => {
+                let name = name.ok_or_else(|| "bank op 'create' requires a `name`".to_string())?;
+                let bank = self
+                    .create_bank(Parameters(CreateBankReq { name }))
+                    .await?
+                    .0;
+                Ok(Json(BankResp {
+                    bank: Some(bank),
+                    banks: None,
+                }))
+            }
+            BankKind::Add => {
+                let bank_id =
+                    bank_id.ok_or_else(|| "bank op 'add' requires a `bank_id`".to_string())?;
+                let sound_id =
+                    sound_id.ok_or_else(|| "bank op 'add' requires a `sound_id`".to_string())?;
+                let bank = self
+                    .add_to_bank(Parameters(AddToBankReq {
+                        bank_id,
+                        sound_id,
+                        category,
+                        rr_group,
+                    }))
+                    .await?
+                    .0;
+                Ok(Json(BankResp {
+                    bank: Some(bank),
+                    banks: None,
+                }))
+            }
+            BankKind::List => Ok(Json(BankResp {
+                bank: None,
+                banks: Some(self.list_banks().await.0.banks),
+            })),
+        }
     }
 
     /// Export a bank's sounds + a manifest to a directory.
