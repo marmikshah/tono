@@ -54,7 +54,7 @@ review for that iteration, above the tool:
   "too harsh" → lowpass / less drive; "needs punch" → `env.punch`, shorter
   attack; "too long" → trim duration; "more body" → sub/octave layer.
 - "Looks/sounds good", "ship it", "that's it" → **stop the loop**, report final
-  grade, suggest `export` (or `export_bank` with one `target_lufs`).
+  grade, suggest `export` (or `export_pack` with one `target_lufs`).
 - Their judgment wins even if `review_sound` still shows a WARN — a passing
   meter never overrides a human "good enough", and a human "not yet" keeps the
   loop going past a PASS.

@@ -129,11 +129,11 @@ to fix.
 - `export { id, format, bit_depth?, sample_rate?, dest?, target_lufs?,
   quality? }` — one game-ready file: WAV (8/16-bit, loop chunk), FLAC, or OGG
   Vorbis; optional loudness target without touching the stored graph.
-- `export_bank { bank_id, dest, by_category?, target_lufs?, format?, quality?,
-  engine? }` — every member plus a `sounds.json` manifest; `engine:
+- `export_pack { bank_id?, dest, by_category?, target_lufs?, format?, quality?,
+  engine? }` — a pack plus a `sounds.json` manifest. With `bank_id`, every
+  member of that bank; omit `bank_id` for the whole library. `engine:
   "godot" | "unity" | "bevy"` also emits `.import` sidecars, `.meta` sidecars
   (stable GUIDs), or a generated `sonarium_sounds.rs`.
-- `export_all { dest, ... }` — the whole library, same options.
 
 ## Sessions
 

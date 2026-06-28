@@ -658,6 +658,31 @@ pub struct ExportAllReq {
     pub engine: Option<EngineTarget>,
 }
 
+/// Export a pack: one bank, or the whole library when `bank_id` is omitted.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ExportPackReq {
+    /// Bank id to export. Omit to export the entire library.
+    #[serde(default)]
+    pub bank_id: Option<String>,
+    /// Destination directory (created if missing).
+    pub dest: String,
+    /// Lay sounds into per-category subfolders (bank export only).
+    #[serde(default)]
+    pub by_category: bool,
+    /// Optional integrated-loudness target (LUFS) applied to every member.
+    #[serde(default)]
+    pub target_lufs: Option<f32>,
+    /// Container format for every member (wav / flac / ogg). Defaults to WAV.
+    #[serde(default)]
+    pub format: ExportFormat,
+    /// OGG Vorbis VBR quality in [0, 1] (default 0.5). Ignored for WAV / FLAC.
+    #[serde(default)]
+    pub quality: Option<f32>,
+    /// Also emit engine integration files: godot / unity / bevy.
+    #[serde(default)]
+    pub engine: Option<EngineTarget>,
+}
+
 /// Options for a pack export (shared by `export_bank` / `export_all`).
 struct PackOptions {
     by_category: bool,
@@ -1724,11 +1749,7 @@ impl Sonarium {
         }
     }
 
-    /// Export a bank's sounds + a manifest to a directory.
-    #[tool(
-        name = "export_bank",
-        description = "Export every sound in a bank into `dest` plus a sounds.json manifest (id, file, category, rr_group, duration, loudness, peak, channels) so a game engine wires the whole pack with no hand-listing. by_category lays sounds into per-category subfolders. Optional target_lufs level-matches the set."
-    )]
+    /// Export a bank's sounds + a manifest (behind `export_pack { bank_id }`).
     pub async fn export_bank(
         &self,
         params: Parameters<ExportBankReq>,
@@ -1759,11 +1780,8 @@ impl Sonarium {
         )
     }
 
-    /// Export every sound in the library + a manifest to a directory.
-    #[tool(
-        name = "export_all",
-        description = "Export every sound in the library into `dest` with a sounds.json manifest. Library-wide pack export. Optional target_lufs level-matches everything."
-    )]
+    /// Export every sound in the library + a manifest (behind `export_pack`
+    /// with no `bank_id`).
     pub async fn export_all(
         &self,
         params: Parameters<ExportAllReq>,
@@ -1796,6 +1814,50 @@ impl Sonarium {
                 engine,
             },
         )
+    }
+
+    /// Export a pack — one bank, or the whole library.
+    #[tool(
+        name = "export_pack",
+        description = "Export a pack into `dest` plus a sounds.json manifest (id, file, category, rr_group, duration, loudness, peak, channels) so a game engine wires the whole set with no hand-listing. With `bank_id`, exports that bank (by_category lays sounds into per-category subfolders); omit `bank_id` to export the entire library. Optional target_lufs level-matches the set; engine: godot | unity | bevy also emits .import / .meta sidecars or a sonarium_sounds.rs module."
+    )]
+    pub async fn export_pack(
+        &self,
+        params: Parameters<ExportPackReq>,
+    ) -> Result<Json<PackResp>, String> {
+        let ExportPackReq {
+            bank_id,
+            dest,
+            by_category,
+            target_lufs,
+            format,
+            quality,
+            engine,
+        } = params.0;
+        match bank_id {
+            Some(bank_id) => {
+                self.export_bank(Parameters(ExportBankReq {
+                    bank_id,
+                    dest,
+                    by_category,
+                    target_lufs,
+                    format,
+                    quality,
+                    engine,
+                }))
+                .await
+            }
+            None => {
+                self.export_all(Parameters(ExportAllReq {
+                    dest,
+                    target_lufs,
+                    format,
+                    quality,
+                    engine,
+                }))
+                .await
+            }
+        }
     }
 
     /// Snapshot the session journal to a portable session file.
