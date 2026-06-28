@@ -78,7 +78,7 @@ its analysis, and let every edit be a hypothesis the next render confirms.
 - **Static / lifeless** (sustained sounds): LFO on cutoff or duty
   (rate 0.2–2 Hz, shallow), or `humanize` for repeats.
 - **Quiet next to siblings**: never fix in the graph — `export` /
-  `export_bank` with one `target_lufs` for the whole set.
+  `export_pack` with one `target_lufs` for the whole set.
 
 ## Layered sounds (schema v2)
 

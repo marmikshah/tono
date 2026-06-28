@@ -360,14 +360,14 @@ perceived level (≈ −16 LUFS for SFX, ≈ −14 for music). `export` also tak
 
 Group related sounds and export them with a manifest a game can read directly:
 
-1. `create_bank { name }` → a pack with a stable id.
-2. `add_to_bank { bank_id, sound_id, category?, rr_group? }` — `category`
+1. `bank { op: "create", name }` → a pack with a stable id.
+2. `bank { op: "add", bank_id, sound_id, category?, rr_group? }` — `category`
    (`ui`/`weapon`/`footstep`) lays out subfolders; `rr_group` marks
    interchangeable round-robin takes.
-3. `export_bank { bank_id, dest, by_category?, target_lufs? }` → every member
+3. `export_pack { bank_id, dest, by_category?, target_lufs? }` → every member
    WAV + a `sounds.json` manifest `{ id, file, category, rr_group, duration_ms,
-   sample_rate, channels, lufs, peak_dbfs, true_peak_dbfs }`. `export_all`
-   does the same for the whole library.
+   sample_rate, channels, lufs, peak_dbfs, true_peak_dbfs }`. Omit `bank_id`
+   to export the whole library.
 
 ## Loops, ambience & BGM
 
