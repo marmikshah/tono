@@ -16,6 +16,7 @@ pub mod analysis;
 pub mod dsl;
 pub mod dsp;
 pub mod edit;
+pub mod patch;
 pub mod render;
 pub mod review;
 pub mod stream;
