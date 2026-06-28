@@ -607,7 +607,7 @@ fn dust_signal(density: f32, decay: f32, n: usize, sr: u32, rng: &mut Rng) -> Si
 /// PolyBLEP residual for band-limited oscillators: corrects the discontinuity
 /// at a phase edge to suppress aliasing. `t` is the phase (0..1), `dt` the
 /// per-sample phase increment.
-fn poly_blep(mut t: f32, dt: f32) -> f32 {
+pub(crate) fn poly_blep(mut t: f32, dt: f32) -> f32 {
     if dt <= 0.0 {
         return 0.0;
     }
@@ -623,7 +623,7 @@ fn poly_blep(mut t: f32, dt: f32) -> f32 {
 }
 
 /// Unit-amplitude oscillator value in [-1, 1] for a phase in [0, 1).
-fn osc(shape: Shape, phase: f32) -> f32 {
+pub(crate) fn osc(shape: Shape, phase: f32) -> f32 {
     match shape {
         Shape::Sine => (TAU * phase).sin(),
         Shape::Square => {
