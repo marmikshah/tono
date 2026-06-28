@@ -2,8 +2,56 @@
 
 ## Unreleased
 
-Higher-fidelity synthesis, gated so it never breaks byte-stability — plus a
-workspace split and a browser playground that runs the engine in WASM.
+Higher-fidelity synthesis gated so it never breaks byte-stability, a workspace
+split, and a leap from "headless engine" to a **studio you can design *and*
+play sound in** — a browser playground and an optional native desktop app, both
+on the one deterministic core, with the MCP face unchanged.
+
+### Real-time engine + native desktop studio
+- **`sonarium-core::stream::Player`** — the host-agnostic audition seam an audio
+  callback fills in blocks. The invariant that makes live editing safe is pinned
+  by test: audio served block-by-block is **byte-identical to an offline bounce**
+  of the same document.
+- **Playable synth** — a gated streaming `voice` (band-limited oscillator + ADSR
+  with gate-on/off, reusing the renderer's exact kernels) and a `PolySynth`
+  voice allocator with voice-stealing. The live-performance path, distinct from
+  the byte-identical offline render.
+- **`sonarium-desktop`** — an **optional** Tauri + `cpal` native studio running
+  the full node patcher with real-time audio: edits play live, ▶ Play auditions
+  the patch, and you **play the patch like an instrument** from the computer
+  keyboard (A–K) or a hardware **MIDI** controller (native CoreMIDI via `midir`),
+  mixed with the preview. Kept out of the default build / CI (heavy webview/cpal
+  deps); built via `make desktop`.
+
+### Manual studio editors (one frontend, web + desktop)
+- **Node patcher** picks its backend at boot — WASM + Web Audio in a browser, or
+  native `cpal` + the core via Tauri commands on the desktop — so one frontend
+  serves both.
+- **Piano roll** for `seq` nodes (draw notes, length, bpm/steps-per-beat).
+- **Channel-strip mixer** for `tracks` documents — vertical faders, pan, mute,
+  **solo** (transient: heard, not saved), and **live per-layer meters** from the
+  render's per-layer stats; a master strip with the bus meter + LUFS.
+- **Inline modal-modes table** (freq/decay/gain per partial) — closes the last
+  "edit in JSON" gap in the patcher.
+
+### Track automation
+- **`Track.automation`** — gain/pan lanes of `{t, v}` breakpoints over song time
+  (volume rides, pan moves), linearly interpolated. A track with no automation
+  stays on the constant fast path, so every existing document renders
+  **byte-identically**; tests pin a constant-lane-equals-static invariant and a
+  ramp that provably fades. Settable by an agent through the existing graph tools
+  (`set_param` / `edit_sound` / `refine_sound`), and drawn in a lane editor in
+  the playground mixer.
+
+### Interop
+- **`export_midi { id, dest? }`** — write every `seq` to a Standard MIDI File
+  (one track per seq) so a melody / drum pattern round-trips into a DAW.
+
+### Repo standards
+- Engineering-standards pass: `LICENSE` (dual MIT/Apache), `.editorconfig`,
+  `CLAUDE.md`, `.env.example`, a `pre-commit` hook, and the canonical Makefile
+  targets; default branch is `master`; the committed WASM is built with
+  `--remap-path-prefix` so it carries no build-machine paths.
 
 ### Tool surface consolidation (30 → 23)
 - **Op-based merges** for the admin clusters, so the agent picks from a smaller,
