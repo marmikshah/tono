@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 — 2026-06-28
 
 Higher-fidelity synthesis gated so it never breaks byte-stability, a workspace
 split, and a leap from "headless engine" to a **studio you can design *and*
