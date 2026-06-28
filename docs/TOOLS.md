@@ -122,9 +122,10 @@ to fix.
 
 ## Banks & export
 
-- `create_bank { name }` / `add_to_bank { bank_id, sound_id, category?,
-  rr_group? }` / `list_banks {}` — engine-facing packs with categories and
-  round-robin groups.
+- `bank { op, name?, bank_id?, sound_id?, category?, rr_group? }` — engine-facing
+  packs with categories and round-robin groups. `op: "create"` makes a named
+  bank (`name`); `op: "add"` adds/updates a sound's membership (`bank_id`,
+  `sound_id`, optional `category` / `rr_group`); `op: "list"` returns every bank.
 - `export { id, format, bit_depth?, sample_rate?, dest?, target_lufs?,
   quality? }` — one game-ready file: WAV (8/16-bit, loop chunk), FLAC, or OGG
   Vorbis; optional loudness target without touching the stored graph.
