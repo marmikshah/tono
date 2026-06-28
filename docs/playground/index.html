@@ -88,8 +88,10 @@
   .strip .meter{ position:absolute; bottom:0; left:0; right:0; background:linear-gradient(to top,#50dca0,#ffce6e 72%,#ff8092); transition:height .08s; }
   .strip .fader{ writing-mode:vertical-lr; direction:rtl; width:20px; accent-color:var(--acc); }
   .strip .pan{ width:100%; accent-color:var(--vio); }
-  .strip .mute{ width:100%; font-size:.7rem; padding:.25rem; cursor:pointer; }
+  .strip .msrow{ display:flex; gap:.25rem; width:100%; }
+  .strip .mute,.strip .solo{ flex:1; font-size:.68rem; padding:.25rem; cursor:pointer; }
   .strip .mute.on{ background:#ff8092; color:#0c1019; border-color:#ff8092; }
+  .strip .solo.on{ background:#ffce6e; color:#0c1019; border-color:#ffce6e; }
   .strip .lbl{ font-size:.62rem; color:var(--mut); }
   #autoModal{ position:fixed; inset:0; background:#0a0812f6; z-index:51; display:none; flex-direction:column; }
   #autoModal.open{ display:flex; }
@@ -281,6 +283,7 @@ let nodes={};                 // uid -> {uid,type,x,y,f:{...fields}}
 let wires=[];                 // {from,to,slot}
 let uidc=0, sel=null, meta={name:'sound',duration:0.5,sample_rate:44100};
 let backend=null, rtimer=null, lastLayers=[], lastStats={}, mixOpen=false;
+const soloSet=new Set(); let renderSolo=false;   // solo is heard, not saved (applied only at render)
 const OUT='__out__';
 const $=s=>document.querySelector(s);
 const canvas=$('#canvas'), wires_svg=$('#wires'), statusEl=$('#status'), jsonText=$('#jsontext');
@@ -350,7 +353,7 @@ function layerToTrack(luid){
   const t={node:resolve(gw.from,new Set())};
   if(n.f.id) t.id=n.f.id;
   for(const k of ['gain','pan','at']) if(n.f[k]!==undefined) t[k]=n.f[k];
-  if(n.f.mute) t.mute=true;
+  if(n.f.mute || (renderSolo && soloSet.size && !soloSet.has(luid))) t.mute=true;
   const auto=(n.f.automation||[]).filter(l=>l.points&&l.points.length);
   if(auto.length) t.automation=auto;
   return t;
@@ -636,7 +639,7 @@ function scheduleRender(){ clearTimeout(rtimer); rtimer=setTimeout(runEngine,250
 async function runEngine(){
   if(!backend) return;
   meta.name=$('#name').value||'sound'; meta.duration=+$('#dur').value||0.5;
-  let doc; try{ doc=buildDoc(); }catch(e){ setStatus('err',e.message); return; }
+  let doc; renderSolo=true; try{ doc=buildDoc(); }catch(e){ renderSolo=false; setStatus('err',e.message); return; } renderSolo=false;
   const res=await backend.render(JSON.stringify(doc));
   if(!res.ok){ setStatus('err',res.error||'render failed'); return; }
   if(res.specSrc) $('#spec').src=res.specSrc;
@@ -785,7 +788,8 @@ function drawMixer(){
       <div class="lbl g">gain ${(f.gain??1).toFixed(2)}</div>
       <input class="pan" type="range" data-mx="pan" min="-1" max="1" step="0.01" value="${f.pan??0}">
       <div class="lbl p">pan ${(f.pan??0).toFixed(2)}</div>
-      <button class="mute${f.mute?' on':''}" data-mx="mute">${f.mute?'muted':'mute'}</button>
+      <div class="msrow"><button class="mute${f.mute?' on':''}" data-mx="mute">${f.mute?'muted':'mute'}</button>
+      <button class="solo${soloSet.has(uid)?' on':''}" data-solo="${uid}">solo</button></div>
       <button class="rollbtn" data-auto="${uid}">✎ auto</button></div>`; });
   h+=`<div class="strip master"><div class="sid">MASTER</div>
       <div class="gainrow"><div class="meterwrap"><div class="meter" id="masterMeter" style="height:0%"></div></div></div>
@@ -799,6 +803,8 @@ function drawMixer(){
       else el.oninput=()=>{ f[k]=+el.value; strip.querySelector(k==='gain'?'.lbl.g':'.lbl.p').textContent=`${k} ${(+el.value).toFixed(2)}`; scheduleRender(); };
     });
     strip.querySelector('[data-auto]')?.addEventListener('click',ev=>{ ev.stopPropagation(); openAuto(strip.dataset.lu); });
+    strip.querySelector('[data-solo]')?.addEventListener('click',ev=>{ ev.stopPropagation();
+      const u=strip.dataset.lu; soloSet.has(u)?soloSet.delete(u):soloSet.add(u); drawMixer(); scheduleRender(); });
   });
   updateMeters();
 }
