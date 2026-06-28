@@ -969,6 +969,43 @@ pub struct Track {
     /// muted layers.
     #[serde(default)]
     pub mute: bool,
+    /// Song-time automation lanes for this track's `gain` / `pan` (volume rides,
+    /// pan moves across sections). Empty ⇒ the static `gain`/`pan` apply and the
+    /// render is byte-identical to a document without this field. A lane's value
+    /// overrides the static one over time; per-node modulators still cover the
+    /// node level (this is the track/song level).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub automation: Vec<AutoLane>,
+}
+
+/// What a track automation lane controls.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AutoTarget {
+    /// The track's channel fader (0..2).
+    Gain,
+    /// The track's stereo position (−1..1).
+    Pan,
+}
+
+/// One breakpoint in an automation lane: value `v` at song time `t` seconds.
+/// Between breakpoints the value is linearly interpolated; before the first /
+/// after the last it holds flat.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AutoPoint {
+    /// Song time in seconds.
+    pub t: f32,
+    /// Target value at this time.
+    pub v: f32,
+}
+
+/// A track automation lane: a `target` driven by a list of breakpoints.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AutoLane {
+    /// What this lane controls.
+    pub target: AutoTarget,
+    /// Breakpoints over song time.
+    pub points: Vec<AutoPoint>,
 }
 
 /// One resonant mode of a [`Node::Modal`] bank: a single damped sinusoidal
