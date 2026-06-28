@@ -39,6 +39,10 @@ wasm: ## Build the browser playground (sonarium-core → WASM into docs/playgrou
 		--out-dir docs/playground/pkg --target web --no-typescript
 	@echo "→ serve it:  python3 -m http.server -d docs/playground 8080"
 
+desktop: ## Build the optional native studio (cpal real-time audio) — NOT in the default build/CI
+	cargo build -p sonarium-desktop --release
+	@echo "→ native preview:  target/release/sonarium-desktop play docs/examples/retro-coin.json"
+
 test: ## Run the test suite
 	cargo test
 

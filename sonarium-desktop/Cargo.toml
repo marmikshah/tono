@@ -1,0 +1,16 @@
+[package]
+name = "sonarium-desktop"
+description = "Optional native desktop studio for sonarium — real-time audition (cpal) over the deterministic engine. Built only via `make desktop`; never part of the default build, MCP server, or CI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+sonarium-core = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+cpal = "0.15.3"
