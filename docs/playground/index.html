@@ -113,6 +113,9 @@ function tauriBackend(){
     },
     play(){ invoke('transport',{action:'play'}); },
     stop(){ invoke('transport',{action:'stop'}); },
+    setInstrument(i){ invoke('set_instrument',i); },
+    noteOn(key,freq){ invoke('note_on',{key,freq}); },
+    noteOff(key){ invoke('note_off',{key}); },
   };
 }
 async function wasmBackend(){
@@ -137,6 +140,7 @@ async function wasmBackend(){
       src=actx.createBufferSource(); src.buffer=b; src.connect(actx.destination); src.start();
     },
     stop(){ if(src){ try{ src.stop(); }catch(e){} src=null; } },
+    setInstrument(){}, noteOn(){}, noteOff(){},  // native-only; no-op in the browser
   };
 }
 
@@ -554,7 +558,16 @@ async function runEngine(){
   if(res.specSrc) $('#spec').src=res.specSrc;
   if(res.waveSrc) $('#wave').src=res.waveSrc;
   paintStats(JSON.parse(res.statsJson));
+  backend.setInstrument(instrumentFromGraph());   // keep the live keyboard instrument in sync with the patch
   setStatus('ok',`✓ ${res.duration.toFixed(2)}s · ${res.channels===2?'stereo':'mono'} · ${Object.keys(nodes).length-1} nodes`);
+}
+/* The keyboard instrument = the patch's first oscillator waveform + first envelope. */
+function instrumentFromGraph(){
+  let wave='sine', duty=0.5, a=0.01, d=0.1, s=0.6, r=0.2;
+  for(const uid in nodes){ const t=nodes[uid].type;
+    if(t==='sine'||t==='square'||t==='triangle'||t==='sawtooth'){ wave=t; if(t==='square'&&typeof nodes[uid].f.duty==='number') duty=nodes[uid].f.duty; break; } }
+  for(const uid in nodes){ if(nodes[uid].type==='env'){ const f=nodes[uid].f; a=f.a??a; d=f.d??d; s=f.s??s; r=f.r??r; break; } }
+  return {wave,a,d,s,r,duty};
 }
 const STAT=[['peak_dbfs','peak dB',1],['loudness_lufs','LUFS',1],['spectral_centroid_hz','centroid',0],['crest_factor_db','crest dB',1],['attack_time_ms','attack ms',1],['onset_count','onsets',0]];
 function paintStats(s){ $('#stats').innerHTML=STAT.map(([k,l,d])=>`<div class="stat"><div class="k">${l}</div><div class="v">${typeof s[k]==='number'?s[k].toFixed(d):'—'}</div></div>`).join(''); }
@@ -592,6 +605,22 @@ document.addEventListener('keydown',e=>{
   if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){ e.preventDefault(); play(); }
   if((e.key==='Delete'||e.key==='Backspace') && sel && document.activeElement.tagName!=='INPUT' && document.activeElement.tagName!=='SELECT' && document.activeElement.tagName!=='TEXTAREA'){
     e.preventDefault(); delNode(sel); draw(); scheduleRender(); }
+});
+/* Play the patch like an instrument from the computer keyboard (desktop only):
+   A W S E D F T G Y H U J K = one chromatic octave from C4. */
+const KEYMAP={a:0,w:1,s:2,e:3,d:4,f:5,t:6,g:7,y:8,h:9,u:10,j:11,k:12,o:13,l:14,p:15};
+const heldKeys=new Set();
+const inField=()=>['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName);
+document.addEventListener('keydown',e=>{
+  if(!window.__TAURI__ || !backend || e.repeat || inField()) return;
+  const semis=KEYMAP[e.key.toLowerCase()]; if(semis===undefined || heldKeys.has(e.key)) return;
+  heldKeys.add(e.key); e.preventDefault();
+  backend.noteOn(60+semis, 261.63*Math.pow(2,semis/12));
+});
+document.addEventListener('keyup',e=>{
+  const semis=KEYMAP[e.key.toLowerCase()]; if(semis===undefined) return;
+  heldKeys.delete(e.key);
+  if(window.__TAURI__ && backend) backend.noteOff(60+semis);
 });
 function blank(){ nodes={}; wires=[]; uidc=0; sel=null; nodes[OUT]={uid:OUT,type:OUT,x:560,y:220,f:{}}; meta={name:'sound',duration:0.5,sample_rate:44100}; $('#name').value=meta.name; $('#dur').value=meta.duration; draw(); setStatus('mut','empty patch — add nodes from the palette, wire them to OUT ▶'); }
 

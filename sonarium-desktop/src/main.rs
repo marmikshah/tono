@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use audio::AudioHandle;
 use base64::Engine as _;
 use serde::Serialize;
-use sonarium_core::dsl::SoundDoc;
+use sonarium_core::dsl::{Adsr, Shape, SoundDoc};
 use sonarium_core::{analysis, render};
 use tauri::State;
 
@@ -85,7 +85,7 @@ fn render_graph(graph: String, studio: State<Studio>) -> RenderResult {
     }
 }
 
-/// Transport control for the live audio engine.
+/// Transport control for the patch preview.
 #[tauri::command]
 fn transport(action: String, studio: State<Studio>) {
     if let Ok(slot) = studio.engine.lock()
@@ -96,6 +96,49 @@ fn transport(action: String, studio: State<Studio>) {
             "stop" => engine.stop(),
             _ => {}
         }
+    }
+}
+
+/// Set the live keyboard instrument (the patch's waveform + envelope).
+#[tauri::command]
+fn set_instrument(wave: String, a: f32, d: f32, s: f32, r: f32, duty: f32, studio: State<Studio>) {
+    let shape = match wave.as_str() {
+        "square" => Shape::Square,
+        "triangle" => Shape::Triangle,
+        "sawtooth" => Shape::Saw,
+        _ => Shape::Sine,
+    };
+    let env = Adsr {
+        a,
+        d,
+        s,
+        r,
+        punch: 0.0,
+    };
+    if let Ok(slot) = studio.engine.lock()
+        && let Some(engine) = slot.as_ref()
+    {
+        engine.set_instrument(shape, env, duty);
+    }
+}
+
+/// Strike a live note (`key` identifies it for `note_off`).
+#[tauri::command]
+fn note_on(key: u32, freq: f32, studio: State<Studio>) {
+    if let Ok(slot) = studio.engine.lock()
+        && let Some(engine) = slot.as_ref()
+    {
+        engine.note_on(key, freq);
+    }
+}
+
+/// Release a live note.
+#[tauri::command]
+fn note_off(key: u32, studio: State<Studio>) {
+    if let Ok(slot) = studio.engine.lock()
+        && let Some(engine) = slot.as_ref()
+    {
+        engine.note_off(key);
     }
 }
 
@@ -123,7 +166,13 @@ fn main() {
 fn run_studio() {
     tauri::Builder::default()
         .manage(Studio::default())
-        .invoke_handler(tauri::generate_handler![render_graph, transport])
+        .invoke_handler(tauri::generate_handler![
+            render_graph,
+            transport,
+            set_instrument,
+            note_on,
+            note_off
+        ])
         .run(tauri::generate_context!())
         .expect("failed to launch the sonarium studio window");
 }
