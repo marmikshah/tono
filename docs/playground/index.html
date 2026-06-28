@@ -93,7 +93,52 @@
 </details>
 
 <script type="module">
-import init, { render } from './pkg/sonarium_wasm.js';
+/* Audio/render backend is chosen at boot: the WASM engine in a browser, or
+   native cpal + the deterministic core via Tauri commands in the desktop app.
+   The same patcher drives both. */
+async function makeBackend(){
+  if(window.__TAURI__) return tauriBackend();
+  return await wasmBackend();
+}
+function tauriBackend(){
+  const invoke=window.__TAURI__.core.invoke;
+  return {
+    async render(graphJson){
+      const r=await invoke('render_graph',{graph:graphJson});
+      if(!r.ok) return {ok:false,error:r.error};
+      return { ok:true, sampleRate:r.sample_rate, channels:2, duration:r.duration,
+        specSrc:r.spectrogram_png?('data:image/png;base64,'+r.spectrogram_png):null,
+        waveSrc:r.waveform_png?('data:image/png;base64,'+r.waveform_png):null,
+        statsJson:r.stats_json };
+    },
+    play(){ invoke('transport',{action:'play'}); },
+    stop(){ invoke('transport',{action:'stop'}); },
+  };
+}
+async function wasmBackend(){
+  const wasm=await import('./pkg/sonarium_wasm.js');
+  await wasm.default();
+  let last=null, actx=null, src=null, specU=null, waveU=null;
+  const toUrl=(bytes,prev)=>{ if(!bytes||!bytes.length) return prev; const u=URL.createObjectURL(new Blob([bytes],{type:'image/png'})); if(prev) URL.revokeObjectURL(prev); return u; };
+  return {
+    async render(graphJson){
+      let res; try{ res=wasm.render(graphJson); }catch(e){ return {ok:false,error:String(e)}; }
+      if(!res.ok) return {ok:false,error:res.error||'render failed'};
+      last={left:res.left,right:res.right,sampleRate:res.sampleRate,channels:res.channels};
+      specU=toUrl(res.spectrogramPng,specU); waveU=toUrl(res.waveformPng,waveU);
+      return { ok:true, sampleRate:res.sampleRate, channels:res.channels, duration:res.duration,
+        specSrc:specU, waveSrc:waveU, statsJson:res.statsJson };
+    },
+    play(){
+      if(!last) return;
+      actx=actx||new (window.AudioContext||window.webkitAudioContext)(); actx.resume();
+      const {left,right,sampleRate,channels}=last; const b=actx.createBuffer(channels,left.length,sampleRate);
+      b.getChannelData(0).set(left); if(channels===2) b.getChannelData(1).set(right);
+      src=actx.createBufferSource(); src.buffer=b; src.connect(actx.destination); src.start();
+    },
+    stop(){ if(src){ try{ src.stop(); }catch(e){} src=null; } },
+  };
+}
 
 /* ── node metadata (mirrors the Rust Node enum) ── */
 const V=(min,max,step=0.001)=>({t:'value',min,max,step});
@@ -169,7 +214,7 @@ const EXAMPLES={
 let nodes={};                 // uid -> {uid,type,x,y,f:{...fields}}
 let wires=[];                 // {from,to,slot}
 let uidc=0, sel=null, meta={name:'sound',duration:0.5,sample_rate:44100};
-let lastBuf=null, actx=null, specUrl=null, waveUrl=null, rtimer=null;
+let backend=null, rtimer=null;
 const OUT='__out__';
 const $=s=>document.querySelector(s);
 const canvas=$('#canvas'), wires_svg=$('#wires'), statusEl=$('#status'), jsonText=$('#jsontext');
@@ -500,27 +545,23 @@ function markSel(){ canvas.querySelectorAll('.node').forEach(el=>el.classList.to
 
 /* ── render via wasm ── */
 function scheduleRender(){ clearTimeout(rtimer); rtimer=setTimeout(runEngine,250); syncJson(); }
-function runEngine(){
+async function runEngine(){
+  if(!backend) return;
   meta.name=$('#name').value||'sound'; meta.duration=+$('#dur').value||0.5;
   let doc; try{ doc=buildDoc(); }catch(e){ setStatus('err',e.message); return; }
-  let res; try{ res=render(JSON.stringify(doc)); }catch(e){ setStatus('err',String(e)); return; }
+  const res=await backend.render(JSON.stringify(doc));
   if(!res.ok){ setStatus('err',res.error||'render failed'); return; }
-  lastBuf={left:res.left,right:res.right,sampleRate:res.sampleRate,channels:res.channels};
-  specUrl=showImg('#spec',res.spectrogramPng,specUrl); waveUrl=showImg('#wave',res.waveformPng,waveUrl);
+  if(res.specSrc) $('#spec').src=res.specSrc;
+  if(res.waveSrc) $('#wave').src=res.waveSrc;
   paintStats(JSON.parse(res.statsJson));
   setStatus('ok',`✓ ${res.duration.toFixed(2)}s · ${res.channels===2?'stereo':'mono'} · ${Object.keys(nodes).length-1} nodes`);
 }
-function showImg(sel,bytes,prev){ const el=$(sel); if(!el||!bytes||!bytes.length) return prev; const u=URL.createObjectURL(new Blob([bytes],{type:'image/png'})); el.src=u; if(prev) URL.revokeObjectURL(prev); return u; }
 const STAT=[['peak_dbfs','peak dB',1],['loudness_lufs','LUFS',1],['spectral_centroid_hz','centroid',0],['crest_factor_db','crest dB',1],['attack_time_ms','attack ms',1],['onset_count','onsets',0]];
 function paintStats(s){ $('#stats').innerHTML=STAT.map(([k,l,d])=>`<div class="stat"><div class="k">${l}</div><div class="v">${typeof s[k]==='number'?s[k].toFixed(d):'—'}</div></div>`).join(''); }
 function setStatus(c,m){ statusEl.className=c; statusEl.textContent=m; }
 
-/* ── audio ── */
-function play(){ if(!lastBuf) runEngine(); if(!lastBuf) return;
-  actx=actx||new (window.AudioContext||window.webkitAudioContext)(); actx.resume();
-  const {left,right,sampleRate,channels}=lastBuf; const b=actx.createBuffer(channels,left.length,sampleRate);
-  b.getChannelData(0).set(left); if(channels===2) b.getChannelData(1).set(right);
-  const s=actx.createBufferSource(); s.buffer=b; s.connect(actx.destination); s.start(); }
+/* ── audio: render the current patch, then play it through the backend ── */
+async function play(){ await runEngine(); if(backend) backend.play(); }
 
 /* ── palette ── */
 function buildPalette(){
@@ -548,7 +589,7 @@ $('#play').onclick=play;
 $('#name').oninput=scheduleRender; $('#dur').oninput=scheduleRender;
 $('#wrap').onmousedown=e=>{ if(e.target.id==='canvas'||e.target.id==='wires'){ sel=null; markSel(); } };
 document.addEventListener('keydown',e=>{
-  if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){ e.preventDefault(); runEngine(); play(); }
+  if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){ e.preventDefault(); play(); }
   if((e.key==='Delete'||e.key==='Backspace') && sel && document.activeElement.tagName!=='INPUT' && document.activeElement.tagName!=='SELECT' && document.activeElement.tagName!=='TEXTAREA'){
     e.preventDefault(); delNode(sel); draw(); scheduleRender(); }
 });
@@ -556,8 +597,11 @@ function blank(){ nodes={}; wires=[]; uidc=0; sel=null; nodes[OUT]={uid:OUT,type
 
 /* ── boot ── */
 buildPalette();
-init().then(()=>{ loadDoc(structuredClone(EXAMPLES['laser zap'])); })
-  .catch(e=>setStatus('err','engine load failed: '+e));
+(async()=>{
+  try{ backend=await makeBackend(); }
+  catch(e){ setStatus('err','engine load failed: '+e); return; }
+  loadDoc(structuredClone(EXAMPLES['laser zap']));
+})();
 </script>
 </body>
 </html>
