@@ -34,6 +34,7 @@ pub struct RenderResult {
     spectrogram_png: Vec<u8>,
     waveform_png: Vec<u8>,
     stats_json: String,
+    layers_json: String,
 }
 
 #[wasm_bindgen]
@@ -87,6 +88,12 @@ impl RenderResult {
     pub fn stats_json(&self) -> String {
         self.stats_json.clone()
     }
+    /// Per-layer mixer stats (id / peak / RMS / energy%) as JSON — `[]` for a
+    /// non-mixer document. Drives the channel-strip meters.
+    #[wasm_bindgen(getter, js_name = layersJson)]
+    pub fn layers_json(&self) -> String {
+        self.layers_json.clone()
+    }
 }
 
 fn failed(error: String) -> RenderResult {
@@ -101,6 +108,7 @@ fn failed(error: String) -> RenderResult {
         spectrogram_png: Vec::new(),
         waveform_png: Vec::new(),
         stats_json: "{}".to_string(),
+        layers_json: "[]".to_string(),
     }
 }
 
@@ -119,6 +127,7 @@ pub fn render(graph_json: &str) -> RenderResult {
     }
 
     let product = render::render_product(&doc);
+    let layers_json = serde_json::to_string(&product.layers).unwrap_or_else(|_| "[]".to_string());
     let is_stereo = product.stereo.is_some() || !matches!(doc.stereo, Stereo::Mono);
     let (left, right) = match product.stereo {
         Some((l, r)) => (l, r),
@@ -140,5 +149,6 @@ pub fn render(graph_json: &str) -> RenderResult {
         left,
         right,
         stats_json,
+        layers_json,
     }
 }
