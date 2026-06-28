@@ -83,6 +83,21 @@ const HOP: usize = 256;
 /// waveform PNG next to it at `<stem>_wave.png` (both paths are returned in the
 /// [`Analysis`]).
 pub fn analyze(samples: &[f32], sample_rate: u32, png_path: &Path) -> anyhow::Result<Analysis> {
+    write_spectrogram(&stft(samples), png_path)?;
+    let wave_path = waveform_path(png_path);
+    write_waveform(samples, &wave_path)?;
+
+    let mut a = stats(samples, sample_rate);
+    a.spectrogram_png_path = png_path.to_string_lossy().into_owned();
+    a.waveform_png_path = wave_path.to_string_lossy().into_owned();
+    Ok(a)
+}
+
+/// Compute every numeric descriptor with **no filesystem access** — the
+/// in-memory core of [`analyze`], used by the WASM playground (which pairs it
+/// with [`spectrogram_png`] / [`waveform_png`]) and anywhere a render only needs
+/// the numbers. The `*_png_path` fields are left empty.
+pub fn stats(samples: &[f32], sample_rate: u32) -> Analysis {
     let srf = sample_rate as f32;
     let duration_secs = samples.len() as f32 / srf;
 
@@ -94,26 +109,17 @@ pub fn analyze(samples: &[f32], sample_rate: u32, png_path: &Path) -> anyhow::Re
     };
 
     let frames = stft(samples);
-    let centroid = spectral_centroid(&frames, srf);
-    let flatness = spectral_flatness(&frames);
-    let inharm = inharmonicity(&frames, srf);
-    write_spectrogram(&frames, png_path)?;
-
-    // Time-domain feedback: a waveform image + transient descriptors.
-    let wave_path = waveform_path(png_path);
-    write_waveform(samples, &wave_path)?;
     let t = transients(samples, sample_rate);
-
     let peak_dbfs = dbfs(peak);
     let rms_dbfs = dbfs(rms);
 
-    Ok(Analysis {
+    Analysis {
         duration_secs,
         peak_dbfs,
         rms_dbfs,
-        spectral_centroid_hz: centroid,
-        spectral_flatness: flatness,
-        inharmonicity: inharm,
+        spectral_centroid_hz: spectral_centroid(&frames, srf),
+        spectral_flatness: spectral_flatness(&frames),
+        inharmonicity: inharmonicity(&frames, srf),
         true_peak_dbfs: dbfs(true_peak(samples)),
         crest_factor_db: peak_dbfs - rms_dbfs,
         loudness_lufs: loudness_lufs(samples),
@@ -124,9 +130,9 @@ pub fn analyze(samples: &[f32], sample_rate: u32, png_path: &Path) -> anyhow::Re
         head_silence_ms: t.head_ms,
         tail_silence_ms: t.tail_ms,
         layers: Vec::new(), // filled by the caller for mixer documents
-        spectrogram_png_path: png_path.to_string_lossy().into_owned(),
-        waveform_png_path: wave_path.to_string_lossy().into_owned(),
-    })
+        spectrogram_png_path: String::new(),
+        waveform_png_path: String::new(),
+    }
 }
 
 /// Sibling path for the waveform PNG: `<stem>_wave.png` next to the spectrogram.
@@ -244,6 +250,13 @@ fn transients(samples: &[f32], sr: u32) -> Transients {
 /// Render a waveform / amplitude image (time on X, amplitude on Y, centered) so
 /// the agent can read attack, decay, and double-triggers the spectrogram hides.
 fn write_waveform(samples: &[f32], path: &Path) -> anyhow::Result<()> {
+    waveform_image(samples).save(path)?;
+    Ok(())
+}
+
+/// The waveform / amplitude-envelope image (min/max per column on a dark field).
+/// Shared by the disk writer and the in-memory [`waveform_png`] encoder.
+fn waveform_image(samples: &[f32]) -> image::RgbImage {
     use image::{ImageBuffer, Rgb, RgbImage};
     let w: u32 = 640;
     let h: u32 = 160;
@@ -271,8 +284,31 @@ fn write_waveform(samples: &[f32], path: &Path) -> anyhow::Result<()> {
     for x in 0..w {
         img.put_pixel(x, mid as u32, Rgb([44, 44, 54]));
     }
-    img.save(path)?;
-    Ok(())
+    img
+}
+
+/// PNG-encode an RGB image into a byte buffer (no filesystem) — the form the
+/// WASM playground and the MCP server hand to clients without a disk round-trip.
+fn png_bytes(img: &image::RgbImage) -> anyhow::Result<Vec<u8>> {
+    use image::{ImageEncoder, codecs::png::PngEncoder};
+    let mut buf = Vec::new();
+    PngEncoder::new(&mut buf).write_image(
+        img.as_raw(),
+        img.width(),
+        img.height(),
+        image::ExtendedColorType::Rgb8,
+    )?;
+    Ok(buf)
+}
+
+/// Render a sound's waveform image straight to PNG bytes.
+pub fn waveform_png(samples: &[f32]) -> anyhow::Result<Vec<u8>> {
+    png_bytes(&waveform_image(samples))
+}
+
+/// Render a sound's log-frequency spectrogram straight to PNG bytes.
+pub fn spectrogram_png(samples: &[f32]) -> anyhow::Result<Vec<u8>> {
+    png_bytes(&spectrogram_image(&stft(samples)))
 }
 
 /// Estimate the inter-sample (true) peak by 4× linear-interpolation oversampling.
@@ -481,6 +517,13 @@ fn inharmonicity(frames: &[Vec<f32>], sample_rate: f32) -> f32 {
 /// where pitched bodies, basslines and modal partials live — instead of
 /// crushing them into the bottom strip a linear axis gives.
 fn write_spectrogram(frames: &[Vec<f32>], path: &Path) -> anyhow::Result<()> {
+    spectrogram_image(frames).save(path)?;
+    Ok(())
+}
+
+/// The log-frequency spectrogram image. Shared by the disk writer and the
+/// in-memory [`spectrogram_png`] encoder.
+fn spectrogram_image(frames: &[Vec<f32>]) -> image::RgbImage {
     use image::{ImageBuffer, Rgb, RgbImage};
 
     let bins = FFT_SIZE / 2;
@@ -488,9 +531,7 @@ fn write_spectrogram(frames: &[Vec<f32>], path: &Path) -> anyhow::Result<()> {
     let target_h = 256u32;
 
     if frames.is_empty() {
-        let img: RgbImage = ImageBuffer::from_pixel(target_w, target_h, Rgb(magma(0.0)));
-        img.save(path)?;
-        return Ok(());
+        return ImageBuffer::from_pixel(target_w, target_h, Rgb(magma(0.0)));
     }
 
     // Normalize on a dB scale across the whole image for good contrast.
@@ -522,8 +563,7 @@ fn write_spectrogram(frames: &[Vec<f32>], path: &Path) -> anyhow::Result<()> {
             img.put_pixel(xo, yo, Rgb(magma(t)));
         }
     }
-    img.save(path)?;
-    Ok(())
+    img
 }
 
 /// Magma-ish colormap: maps t in [0,1] to an RGB triple (dark → purple →

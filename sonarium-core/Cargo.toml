@@ -1,0 +1,20 @@
+[package]
+name = "sonarium-core"
+description = "The pure, headless audio engine behind sonarium: synthesis-graph DSL, DSP, deterministic renderer, and analysis — no I/O, no MCP."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["audio", "synthesis", "dsp", "chiptune", "gamedev"]
+categories = ["multimedia::audio", "game-development"]
+
+[dependencies]
+anyhow = { workspace = true }
+image = { workspace = true }
+rustfft = { workspace = true }
+rustysynth = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
