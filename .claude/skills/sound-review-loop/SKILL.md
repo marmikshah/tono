@@ -41,7 +41,7 @@ Repeat until a stop condition (below):
    (`describe_sound` first for the path). One hypothesis per turn — never batch
    fixes, or you can't tell which one worked.
 4. **RE-REVIEW.** Call `review_sound` again. If the grade got **worse**, or the
-   finding you targeted regressed, **`undo_sound`** and try a different fix —
+   finding you targeted regressed, **`history { op: "undo" }`** and try a different fix —
    never pile a fix on a regression.
 5. Report the turn in one line: `iter N: <finding> → <edit> → grade X→Y
    (metric a→b)`. Then loop.
