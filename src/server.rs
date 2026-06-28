@@ -1147,6 +1147,7 @@ impl Sonarium {
                     gain: std::f32::consts::SQRT_2,
                     at: 0.0,
                     mute: false,
+                    automation: Vec::new(),
                 }],
                 master: Vec::new(),
             };
@@ -1185,6 +1186,7 @@ impl Sonarium {
             gain: gain.unwrap_or(1.0),
             at: at.unwrap_or(0.0),
             mute: false,
+            automation: Vec::new(),
         });
         let count = tracks.len();
 
@@ -2428,6 +2430,7 @@ fn scaffold_layered_doc(name: String, base_freq: f32, seed: u64) -> SoundDoc {
         gain,
         at: 0.0,
         mute: false,
+        automation: Vec::new(),
     };
 
     let tracks = vec![

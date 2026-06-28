@@ -6,8 +6,8 @@
 
 use crate::analysis;
 use crate::dsl::{
-    Adsr, Curve, DriveShape, Mode, Modulator, Node, NoiseColor, Normalize, Playback, SeqNote,
-    SeqWave, Shape, SoundDoc, Stereo, SuperWave, Value,
+    Adsr, AutoLane, AutoPoint, AutoTarget, Curve, DriveShape, Mode, Modulator, Node, NoiseColor,
+    Normalize, Playback, SeqNote, SeqWave, Shape, SoundDoc, Stereo, SuperWave, Value,
 };
 use crate::dsp::{Rng, db_to_lin, peak_limit};
 use std::f32::consts::{FRAC_PI_2, LN_2, TAU};
@@ -98,6 +98,47 @@ pub struct TracksRender {
 /// changes the noise content of its siblings. v1 documents keep the original
 /// single stream threaded through the track list in order — their audio stays
 /// byte-identical across upgrades.
+/// Per-sample values for a track-automation `target`, or `None` if no lane
+/// controls it (then the static value applies — the byte-identical fast path).
+fn lane_for(
+    automation: &[AutoLane],
+    target: AutoTarget,
+    n: usize,
+    sr: u32,
+    default: f32,
+) -> Option<Vec<f32>> {
+    let lane = automation.iter().find(|l| l.target == target)?;
+    if lane.points.is_empty() {
+        return Some(vec![default; n]);
+    }
+    let mut pts = lane.points.clone();
+    pts.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
+    Some(
+        (0..n)
+            .map(|i| eval_lane(&pts, i as f32 / sr as f32))
+            .collect(),
+    )
+}
+
+/// Linear interpolation over sorted breakpoints; holds flat past either end.
+fn eval_lane(pts: &[AutoPoint], t: f32) -> f32 {
+    let first = &pts[0];
+    if t <= first.t {
+        return first.v;
+    }
+    let last = &pts[pts.len() - 1];
+    if t >= last.t {
+        return last.v;
+    }
+    for w in pts.windows(2) {
+        if t >= w[0].t && t <= w[1].t {
+            let span = (w[1].t - w[0].t).max(1e-9);
+            return w[0].v + (w[1].v - w[0].v) * ((t - w[0].t) / span);
+        }
+    }
+    last.v
+}
+
 pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
     let Node::Tracks { tracks, master } = &doc.root else {
         return None;
@@ -138,9 +179,25 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
         // shift right and truncate (never shortening the render keeps RNG
         // consumption — and therefore v1 sibling content — offset-invariant).
         let off = ((t.at.max(0.0) * sr as f32).round() as usize).min(n);
-        // Equal-power pan law.
+        // Equal-power pan/gain. With no automation this is constant (the proven
+        // fast path, byte-identical); with automation it varies per bus sample.
+        // The closure returns the same constant value when unautomated, so the
+        // arithmetic on existing documents is unchanged.
         let theta = (t.pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
-        let (gl, gr) = (theta.cos() * t.gain, theta.sin() * t.gain);
+        let (glc, grc) = (theta.cos() * t.gain, theta.sin() * t.gain);
+        let gain_lane = lane_for(&t.automation, AutoTarget::Gain, n, sr, t.gain);
+        let pan_lane = lane_for(&t.automation, AutoTarget::Pan, n, sr, t.pan);
+        let gl_gr = |pos: usize| -> (f32, f32) {
+            match (&gain_lane, &pan_lane) {
+                (None, None) => (glc, grc),
+                (g, p) => {
+                    let gain = g.as_ref().map_or(t.gain, |a| a[pos]);
+                    let pan = p.as_ref().map_or(t.pan, |a| a[pos]).clamp(-1.0, 1.0);
+                    let theta = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
+                    (theta.cos() * gain, theta.sin() * gain)
+                }
+            }
+        };
         // Contribution stats accumulate over what actually lands on the bus
         // (post fader/pan/offset, pre master). Per-channel energy keeps them
         // pan-invariant: gl² + gr² = gain² for any pan.
@@ -148,6 +205,7 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
         if let Some((l, r)) = track_native_stereo(&t.node, n, sr) {
             // A sampler track keeps its recorded stereo image; pan biases it.
             for i in 0..n - off {
+                let (gl, gr) = gl_gr(i + off);
                 let (la, ra) = (
                     l[i] * gl * std::f32::consts::SQRT_2,
                     r[i] * gr * std::f32::consts::SQRT_2,
@@ -165,6 +223,7 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
                 render_node(&t.node, n, sr, &mut rng, engine)
             };
             for (i, x) in mono.into_iter().take(n - off).enumerate() {
+                let (gl, gr) = gl_gr(i + off);
                 let (la, ra) = (x * gl, x * gr);
                 left[i + off] += la;
                 right[i + off] += ra;
@@ -1996,6 +2055,43 @@ mod tests {
 
     fn rms(s: &[f32]) -> f32 {
         (s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32).sqrt()
+    }
+
+    /// The determinism invariant for automation: a constant-value gain lane
+    /// (every breakpoint = the static gain) renders byte-identically to a track
+    /// with no automation at all — proving the automated path matches the fast
+    /// path for constant values, so existing documents are unaffected.
+    #[test]
+    fn constant_gain_automation_is_byte_identical_to_static_gain() {
+        let base = r#"{ "name":"t", "duration":0.4, "seed":1, "version":2,
+            "root":{ "type":"tracks", "tracks":[ { "id":"a", "gain":0.8, "pan":-0.3,
+              "node":{ "type":"mul", "inputs":[ {"type":"sine","freq":330},
+                {"type":"env","a":0.01,"d":0.3,"s":0.4,"r":0.05} ] } } ] } }"#;
+        let auto = r#"{ "name":"t", "duration":0.4, "seed":1, "version":2,
+            "root":{ "type":"tracks", "tracks":[ { "id":"a", "gain":0.8, "pan":-0.3,
+              "automation":[{"target":"gain","points":[{"t":0,"v":0.8},{"t":0.4,"v":0.8}]}],
+              "node":{ "type":"mul", "inputs":[ {"type":"sine","freq":330},
+                {"type":"env","a":0.01,"d":0.3,"s":0.4,"r":0.05} ] } } ] } }"#;
+        let a = render_tracks(&doc(base)).unwrap();
+        let b = render_tracks(&doc(auto)).unwrap();
+        let bits = |s: &[f32]| s.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&a.left), bits(&b.left), "left byte-identical");
+        assert_eq!(bits(&a.right), bits(&b.right), "right byte-identical");
+    }
+
+    /// A gain ramp from 1 → 0 over the document makes the second half quieter
+    /// than the first — automation actually rides the level.
+    #[test]
+    fn gain_automation_ramp_fades_the_track() {
+        let d = doc(r#"{ "name":"t", "duration":1.0, "seed":1, "version":2,
+            "root":{ "type":"tracks", "tracks":[ { "id":"a", "gain":1.0,
+              "automation":[{"target":"gain","points":[{"t":0,"v":1.0},{"t":1.0,"v":0.0}]}],
+              "node":{ "type":"sine", "freq":220 } } ] } }"#);
+        let r = render_tracks(&d).unwrap();
+        let half = r.left.len() / 2;
+        let head = rms(&r.left[..half]);
+        let tail = rms(&r.left[half..]);
+        assert!(tail < head * 0.6, "ramp fades: head {head}, tail {tail}");
     }
 
     #[test]
