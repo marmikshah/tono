@@ -473,6 +473,29 @@ pub struct HistoryResp {
     pub redo_depth: usize,
 }
 
+/// Operation for the `history` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum HistoryOp {
+    /// Report undo/redo depths (default).
+    #[default]
+    Status,
+    /// Revert to the previous graph; the undone state moves to the redo stack.
+    Undo,
+    /// Re-apply the most recently undone edit.
+    Redo,
+}
+
+/// Step through or inspect a sound's revision history.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct HistoryReq {
+    /// Id of the sound.
+    pub id: String,
+    /// What to do (default `status`).
+    #[serde(default)]
+    pub op: HistoryOp,
+}
+
 /// Create a sound bank.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateBankReq {
@@ -1381,10 +1404,8 @@ impl Sonarium {
     }
 
     /// Step a sound back to its previous graph.
-    #[tool(
-        name = "undo_sound",
-        description = "Revert a sound to its previous graph (every refine/set_param/edit_sound/make_loop pushes a revision; bounded 100-step history). The undone state moves to the redo stack."
-    )]
+    /// Revert a sound to its previous graph (kept as the implementation behind
+    /// `history { op: "undo" }`; journals "undo_sound" so sessions replay).
     pub async fn undo_sound(&self, params: Parameters<IdReq>) -> Result<CallToolResult, String> {
         let args = serde_json::to_value(&params.0).map_err(|e| e.to_string())?;
         let id = params.0.id;
@@ -1399,11 +1420,7 @@ impl Sonarium {
         Ok(sound_result(&new, true))
     }
 
-    /// Re-apply the most recently undone edit.
-    #[tool(
-        name = "redo_sound",
-        description = "Re-apply the most recently undone edit to a sound."
-    )]
+    /// Re-apply the most recently undone edit (behind `history { op: "redo" }`).
     pub async fn redo_sound(&self, params: Parameters<IdReq>) -> Result<CallToolResult, String> {
         let args = serde_json::to_value(&params.0).map_err(|e| e.to_string())?;
         let id = params.0.id;
@@ -1418,11 +1435,7 @@ impl Sonarium {
         Ok(sound_result(&new, true))
     }
 
-    /// Report a sound's undo/redo depths.
-    #[tool(
-        name = "history",
-        description = "Report how many undo / redo revisions a sound has."
-    )]
+    /// Report a sound's undo/redo depths (behind `history { op: "status" }`).
     pub async fn history(&self, params: Parameters<IdReq>) -> Result<Json<HistoryResp>, String> {
         let id = params.0.id;
         self.require(&id)?;
@@ -1432,6 +1445,29 @@ impl Sonarium {
             undo_depth,
             redo_depth,
         }))
+    }
+
+    /// Step through or inspect a sound's revision history.
+    #[tool(
+        name = "history",
+        description = "Per-sound revision history. op=status (default) reports undo/redo depths; op=undo reverts to the previous graph (the undone state moves to the redo stack); op=redo re-applies the last undone edit. Every refine/set_param/edit_sound/make_loop pushes a revision (bounded 100-step)."
+    )]
+    pub async fn history_op(
+        &self,
+        params: Parameters<HistoryReq>,
+    ) -> Result<CallToolResult, String> {
+        let HistoryReq { id, op } = params.0;
+        match op {
+            HistoryOp::Undo => self.undo_sound(Parameters(IdReq { id })).await,
+            HistoryOp::Redo => self.redo_sound(Parameters(IdReq { id })).await,
+            HistoryOp::Status => {
+                let h = self.history(Parameters(IdReq { id })).await?.0;
+                Ok(CallToolResult::success(vec![Content::text(format!(
+                    "{}: undo_depth {}, redo_depth {}",
+                    h.id, h.undo_depth, h.redo_depth
+                ))]))
+            }
+        }
     }
 
     /// Create a named sound bank (a pack).

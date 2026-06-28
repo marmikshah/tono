@@ -21,7 +21,7 @@ its analysis, and let every edit be a hypothesis the next render confirms.
    `describe_sound` first). Whole-graph `refine_sound` only for structural
    rework.
 4. **Compare** (`compare_sounds` old vs new, or re-read the stats). If worse,
-   `undo_sound` — never pile a fix on a regression.
+   `history { op: "undo" }` — never pile a fix on a regression.
 5. **Stop when the archetype targets are met** (below), not when the graph
    looks clever. Over-iteration past the targets usually trades character for
    conformity.

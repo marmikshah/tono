@@ -97,10 +97,11 @@ to fix.
 
 ## History
 
-- `undo_sound { id }` / `redo_sound { id }` — step through a 100-deep per-sound
-  revision history (every refine/set_param/edit/make_loop pushes one). Survives
-  restarts.
-- `history { id }` — `{ undo_depth, redo_depth }`.
+- `history { id, op? }` — per-sound revision history (100-deep; every
+  refine/set_param/edit/make_loop pushes one; survives restarts).
+  `op: "status"` (default) reports `{ undo_depth, redo_depth }`; `op: "undo"`
+  reverts to the previous graph (the undone state moves to the redo stack);
+  `op: "redo"` re-applies the last undone edit.
 
 ## Variations (on sounds the agent already made)
 
