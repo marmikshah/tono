@@ -35,6 +35,7 @@ struct RenderResult {
     spectrogram_png: String,
     waveform_png: String,
     stats_json: String,
+    layers_json: String,
 }
 
 fn render_error(msg: String) -> RenderResult {
@@ -46,6 +47,7 @@ fn render_error(msg: String) -> RenderResult {
         spectrogram_png: String::new(),
         waveform_png: String::new(),
         stats_json: "{}".to_string(),
+        layers_json: "[]".to_string(),
     }
 }
 
@@ -82,6 +84,7 @@ fn render_graph(graph: String, studio: State<Studio>) -> RenderResult {
         spectrogram_png: b64(analysis::spectrogram_png(&product.mono).unwrap_or_default()),
         waveform_png: b64(analysis::waveform_png(&product.mono).unwrap_or_default()),
         stats_json: serde_json::to_string(&stats).unwrap_or_else(|_| "{}".to_string()),
+        layers_json: serde_json::to_string(&product.layers).unwrap_or_else(|_| "[]".to_string()),
     }
 }
 

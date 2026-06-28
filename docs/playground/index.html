@@ -69,6 +69,21 @@
   #rollHead strong{ letter-spacing:.04em; }
   #rollWrap{ flex:1; overflow:auto; padding:.5rem; }
   #rollCanvas{ background:#0d0b16; cursor:crosshair; display:block; border:1px solid var(--line); border-radius:6px; }
+  #mixModal{ position:fixed; inset:0; background:#0a0812f2; z-index:50; display:none; flex-direction:column; }
+  #mixModal.open{ display:flex; }
+  #mixHead{ display:flex; gap:.6rem; align-items:center; padding:.55rem .9rem; border-bottom:1px solid var(--line); }
+  #mixStrips{ flex:1; display:flex; gap:.6rem; padding:1rem; overflow:auto; }
+  .strip{ width:96px; flex:none; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.5rem; display:flex; flex-direction:column; align-items:center; gap:.35rem; }
+  .strip.master{ border-color:#3a587e; }
+  .strip .sid{ width:100%; font-size:.7rem; text-align:center; background:#0d0b16; border:1px solid var(--line); border-radius:5px; color:var(--ink); padding:.2rem; }
+  .strip .gainrow{ display:flex; gap:.4rem; flex:1; align-items:stretch; min-height:140px; }
+  .strip .meterwrap{ width:12px; background:#0d0b16; border:1px solid var(--line); border-radius:4px; position:relative; overflow:hidden; }
+  .strip .meter{ position:absolute; bottom:0; left:0; right:0; background:linear-gradient(to top,#50dca0,#ffce6e 72%,#ff8092); transition:height .08s; }
+  .strip .fader{ writing-mode:vertical-lr; direction:rtl; width:20px; accent-color:var(--acc); }
+  .strip .pan{ width:100%; accent-color:var(--vio); }
+  .strip .mute{ width:100%; font-size:.7rem; padding:.25rem; cursor:pointer; }
+  .strip .mute.on{ background:#ff8092; color:#0c1019; border-color:#ff8092; }
+  .strip .lbl{ font-size:.62rem; color:var(--mut); }
   details#json{ position:absolute; bottom:1.9rem; right:308px; width:340px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.4rem .6rem; z-index:5; }
   details#json textarea{ width:100%; height:200px; margin-top:.3rem; background:#0d0b16; color:#cdd3df; border:1px solid var(--line); border-radius:6px; padding:.5rem; font:11px/1.45 ui-monospace,Menlo,monospace; }
 </style>
@@ -78,6 +93,7 @@
   <img src="../logo.png" width="24" alt=""><strong style="letter-spacing:.03em">sonarium</strong><span class="pill">patch</span>
   <button id="play" class="primary">▶ Play</button>
   <select id="examples" title="Load an example patch"><option value="">— blank —</option></select>
+  <button id="mixBtn" title="Channel-strip mixer (for tracks documents)">≡ mixer</button>
   <label class="mut">name <input type="text" id="name"></label>
   <label class="mut">dur <input class="num" type="number" id="dur" min="0.02" max="30" step="0.01"></label>
   <span class="sp"></span>
@@ -107,6 +123,10 @@
   </div>
   <div id="rollWrap"><canvas id="rollCanvas"></canvas></div>
 </div>
+<div id="mixModal">
+  <div id="mixHead"><strong>mixer</strong><span class="mut">fader · pan · mute · live per-layer meters</span><span style="flex:1"></span><button id="mixClose">✕ close</button></div>
+  <div id="mixStrips"></div>
+</div>
 <details id="json"><summary class="mut">JSON (the document an agent edits)</summary>
   <textarea id="jsontext" spellcheck="false"></textarea>
   <div style="margin-top:.3rem"><button id="applyjson">Apply → canvas</button> <button id="fromcanvas">Canvas → JSON</button></div>
@@ -129,7 +149,7 @@ function tauriBackend(){
       return { ok:true, sampleRate:r.sample_rate, channels:2, duration:r.duration,
         specSrc:r.spectrogram_png?('data:image/png;base64,'+r.spectrogram_png):null,
         waveSrc:r.waveform_png?('data:image/png;base64,'+r.waveform_png):null,
-        statsJson:r.stats_json };
+        statsJson:r.stats_json, layers:JSON.parse(r.layers_json||'[]') };
     },
     play(){ invoke('transport',{action:'play'}); },
     stop(){ invoke('transport',{action:'stop'}); },
@@ -150,7 +170,7 @@ async function wasmBackend(){
       last={left:res.left,right:res.right,sampleRate:res.sampleRate,channels:res.channels};
       specU=toUrl(res.spectrogramPng,specU); waveU=toUrl(res.waveformPng,waveU);
       return { ok:true, sampleRate:res.sampleRate, channels:res.channels, duration:res.duration,
-        specSrc:specU, waveSrc:waveU, statsJson:res.statsJson };
+        specSrc:specU, waveSrc:waveU, statsJson:res.statsJson, layers:JSON.parse(res.layersJson||'[]') };
     },
     play(){
       if(!last) return;
@@ -238,7 +258,7 @@ const EXAMPLES={
 let nodes={};                 // uid -> {uid,type,x,y,f:{...fields}}
 let wires=[];                 // {from,to,slot}
 let uidc=0, sel=null, meta={name:'sound',duration:0.5,sample_rate:44100};
-let backend=null, rtimer=null;
+let backend=null, rtimer=null, lastLayers=[], lastStats={}, mixOpen=false;
 const OUT='__out__';
 const $=s=>document.querySelector(s);
 const canvas=$('#canvas'), wires_svg=$('#wires'), statusEl=$('#status'), jsonText=$('#jsontext');
@@ -578,8 +598,10 @@ async function runEngine(){
   if(!res.ok){ setStatus('err',res.error||'render failed'); return; }
   if(res.specSrc) $('#spec').src=res.specSrc;
   if(res.waveSrc) $('#wave').src=res.waveSrc;
-  paintStats(JSON.parse(res.statsJson));
+  lastStats=JSON.parse(res.statsJson); lastLayers=res.layers||[];
+  paintStats(lastStats);
   backend.setInstrument(instrumentFromGraph());   // keep the live keyboard instrument in sync with the patch
+  if(mixOpen) updateMeters();
   setStatus('ok',`✓ ${res.duration.toFixed(2)}s · ${res.channels===2?'stereo':'mono'} · ${Object.keys(nodes).length-1} nodes`);
 }
 /* The keyboard instrument = the patch's first oscillator waveform + first envelope. */
@@ -700,6 +722,50 @@ $('#rollSpb').addEventListener('input',()=>{ rollNode().f.steps_per_beat=Math.ro
 $('#rollPlay').addEventListener('click',play);
 $('#rollClose').addEventListener('click',closeRoll);
 document.addEventListener('keydown',e=>{ if(e.key==='Escape' && $('#rollModal').classList.contains('open')) closeRoll(); });
+
+/* ── channel-strip mixer (for tracks documents) ── */
+const mixerUid=()=>Object.keys(nodes).find(u=>nodes[u].type==='mixer');
+const meterPct=db=>(typeof db==='number'&&isFinite(db))?Math.max(0,Math.min(1,(db+60)/60))*100:0;
+async function openMixer(){
+  if(!mixerUid()){ setStatus('mut','no mixer — add a mixer node (palette → mixing) and wire layers into it'); return; }
+  mixOpen=true; $('#mixModal').classList.add('open'); await runEngine(); drawMixer();
+}
+function closeMixer(){ mixOpen=false; $('#mixModal').classList.remove('open'); }
+function drawMixer(){
+  const mu=mixerUid(); if(!mu){ closeMixer(); return; }
+  let h='';
+  ordIns(mu).forEach((uid,i)=>{ const f=nodes[uid].f, st=lastLayers[i]||{};
+    h+=`<div class="strip" data-lu="${uid}" data-i="${i}">
+      <input class="sid" data-mx="id" value="${f.id||''}" placeholder="id">
+      <div class="gainrow"><div class="meterwrap"><div class="meter" style="height:${meterPct(st.rms_dbfs)}%"></div></div>
+      <input class="fader" type="range" data-mx="gain" min="0" max="2" step="0.01" value="${f.gain??1}"></div>
+      <div class="lbl g">gain ${(f.gain??1).toFixed(2)}</div>
+      <input class="pan" type="range" data-mx="pan" min="-1" max="1" step="0.01" value="${f.pan??0}">
+      <div class="lbl p">pan ${(f.pan??0).toFixed(2)}</div>
+      <button class="mute${f.mute?' on':''}" data-mx="mute">${f.mute?'muted':'mute'}</button></div>`; });
+  h+=`<div class="strip master"><div class="sid">MASTER</div>
+      <div class="gainrow"><div class="meterwrap"><div class="meter" id="masterMeter" style="height:0%"></div></div></div>
+      <div class="lbl" id="masterLbl">—</div></div>`;
+  $('#mixStrips').innerHTML=h;
+  $('#mixStrips').querySelectorAll('.strip[data-lu]').forEach(strip=>{
+    const f=nodes[strip.dataset.lu].f;
+    strip.querySelectorAll('[data-mx]').forEach(el=>{ const k=el.dataset.mx;
+      if(k==='mute') el.onclick=()=>{ f.mute=!f.mute; el.classList.toggle('on',f.mute); el.textContent=f.mute?'muted':'mute'; scheduleRender(); };
+      else if(k==='id') el.onchange=()=>{ f.id=el.value; scheduleRender(); };
+      else el.oninput=()=>{ f[k]=+el.value; strip.querySelector(k==='gain'?'.lbl.g':'.lbl.p').textContent=`${k} ${(+el.value).toFixed(2)}`; scheduleRender(); };
+    });
+  });
+  updateMeters();
+}
+function updateMeters(){
+  $('#mixStrips').querySelectorAll('.strip[data-lu]').forEach(strip=>{ const st=lastLayers[+strip.dataset.i]||{};
+    const m=strip.querySelector('.meter'); if(m) m.style.height=meterPct(st.rms_dbfs)+'%'; });
+  const mm=$('#masterMeter'); if(mm) mm.style.height=meterPct(lastStats.rms_dbfs)+'%';
+  const ml=$('#masterLbl'); if(ml&&typeof lastStats.loudness_lufs==='number') ml.textContent=`${lastStats.loudness_lufs.toFixed(1)} LUFS`;
+}
+$('#mixBtn').addEventListener('click',openMixer);
+$('#mixClose').addEventListener('click',closeMixer);
+document.addEventListener('keydown',e=>{ if(e.key==='Escape' && mixOpen) closeMixer(); });
 
 /* ── boot ── */
 buildPalette();
