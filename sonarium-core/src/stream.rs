@@ -64,16 +64,6 @@ impl Player {
         self.right = right;
     }
 
-    /// The document currently loaded.
-    pub fn doc(&self) -> &SoundDoc {
-        &self.doc
-    }
-
-    /// Output sample rate (the document's).
-    pub fn sample_rate(&self) -> u32 {
-        self.doc.sample_rate
-    }
-
     /// Length of the rendered audio in frames.
     pub fn frames(&self) -> usize {
         self.left.len()
@@ -88,11 +78,6 @@ impl Player {
     pub fn stop(&mut self) {
         self.playing = false;
         self.pos = 0;
-    }
-
-    /// Move the play head to `frame` (clamped).
-    pub fn seek(&mut self, frame: usize) {
-        self.pos = frame.min(self.left.len());
     }
 
     /// Fill an interleaved-stereo output block (`[L, R, L, R, …]`) and advance

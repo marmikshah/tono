@@ -493,7 +493,6 @@ function drawNode(uid){
   canvas.appendChild(el);
   // ports
   const ins=inSlots(uid);
-  const bodyH=el.offsetHeight;
   ins.forEach((s,i)=>{
     const p=document.createElement('div'); p.className='port in'; p.dataset.uid=uid; p.dataset.slot=s.slot;
     p.style.top=(28+i*16)+'px';
