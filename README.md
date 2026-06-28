@@ -65,6 +65,25 @@ Rust binary; no API keys, no network, fully deterministic.
 
 The full tool surface (24 tools) is documented in [docs/TOOLS.md](docs/TOOLS.md).
 
+## Design by hand, play it, ship it into a game
+
+Beyond the agent loop, the same deterministic engine drives three more faces —
+one `SoundDoc`, rendered byte-identically by all of them:
+
+- **A browser playground** — a zero-install visual
+  [node patcher](https://marmikshah.github.io/sonarium/playground/): drop
+  oscillators / filters / envelopes, wire them by hand, draw melodies in a piano
+  roll, and balance multi-track mixes on a metered console — hearing it live
+  (`make wasm`).
+- **A native desktop studio** — the same patcher as a Tauri app with real-time
+  audio: edits play instantly, and you **play your patch like an instrument**
+  from the computer keyboard or a MIDI controller (`make desktop`). Optional —
+  never part of the default build, MCP server, or CI.
+- **An in-engine runtime** — ship a parametric
+  [patch](docs/runtime.md) and render endless per-instance SFX variations at
+  runtime (an impact that scales with collision force, a footstep by surface)
+  with **zero baked files**. The pure core compiles straight into your game.
+
 ## Quickstart
 
 ```sh
