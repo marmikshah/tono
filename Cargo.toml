@@ -1,5 +1,9 @@
 [workspace]
-members = ["sonarium-core"]
+members = ["sonarium-core", "sonarium-wasm"]
+# The wasm crate is a wasm32-only cdylib; keep it out of the default native
+# build/test/clippy. Build it explicitly: `make wasm` (or
+# `cargo build -p sonarium-wasm --target wasm32-unknown-unknown`).
+default-members = [".", "sonarium-core"]
 
 [workspace.package]
 version = "1.1.0"
