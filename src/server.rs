@@ -363,6 +363,49 @@ pub struct LayerOpsReq {
     pub new_id: Option<String>,
 }
 
+/// Operation for the unified `layer` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum LayerKind {
+    /// Stack a new instrument layer (requires `node`).
+    Add,
+    /// Mixer move on an existing layer (gain/pan/at/mute), graph untouched.
+    Set,
+    /// Remove a layer.
+    Remove,
+    /// Duplicate a layer (re-grains noise deterministically; needs `new_id`).
+    Duplicate,
+}
+
+/// Add, adjust, or restructure a mixer layer.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayerReq {
+    /// Id of the sound.
+    pub id: String,
+    /// What to do.
+    pub op: LayerKind,
+    /// The layer id to operate on (the new layer's id for `add`).
+    pub layer: String,
+    /// The layer's graph — required for `add`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<Node>,
+    /// Channel gain (0..2) — `add` / `set`.
+    #[serde(default)]
+    pub gain: Option<f32>,
+    /// Stereo pan (−1..1) — `add` / `set`.
+    #[serde(default)]
+    pub pan: Option<f32>,
+    /// Start offset in seconds — `add` / `set`.
+    #[serde(default)]
+    pub at: Option<f32>,
+    /// Mute state — `set`.
+    #[serde(default)]
+    pub mute: Option<bool>,
+    /// New layer id — `duplicate`.
+    #[serde(default)]
+    pub new_id: Option<String>,
+}
+
 fn default_loop_crossfade() -> f32 {
     0.1
 }
@@ -988,11 +1031,7 @@ impl Sonarium {
         Ok(sound_result(&new, true))
     }
 
-    /// Stack a new instrument layer onto a sound.
-    #[tool(
-        name = "add_layer",
-        description = "Add an instrument layer to a sound and re-render. The compositional flow: author_sound creates the sound with its FIRST layer's graph, add_layer stacks every next one — one layer per thing you'd fade, pan, time-shift, or analyze separately (an instrument in a song; crack/body/tail in an SFX). Use mix only for sub-signals that share one envelope/filter. The first add_layer on a plain sound wraps the existing graph as a layer named after the sound (level-compensated; announced). Then address layers by id: set_layer (gain/pan/at/mute), set_param/edit_sound {layer, path}."
-    )]
+    /// Stack a new instrument layer onto a sound (behind `layer { op: "add" }`).
     pub async fn add_layer(
         &self,
         params: Parameters<AddLayerReq>,
@@ -1092,11 +1131,8 @@ impl Sonarium {
         Ok(res)
     }
 
-    /// Mixer moves on one layer: fader, pan, time offset, mute.
-    #[tool(
-        name = "set_layer",
-        description = "Adjust a layer's mixer fields — gain (0..2), pan (-1..1), at (start offset seconds), mute — without touching its graph, and re-render. Mute is rendered state: exports ship without muted layers. For the layer's instrument parameters use set_param {layer, path}."
-    )]
+    /// Mixer moves on one layer: fader, pan, time offset, mute (behind
+    /// `layer { op: "set" }`).
     pub async fn set_layer(
         &self,
         params: Parameters<SetLayerReq>,
@@ -1142,11 +1178,7 @@ impl Sonarium {
         Ok(res)
     }
 
-    /// Remove or duplicate a layer.
-    #[tool(
-        name = "layer_ops",
-        description = "Structural layer operations: {op:\"remove\", layer} deletes a layer (a mixer keeps at least one); {op:\"duplicate\", layer, new_id} copies one (deterministic re-grained noise — a built-in variation). On schema-v2 documents other layers are untouched — every layer has its own RNG stream (v1 documents share one stream; a warning is appended there)."
-    )]
+    /// Remove or duplicate a layer (behind `layer { op: "remove" | "duplicate" }`).
     pub async fn layer_ops(
         &self,
         params: Parameters<LayerOpsReq>,
@@ -1207,6 +1239,69 @@ impl Sonarium {
             ));
         }
         Ok(res)
+    }
+
+    /// Add, adjust, or restructure a mixer layer (one tool over the layer ops).
+    #[tool(
+        name = "layer",
+        description = "Operate on a sound's mixer layers, addressed by stable id, and re-render. op=add stacks a new instrument layer (requires `node`; the first add on a plain sound wraps its graph as a level-compensated layer named after the sound). op=set is a mixer move — gain (0..2) / pan (-1..1) / at (start offset s) / mute — graph untouched (muted layers ship out of exports). op=remove deletes a layer (a mixer keeps at least one). op=duplicate copies one (needs new_id; deterministic re-grained noise). One layer per thing you'd fade, pan, time-shift, or analyze separately."
+    )]
+    pub async fn layer(&self, params: Parameters<LayerReq>) -> Result<CallToolResult, String> {
+        let LayerReq {
+            id,
+            op,
+            layer,
+            node,
+            gain,
+            pan,
+            at,
+            mute,
+            new_id,
+        } = params.0;
+        match op {
+            LayerKind::Add => {
+                let node =
+                    node.ok_or_else(|| "layer op 'add' requires a `node` graph".to_string())?;
+                self.add_layer(Parameters(AddLayerReq {
+                    id,
+                    layer,
+                    node,
+                    gain,
+                    pan,
+                    at,
+                }))
+                .await
+            }
+            LayerKind::Set => {
+                self.set_layer(Parameters(SetLayerReq {
+                    id,
+                    layer,
+                    gain,
+                    pan,
+                    at,
+                    mute,
+                }))
+                .await
+            }
+            LayerKind::Remove => {
+                self.layer_ops(Parameters(LayerOpsReq {
+                    id,
+                    op: LayerOp::Remove,
+                    layer,
+                    new_id,
+                }))
+                .await
+            }
+            LayerKind::Duplicate => {
+                self.layer_ops(Parameters(LayerOpsReq {
+                    id,
+                    op: LayerOp::Duplicate,
+                    layer,
+                    new_id,
+                }))
+                .await
+            }
+        }
     }
 
     /// Compare two sounds: metric deltas + a similarity score (convergence aid).
