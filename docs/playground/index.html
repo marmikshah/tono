@@ -91,6 +91,13 @@
   .strip .mute{ width:100%; font-size:.7rem; padding:.25rem; cursor:pointer; }
   .strip .mute.on{ background:#ff8092; color:#0c1019; border-color:#ff8092; }
   .strip .lbl{ font-size:.62rem; color:var(--mut); }
+  #autoModal{ position:fixed; inset:0; background:#0a0812f6; z-index:51; display:none; flex-direction:column; }
+  #autoModal.open{ display:flex; }
+  #autoHead{ display:flex; gap:.5rem; align-items:center; padding:.55rem .9rem; border-bottom:1px solid var(--line); }
+  #autoHead .tgl{ font-size:.74rem; padding:.3rem .6rem; }
+  #autoHead .tgl.on{ background:var(--acc); color:#0c1019; border-color:var(--acc); font-weight:600; }
+  #autoWrap{ flex:1; padding:1rem; }
+  #autoCanvas{ background:#0d0b16; border:1px solid var(--line); border-radius:6px; cursor:crosshair; display:block; width:100%; height:100%; }
   details#json{ position:absolute; bottom:1.9rem; right:308px; width:340px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.4rem .6rem; z-index:5; }
   details#json textarea{ width:100%; height:200px; margin-top:.3rem; background:#0d0b16; color:#cdd3df; border:1px solid var(--line); border-radius:6px; padding:.5rem; font:11px/1.45 ui-monospace,Menlo,monospace; }
 </style>
@@ -133,6 +140,14 @@
 <div id="mixModal">
   <div id="mixHead"><strong>mixer</strong><span class="mut">fader · pan · mute · live per-layer meters</span><span style="flex:1"></span><button id="mixClose">✕ close</button></div>
   <div id="mixStrips"></div>
+</div>
+<div id="autoModal">
+  <div id="autoHead"><strong>automation</strong><span id="autoLayer" class="mut"></span>
+    <button class="tgl" id="autoGain">gain</button><button class="tgl" id="autoPan">pan</button>
+    <span style="flex:1"></span>
+    <span class="mut">click empty = add point · drag = move · dbl-click = delete · Esc closes</span>
+    <button id="autoClear">clear</button><button id="autoClose">✕ close</button></div>
+  <div id="autoWrap"><canvas id="autoCanvas"></canvas></div>
 </div>
 <details id="json"><summary class="mut">JSON (the document an agent edits)</summary>
   <textarea id="jsontext" spellcheck="false"></textarea>
@@ -336,6 +351,8 @@ function layerToTrack(luid){
   if(n.f.id) t.id=n.f.id;
   for(const k of ['gain','pan','at']) if(n.f[k]!==undefined) t[k]=n.f[k];
   if(n.f.mute) t.mute=true;
+  const auto=(n.f.automation||[]).filter(l=>l.points&&l.points.length);
+  if(auto.length) t.automation=auto;
   return t;
 }
 function leafDoc(n){ return {type:n.type,...n.f}; }
@@ -372,7 +389,7 @@ function importDoc(doc){
   if(doc.root.type==='tracks'){
     const mx=addNode('mixer',0,0,{});
     (doc.root.tracks||[]).forEach((t,i)=>{
-      const lay=addNode('layer',0,0,{id:t.id,gain:t.gain??1,pan:t.pan??0,at:t.at??0,mute:!!t.mute});
+      const lay=addNode('layer',0,0,{id:t.id,gain:t.gain??1,pan:t.pan??0,at:t.at??0,mute:!!t.mute,automation:t.automation||[]});
       addWire(impNode(t.node),lay,'in'); addWire(lay,mx,String(i));
     });
     let prev=mx;                                   // master chain = serial procs mixer → OUT
@@ -768,7 +785,8 @@ function drawMixer(){
       <div class="lbl g">gain ${(f.gain??1).toFixed(2)}</div>
       <input class="pan" type="range" data-mx="pan" min="-1" max="1" step="0.01" value="${f.pan??0}">
       <div class="lbl p">pan ${(f.pan??0).toFixed(2)}</div>
-      <button class="mute${f.mute?' on':''}" data-mx="mute">${f.mute?'muted':'mute'}</button></div>`; });
+      <button class="mute${f.mute?' on':''}" data-mx="mute">${f.mute?'muted':'mute'}</button>
+      <button class="rollbtn" data-auto="${uid}">✎ auto</button></div>`; });
   h+=`<div class="strip master"><div class="sid">MASTER</div>
       <div class="gainrow"><div class="meterwrap"><div class="meter" id="masterMeter" style="height:0%"></div></div></div>
       <div class="lbl" id="masterLbl">—</div></div>`;
@@ -780,6 +798,7 @@ function drawMixer(){
       else if(k==='id') el.onchange=()=>{ f.id=el.value; scheduleRender(); };
       else el.oninput=()=>{ f[k]=+el.value; strip.querySelector(k==='gain'?'.lbl.g':'.lbl.p').textContent=`${k} ${(+el.value).toFixed(2)}`; scheduleRender(); };
     });
+    strip.querySelector('[data-auto]')?.addEventListener('click',ev=>{ ev.stopPropagation(); openAuto(strip.dataset.lu); });
   });
   updateMeters();
 }
@@ -791,7 +810,53 @@ function updateMeters(){
 }
 $('#mixBtn').addEventListener('click',openMixer);
 $('#mixClose').addEventListener('click',closeMixer);
-document.addEventListener('keydown',e=>{ if(e.key==='Escape' && mixOpen) closeMixer(); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape' && mixOpen && !$('#autoModal').classList.contains('open')) closeMixer(); });
+
+/* ── automation lane editor (track gain/pan over song time) ── */
+let autoUid=null, autoTarget='gain', autoDrag=null;
+const AUTO={gutter:46,pad:24};
+const autoRange=()=>autoTarget==='gain'?[0,2]:[-1,1];
+function openAuto(uid){ autoUid=uid; autoTarget='gain'; $('#autoLayer').textContent=nodes[uid].f.id||'layer';
+  $('#autoModal').classList.add('open'); setAutoTgl(); requestAnimationFrame(drawAuto); }
+function closeAuto(){ $('#autoModal').classList.remove('open'); autoUid=null; autoDrag=null; }
+function setAutoTgl(){ $('#autoGain').classList.toggle('on',autoTarget==='gain'); $('#autoPan').classList.toggle('on',autoTarget==='pan'); }
+function autoLane(create){ const f=nodes[autoUid].f; f.automation=f.automation||[];
+  let l=f.automation.find(x=>x.target===autoTarget); if(!l&&create){ l={target:autoTarget,points:[]}; f.automation.push(l); } return l; }
+function autoGeom(){ const cv=$('#autoCanvas'),W=cv.width,H=cv.height,[vmin,vmax]=autoRange(),dur=meta.duration||1;
+  const x0=AUTO.gutter,x1=W-AUTO.pad,y0=AUTO.pad,y1=H-AUTO.pad;
+  return {W,H,vmin,vmax,dur,x0,x1,y0,y1,
+    tx:t=>x0+(t/dur)*(x1-x0), xt:x=>Math.max(0,Math.min(dur,(x-x0)/(x1-x0)*dur)),
+    vy:v=>y1-((v-vmin)/(vmax-vmin))*(y1-y0), yv:y=>Math.max(vmin,Math.min(vmax,vmax-((y-y0)/(y1-y0))*(vmax-vmin)))}; }
+function drawAuto(){ const cv=$('#autoCanvas'); cv.width=cv.clientWidth||1100; cv.height=cv.clientHeight||520;
+  const c=cv.getContext('2d'),g=autoGeom(); c.fillStyle='#0d0b16'; c.fillRect(0,0,g.W,g.H); c.font='10px ui-monospace,monospace';
+  for(let k=0;k<=4;k++){ const v=g.vmin+(g.vmax-g.vmin)*k/4,y=g.vy(v);
+    c.strokeStyle='#1c1830'; c.beginPath(); c.moveTo(g.x0,y); c.lineTo(g.x1,y); c.stroke();
+    c.fillStyle='#6f7891'; c.fillText(v.toFixed(2),6,y+3); }
+  for(let s=0;s<=Math.ceil(g.dur);s++){ const x=g.tx(s); c.strokeStyle='#1c1830'; c.beginPath(); c.moveTo(x,g.y0); c.lineTo(x,g.y1); c.stroke();
+    c.fillStyle='#6f7891'; c.fillText(s+'s',x+2,g.y1+13); }
+  const lane=autoLane(false), pts=lane?[...lane.points].sort((a,b)=>a.t-b.t):[];
+  const stat=autoTarget==='gain'?(nodes[autoUid].f.gain??1):(nodes[autoUid].f.pan??0);
+  if(!pts.length){ const y=g.vy(stat); c.strokeStyle='#3a3360'; c.setLineDash([5,4]); c.beginPath(); c.moveTo(g.x0,y); c.lineTo(g.x1,y); c.stroke(); c.setLineDash([]); }
+  else { c.strokeStyle='#50dca0'; c.lineWidth=2; c.beginPath(); c.moveTo(g.x0,g.vy(pts[0].v));
+    pts.forEach(p=>c.lineTo(g.tx(p.t),g.vy(p.v))); c.lineTo(g.x1,g.vy(pts[pts.length-1].v)); c.stroke(); c.lineWidth=1;
+    pts.forEach(p=>{ c.fillStyle='#6ee7b4'; c.beginPath(); c.arc(g.tx(p.t),g.vy(p.v),5,0,7); c.fill(); }); }
+}
+function autoHit(x,y){ const lane=autoLane(false); if(!lane) return null; const g=autoGeom();
+  for(const p of lane.points) if(Math.hypot(g.tx(p.t)-x,g.vy(p.v)-y)<8) return p; return null; }
+function autoXY(e){ const r=$('#autoCanvas').getBoundingClientRect(); return [e.clientX-r.left,e.clientY-r.top]; }
+$('#autoCanvas').addEventListener('mousedown',e=>{ const [x,y]=autoXY(e),g=autoGeom(); if(x<g.x0) return;
+  let p=autoHit(x,y); if(!p){ p={t:g.xt(x),v:g.yv(y)}; autoLane(true).points.push(p); }
+  autoDrag=p; drawAuto(); scheduleRender(); });
+window.addEventListener('mousemove',e=>{ if(!autoDrag) return; const [x,y]=autoXY(e),g=autoGeom();
+  autoDrag.t=g.xt(x); autoDrag.v=g.yv(y); drawAuto(); scheduleRender(); });
+window.addEventListener('mouseup',()=>{ if(autoDrag) autoDrag=null; });
+$('#autoCanvas').addEventListener('dblclick',e=>{ const [x,y]=autoXY(e), p=autoHit(x,y); if(!p) return;
+  const lane=autoLane(false); lane.points=lane.points.filter(q=>q!==p); drawAuto(); scheduleRender(); });
+$('#autoGain').onclick=()=>{ autoTarget='gain'; setAutoTgl(); drawAuto(); };
+$('#autoPan').onclick=()=>{ autoTarget='pan'; setAutoTgl(); drawAuto(); };
+$('#autoClear').onclick=()=>{ const lane=autoLane(false); if(lane) lane.points=[]; drawAuto(); scheduleRender(); };
+$('#autoClose').onclick=closeAuto;
+document.addEventListener('keydown',e=>{ if(e.key==='Escape' && $('#autoModal').classList.contains('open')) closeAuto(); });
 
 /* ── boot ── */
 buildPalette();
