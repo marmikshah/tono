@@ -218,6 +218,77 @@ impl Voice {
     }
 }
 
+/// A polyphonic synthesizer: a fixed pool of [`Voice`]s with note allocation
+/// and voice-stealing. Notes are addressed by a caller-chosen `key` (e.g. a MIDI
+/// note number or keyboard code) so `note_off` can release the right voice. This
+/// is the engine a keyboard / MIDI input drives to play an instrument live.
+pub struct PolySynth {
+    voices: Vec<Voice>,
+    /// The key each voice is currently assigned to (`None` once released/free).
+    keys: Vec<Option<u32>>,
+    /// Round-robin pointer for stealing when every voice is busy.
+    steal: usize,
+}
+
+impl PolySynth {
+    /// A synth of `max_voices` voices, each an oscillator `shape` + envelope.
+    pub fn new(shape: Shape, env: &Adsr, sr: u32, max_voices: usize) -> Self {
+        let n = max_voices.max(1);
+        Self {
+            voices: (0..n).map(|_| Voice::new(shape, env, sr)).collect(),
+            keys: vec![None; n],
+            steal: 0,
+        }
+    }
+
+    /// Strike `key` at `freq` Hz — uses a free voice, or steals round-robin.
+    pub fn note_on(&mut self, key: u32, freq: f32) {
+        let slot = self
+            .voices
+            .iter()
+            .position(|v| !v.active())
+            .unwrap_or_else(|| {
+                let s = self.steal;
+                self.steal = (self.steal + 1) % self.voices.len();
+                s
+            });
+        self.voices[slot].gate_on(freq);
+        self.keys[slot] = Some(key);
+    }
+
+    /// Release the voice playing `key` (it enters its envelope's release).
+    pub fn note_off(&mut self, key: u32) {
+        for i in 0..self.voices.len() {
+            if self.keys[i] == Some(key) {
+                self.voices[i].gate_off();
+                self.keys[i] = None;
+            }
+        }
+    }
+
+    /// Pulse-width for `Square` voices (applies to all).
+    pub fn set_duty(&mut self, duty: f32) {
+        for v in &mut self.voices {
+            v.set_duty(duty);
+        }
+    }
+
+    /// Number of voices still sounding (held or releasing).
+    pub fn active_voices(&self) -> usize {
+        self.voices.iter().filter(|v| v.active()).count()
+    }
+
+    /// Render the next mono block — sums every active voice (overwrites `out`).
+    pub fn process(&mut self, out: &mut [f32]) {
+        out.fill(0.0);
+        for v in &mut self.voices {
+            if v.active() {
+                v.process(out);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +362,46 @@ mod tests {
         let mut after = vec![0.0f32; 1024];
         v.process(&mut after);
         assert!(after.iter().all(|x| *x == 0.0), "idle voice adds silence");
+    }
+
+    #[test]
+    fn polysynth_plays_a_chord_and_steals_voices() {
+        let sr = 48_000u32;
+        let mut synth = PolySynth::new(Shape::Saw, &env(0.005, 0.02, 0.6, 0.03), sr, 3);
+
+        // A three-note chord: all three voices sound.
+        synth.note_on(60, 261.63);
+        synth.note_on(64, 329.63);
+        synth.note_on(67, 392.0);
+        assert_eq!(synth.active_voices(), 3);
+        let mut block = vec![0.0f32; 512];
+        synth.process(&mut block);
+        assert!(
+            block.iter().map(|x| x * x).sum::<f32>() > 0.0,
+            "chord sounds"
+        );
+
+        // A fourth note with only 3 voices steals one — never exceeds the pool.
+        synth.note_on(72, 523.25);
+        assert!(
+            synth.active_voices() <= 3,
+            "voice count bounded by the pool"
+        );
+
+        // Release everything → eventually silent and idle.
+        for k in [60, 64, 67, 72] {
+            synth.note_off(k);
+        }
+        let mut idle = false;
+        for _ in 0..200 {
+            let mut b = vec![0.0f32; 512];
+            synth.process(&mut b);
+            if synth.active_voices() == 0 {
+                idle = true;
+                break;
+            }
+        }
+        assert!(idle, "all voices released to idle");
     }
 
     #[test]
