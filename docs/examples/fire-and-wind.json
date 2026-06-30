@@ -1,6 +1,6 @@
 {
   "name": "fire-and-wind",
-  "description": "Two procedural environment textures from the new stochastic primitives: `dust` (a Poisson click train) for fire crackle, and a `rand` random-walk modulator for non-periodic wind gusting. Replay with: sonarium replay docs/examples/fire-and-wind.json",
+  "description": "Two procedural environment textures from the new stochastic primitives: `dust` (a Poisson click train) for fire crackle, and a `rand` random-walk modulator for non-periodic wind gusting. Replay with: tono replay docs/examples/fire-and-wind.json",
   "steps": [
     {
       "tool": "author_sound",

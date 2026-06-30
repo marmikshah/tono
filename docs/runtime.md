@@ -2,7 +2,7 @@
 
 The same deterministic engine that renders in the MCP server, the browser
 playground, and the desktop studio also runs **inside your game**. A game depends
-on the pure [`sonarium-core`](../sonarium-core) crate, ships a **patch** (a
+on the pure [`tono-core`](../tono-core) crate, ships a **patch** (a
 `SoundDoc` template + named parameters), and renders per-instance variations at
 runtime — an impact that scales with collision force, a footstep that varies by
 surface — with **zero baked WAV files**. No DAW can do this; it's the payoff of
@@ -27,12 +27,12 @@ to WAV offline and stream the identical thing in-engine.
 ```toml
 # Cargo.toml
 [dependencies]
-sonarium-core = { git = "https://github.com/marmikshah/sonarium" }
+tono-core = { git = "https://github.com/marmikshah/tono" }
 ```
 
 ```rust
 use std::collections::BTreeMap;
-use sonarium_core::patch::Patch;
+use tono_core::patch::Patch;
 
 // Load a patch shipped with your game (authored in the studio / by an agent).
 let patch: Patch = serde_json::from_str(include_str!("../assets/impact.patch.json"))?;
@@ -74,6 +74,6 @@ patch. A worked example: [`docs/examples/parametric-impact.patch.json`](examples
 
 ## Where it runs
 
-`sonarium-core` is pure (no I/O, no MCP, no transport) and compiles to native,
+`tono-core` is pure (no I/O, no MCP, no transport) and compiles to native,
 `wasm32`, and game targets — so one patch plays identically in the studio, the
 browser, and the shipped game.

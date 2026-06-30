@@ -1,4 +1,4 @@
-# sonarium — repo guide
+# tono — repo guide
 
 A headless sound studio driven over MCP: a deterministic synthesis-graph engine
 that renders audio and feeds back analysis, so an AI agent can author sound by
@@ -7,16 +7,16 @@ desktop studio.
 
 ## Workspace layout (one core, several faces)
 
-- **`sonarium-core/`** — the pure engine: the `SoundDoc` graph DSL, DSP,
+- **`tono-core/`** — the pure engine: the `SoundDoc` graph DSL, DSP,
   deterministic renderer, analysis/critique, graph transforms, the real-time
   `Player`/`voice` (playable synth). No I/O, no MCP, no transport. Compiles
   native **and** `wasm32`.
-- **`sonarium` (root crate, `src/`)** — the MCP server binary + a thin shell
+- **`tono` (root crate, `src/`)** — the MCP server binary + a thin shell
   (file encoders, bank/session persistence, engine emitters, daemon). Depends on
-  and re-exports `sonarium-core`.
-- **`sonarium-wasm/`** — WebAssembly bindings for the browser playground.
+  and re-exports `tono-core`.
+- **`tono-wasm/`** — WebAssembly bindings for the browser playground.
   Excluded from `default-members`; built via `make wasm`.
-- **`sonarium-desktop/`** — optional native studio (Tauri window + `cpal`
+- **`tono-desktop/`** — optional native studio (Tauri window + `cpal`
   real-time audio + MIDI). Excluded from `default-members` and CI; built via
   `make desktop`. Heavy deps (webview/cpal/midir) never touch the default build.
 
@@ -40,6 +40,6 @@ real-time audition path must stay byte-identical to an offline bounce.
 
 - Clippy clean at `-D warnings`; `cargo fmt` before committing. No dead code.
 - Small, focused commits; commit and push as work lands (one concern per commit).
-- `sonarium-core` stays decoupled — no MCP/transport/file-IO leaks into it.
+- `tono-core` stays decoupled — no MCP/transport/file-IO leaks into it.
 - New tools / capabilities should be expressible across the faces (MCP + UI)
   over the same `SoundDoc`, not bolted onto one.

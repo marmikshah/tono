@@ -8,7 +8,7 @@ The complete tool surface, as advertised to MCP clients.
   seed, stereo, playback, normalize) plus a single **root node** (the synthesis
   graph). Rendering is a pure function of `(graph, seed, sample_rate)`: the
   same document always produces byte-identical audio. Sounds are stored under
-  `~/.sonarium/sounds/` (override with `SONARIUM_WORKDIR`) as
+  `~/.tono/sounds/` (override with `TONO_WORKDIR`) as
   `<id>.wav` + `<id>.json` (the graph — the source of truth) and are addressed
   by a stable slug **id** derived from the name (`laser_zap`), usable directly
   as an engine asset key. The library survives restarts: graphs are re-rendered
@@ -18,7 +18,7 @@ The complete tool surface, as advertised to MCP clients.
   graph) → `export`.
 - A **session** is the ordered journal of every mutating tool call
   (`session.jsonl`). `save_session` snapshots it; `replay_session` (or the
-  `sonarium replay` CLI) reproduces the whole project byte-for-byte in a fresh
+  `tono replay` CLI) reproduces the whole project byte-for-byte in a fresh
   working directory.
 - For music and layered SFX, a **`tracks` root is the mixing console**: each
   track is a **layer** with a stable slug id (`kick`, `crack`, `tail`),
@@ -133,7 +133,7 @@ to fix.
   engine? }` — a pack plus a `sounds.json` manifest. With `bank_id`, every
   member of that bank; omit `bank_id` for the whole library. `engine:
   "godot" | "unity" | "bevy"` also emits `.import` sidecars, `.meta` sidecars
-  (stable GUIDs), or a generated `sonarium_sounds.rs`.
+  (stable GUIDs), or a generated `tono_sounds.rs`.
 - `export_midi { id, dest? }` — write every `seq` in the sound to a Standard
   MIDI File (one track per seq) so a melody / drum pattern round-trips into a
   DAW. Notes map by `(step, len)` on a 480-PPQ grid; the first seq's `bpm` is
@@ -146,11 +146,11 @@ to fix.
   annotated recipe) into a **fresh** session; refuses a non-empty working
   directory because ids derive from names. Same calls, same seeds,
   byte-identical audio. CLI equivalent:
-  `sonarium replay FILE [--workdir DIR]`.
+  `tono replay FILE [--workdir DIR]`.
 
 ## Resources
 
-- `sonarium://schema/sounddoc` — the `SoundDoc` JSON Schema
+- `tono://schema/sounddoc` — the `SoundDoc` JSON Schema
   (`application/json`).
-- `sonarium://cookbook` — example graphs, instrument table, and authoring tips
+- `tono://cookbook` — example graphs, instrument table, and authoring tips
   (`text/markdown`, single-sourced from [docs/cookbook.md](cookbook.md)).

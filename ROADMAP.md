@@ -1,6 +1,6 @@
 # Roadmap
 
-sonarium is a deterministic synthesis-graph studio with four faces on one core:
+tono is a deterministic synthesis-graph studio with four faces on one core:
 an MCP server (the agent loop), a browser node patcher, a native desktop app you
 can play from a keyboard / MIDI, and a parametric in-engine runtime. What exists
 is documented in the README, [docs/TOOLS.md](docs/TOOLS.md), and

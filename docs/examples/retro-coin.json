@@ -1,6 +1,6 @@
 {
   "name": "retro-coin",
-  "description": "The arcade coin pickup: two square blips a fourth apart (B5 then a held E6), the second ringing out. Replay with: sonarium replay docs/examples/retro-coin.json",
+  "description": "The arcade coin pickup: two square blips a fourth apart (B5 then a held E6), the second ringing out. Replay with: tono replay docs/examples/retro-coin.json",
   "steps": [
     {
       "tool": "author_sound",

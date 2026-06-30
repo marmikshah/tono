@@ -1,6 +1,6 @@
 {
   "name": "struck-bell",
-  "description": "A struck resonant body built from the exciter -> resonator pair: an `impact` lights up a `modal` bank of damped partials. No oscillator can voice a bell cleanly; modes can. Replay with: sonarium replay docs/examples/struck-bell.json",
+  "description": "A struck resonant body built from the exciter -> resonator pair: an `impact` lights up a `modal` bank of damped partials. No oscillator can voice a bell cleanly; modes can. Replay with: tono replay docs/examples/struck-bell.json",
   "steps": [
     {
       "tool": "author_sound",

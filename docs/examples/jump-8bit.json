@@ -1,6 +1,6 @@
 {
   "name": "jump-8bit",
-  "description": "The platformer jump: a square wave swept exponentially upward and gated by a fast-decay envelope. Replay with: sonarium replay docs/examples/jump-8bit.json",
+  "description": "The platformer jump: a square wave swept exponentially upward and gated by a fast-decay envelope. Replay with: tono replay docs/examples/jump-8bit.json",
   "steps": [
     {
       "tool": "author_sound",

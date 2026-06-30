@@ -1,6 +1,6 @@
 {
   "name": "river-flows-in-you",
-  "description": "A complete real piece: Yiruma's 'River Flows in You', 800 notes converted from MIDI with the tempo map (rubato) and sustain pedal intact, played on the built-in piano instrument through reverb and a -14 LUFS master. examples/midi_to_seq.py is the converter that produced the notes. Replay with: sonarium replay docs/examples/river-flows-in-you.json",
+  "description": "A complete real piece: Yiruma's 'River Flows in You', 800 notes converted from MIDI with the tempo map (rubato) and sustain pedal intact, played on the built-in piano instrument through reverb and a -14 LUFS master. examples/midi_to_seq.py is the converter that produced the notes. Replay with: tono replay docs/examples/river-flows-in-you.json",
   "steps": [
     {
       "tool": "author_sound",

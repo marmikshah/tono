@@ -1,6 +1,6 @@
 {
   "name": "layered-sfx-scaffold",
-  "description": "scaffold_layered_sfx builds a blank, band-disciplined 4-layer SFX skeleton (sub/body/top/transient) the agent then fills in — pure structure, not a preset. Replay with: sonarium replay docs/examples/layered-sfx-scaffold.json",
+  "description": "scaffold_layered_sfx builds a blank, band-disciplined 4-layer SFX skeleton (sub/body/top/transient) the agent then fills in — pure structure, not a preset. Replay with: tono replay docs/examples/layered-sfx-scaffold.json",
   "steps": [
     {
       "tool": "scaffold_layered_sfx",

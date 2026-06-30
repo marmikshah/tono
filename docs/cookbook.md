@@ -1,4 +1,4 @@
-# Sonarium Cookbook
+# Tono Cookbook
 
 A sound is one `SoundDoc`:
 `{ "name": ..., "duration": secs, "sample_rate": 44100, "seed": 0, "root": <node> }`
@@ -204,7 +204,7 @@ tracks keep their native recorded stereo:
 or GeneralUser GS, both free) and point `sf2` at it:
 ```json
 { "type": "seq", "bpm": 70, "wave": "sampler",
-  "sf2": "/Users/you/.sonarium/sf2/gm.sf2", "sf2_preset": 0,
+  "sf2": "/Users/you/.tono/sf2/gm.sf2", "sf2_preset": 0,
   "env": { "s": 1, "r": 0.2 },
   "notes": [ { "step": 0, "len": 4, "pitch": "C4" } ] }
 ```
