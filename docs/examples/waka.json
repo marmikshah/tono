@@ -1,6 +1,6 @@
 {
   "name": "waka",
-  "description": "The maze-muncher chomp: a square wave sliding up then down, alternating every 125 ms \u2014 the mouth opening and closing. Replay with: sonarium replay docs/examples/waka.json",
+  "description": "The maze-muncher chomp: a square wave sliding up then down, alternating every 125 ms \u2014 the mouth opening and closing. Replay with: tono replay docs/examples/waka.json",
   "steps": [
     {
       "tool": "author_sound",

@@ -1,22 +1,22 @@
 <p align="center">
-  <img src="docs/logo.png" width="112" alt="sonarium — a pluck waveform on a dark tile">
+  <img src="docs/logo.png" width="112" alt="tono — a pluck waveform on a dark tile">
 </p>
 <p align="center">
-  <img src="docs/logo-wordmark.png" width="384" alt="sonarium">
+  <img src="docs/logo-wordmark.png" width="384" alt="tono">
 </p>
 
 <p align="center"><strong>A headless sound studio for AI agents — GarageBand-as-API, over MCP.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/marmikshah/sonarium/actions/workflows/ci.yml"><img src="https://github.com/marmikshah/sonarium/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/marmikshah/sonarium/releases/latest"><img src="https://img.shields.io/github/v/release/marmikshah/sonarium" alt="release"></a>
+  <a href="https://github.com/marmikshah/tono/actions/workflows/ci.yml"><img src="https://github.com/marmikshah/tono/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/marmikshah/tono/releases/latest"><img src="https://img.shields.io/github/v/release/marmikshah/tono" alt="release"></a>
   <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-8c6ee6" alt="license">
 </p>
 
 <p align="center">
-  <a href="https://marmikshah.github.io/sonarium/listen.html"><strong>▶ Listen to everything in your browser</strong></a>
+  <a href="https://marmikshah.github.io/tono/listen.html"><strong>▶ Listen to everything in your browser</strong></a>
   &nbsp;·&nbsp;
-  <a href="https://marmikshah.github.io/sonarium/playground/"><strong>✎ Design a sound live (WASM playground)</strong></a>
+  <a href="https://marmikshah.github.io/tono/playground/"><strong>✎ Design a sound live (WASM playground)</strong></a>
 </p>
 
 <p align="center">
@@ -31,12 +31,12 @@
 a four-instrument band, three game-ready BGM loops — was composed, mixed and mastered by
 agents through the MCP tools, and every one replays byte-identically from a
 session file in this repo. The logo and wordmark were drawn by an agent with
-<a href="https://github.com/marmikshah/atelier">atelier</a>, sonarium's
+<a href="https://github.com/marmikshah/atelier">atelier</a>, tono's
 pixel-art sibling.</em></p>
 
 ## What it is
 
-Agents are good at *describing* sound and bad at *hearing* it. sonarium closes
+Agents are good at *describing* sound and bad at *hearing* it. tono closes
 the loop: every synth, instrument, and mixer move is a tool call, and every
 render hands back analysis — levels, loudness, spectral centroid, transients —
 plus a **spectrogram and a waveform image** the agent can actually look at,
@@ -71,7 +71,7 @@ Beyond the agent loop, the same deterministic engine drives three more faces —
 one `SoundDoc`, rendered byte-identically by all of them:
 
 - **A browser playground** — a zero-install visual
-  [node patcher](https://marmikshah.github.io/sonarium/playground/): drop
+  [node patcher](https://marmikshah.github.io/tono/playground/): drop
   oscillators / filters / envelopes, wire them by hand, draw melodies in a piano
   roll, and balance multi-track mixes on a metered console — hearing it live
   (`make wasm`).
@@ -87,16 +87,16 @@ one `SoundDoc`, rendered byte-identically by all of them:
 ## Quickstart
 
 ```sh
-curl -fsSL https://marmikshah.github.io/sonarium/install.sh | sh
+curl -fsSL https://marmikshah.github.io/tono/install.sh | sh
 ```
 
-The installer sets sonarium up as stdio (your MCP client spawns it) or as a
+The installer sets tono up as stdio (your MCP client spawns it) or as a
 shared background HTTP daemon, and prints the matching registration line —
-e.g. `claude mcp add --scope user sonarium -- sonarium`. Re-run it to update,
+e.g. `claude mcp add --scope user tono -- tono`. Re-run it to update,
 or append `-s -- uninstall` to remove.
 
 Prebuilt binaries cover macOS (Apple Silicon), Linux x86_64 and Windows
-(grab the `.zip` from [releases](https://github.com/marmikshah/sonarium/releases/latest));
+(grab the `.zip` from [releases](https://github.com/marmikshah/tono/releases/latest));
 anything else builds from source with `cargo install --path .`.
 
 Restart your session (MCP tools load at session start), then ask your agent
@@ -107,14 +107,14 @@ theme"*. The agent drives the loop:
 author_sound → analyze (look!) → set_param / edit_sound → export
 ```
 
-Sounds live under `~/.sonarium/sounds` (override with `SONARIUM_WORKDIR` —
+Sounds live under `~/.tono/sounds` (override with `TONO_WORKDIR` —
 point it at your game's assets folder to drop renders straight in).
 
 ### Server modes
 
 ```sh
-sonarium                        # stdio MCP server (default — the client spawns it)
-sonarium --http 127.0.0.1:8787  # streamable HTTP at /mcp
+tono                        # stdio MCP server (default — the client spawns it)
+tono --http 127.0.0.1:8787  # streamable HTTP at /mcp
 make daemon                     # background HTTP server via launchd / systemd --user
 ```
 
@@ -131,7 +131,7 @@ Every mutating tool call is journaled, so a piece of music is a **session
 file** — JSON that replays identically every time:
 
 ```sh
-sonarium replay docs/examples/band-demo.json --workdir /tmp/sonarium-demo
+tono replay docs/examples/band-demo.json --workdir /tmp/tono-demo
 ```
 
 Eleven annotated examples live in [docs/examples/](docs/examples/), every one
@@ -157,24 +157,24 @@ with playable renders in [docs/examples/audio/](docs/examples/audio/):
 
 The ▶ links play right on GitHub (each mp4 is the sound's spectrogram with
 the audio as its track — click, press play). The
-[listen page](https://marmikshah.github.io/sonarium/listen.html) plays every
+[listen page](https://marmikshah.github.io/tono/listen.html) plays every
 showcase inline, including the full piano piece and the three BGM loops.
 OGGs sit next to the mp4s for direct use.
 
 ## Works with atelier
 
-sonarium is the audio half of a pair:
+tono is the audio half of a pair:
 [**atelier**](https://github.com/marmikshah/atelier) is the same idea for
 pixel art — a headless Aseprite-as-API over MCP. Side by side, one agent
 session produces a game's art *and* audio: atelier draws the sprites, tiles
-and animations; sonarium scores the SFX, ambience and music; both export
+and animations; tono scores the SFX, ambience and music; both export
 engine-ready packs with manifests, and both record replayable recipes.
 
 ## More
 
 - [docs/TOOLS.md](docs/TOOLS.md) — the complete MCP tool reference.
 - [docs/cookbook.md](docs/cookbook.md) — the DSL, the instrument table, and
-  worked recipes (also served to agents as the `sonarium://cookbook` resource;
+  worked recipes (also served to agents as the `tono://cookbook` resource;
   every example in it is validated by the test suite).
 - [ROADMAP.md](ROADMAP.md) — the backlog.
 - `make help` — build/serve/test targets; `make check` is the pre-commit gate.

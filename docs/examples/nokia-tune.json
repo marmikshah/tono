@@ -1,6 +1,6 @@
 {
   "name": "nokia-tune",
-  "description": "Thirteen notes of Tarrega's Gran Vals \u2014 the most-heard melody in history \u2014 on the Karplus-Strong pluck. Replay with: sonarium replay docs/examples/nokia-tune.json",
+  "description": "Thirteen notes of Tarrega's Gran Vals \u2014 the most-heard melody in history \u2014 on the Karplus-Strong pluck. Replay with: tono replay docs/examples/nokia-tune.json",
   "steps": [
     {
       "tool": "author_sound",

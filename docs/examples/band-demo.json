@@ -1,6 +1,6 @@
 {
   "name": "band-demo",
-  "description": "Four instruments on the mixing console: drum kit + fingered bass + e-piano comping + string pad over an Am-F-C-G groove, each on its own panned track, glued by a master-bus compressor and stereo-spread reverb. One author_sound call renders the whole stereo production. Replay with: sonarium replay docs/examples/band-demo.json",
+  "description": "Four instruments on the mixing console: drum kit + fingered bass + e-piano comping + string pad over an Am-F-C-G groove, each on its own panned track, glued by a master-bus compressor and stereo-spread reverb. One author_sound call renders the whole stereo production. Replay with: tono replay docs/examples/band-demo.json",
   "steps": [
     {
       "tool": "author_sound",

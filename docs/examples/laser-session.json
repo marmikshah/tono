@@ -1,6 +1,6 @@
 {
   "name": "laser-session",
-  "description": "The canonical SFX workflow: author a laser zap, surgically retune it, spin three level-matched round-robin variants, and organise everything into an engine-ready bank. Replay with: sonarium replay docs/examples/laser-session.json",
+  "description": "The canonical SFX workflow: author a laser zap, surgically retune it, spin three level-matched round-robin variants, and organise everything into an engine-ready bank. Replay with: tono replay docs/examples/laser-session.json",
   "steps": [
     {
       "tool": "author_sound",

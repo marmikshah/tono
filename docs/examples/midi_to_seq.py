@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert a Standard MIDI File into Sonarium `seq` notes.
+"""Convert a Standard MIDI File into Tono `seq` notes.
 
 Faithful conversion for replicas:
 - applies the full tempo map (rubato survives — note times are computed in

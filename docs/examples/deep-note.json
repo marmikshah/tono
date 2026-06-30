@@ -1,6 +1,6 @@
 {
   "name": "deep-note",
-  "description": "A THX-style deep note: eight detuned supersaw voices wander in a mid cluster, then glide over 5.5 seconds onto a vast D chord spread across five octaves and the full stereo stage. Replay with: sonarium replay docs/examples/deep-note.json",
+  "description": "A THX-style deep note: eight detuned supersaw voices wander in a mid cluster, then glide over 5.5 seconds onto a vast D chord spread across five octaves and the full stereo stage. Replay with: tono replay docs/examples/deep-note.json",
   "steps": [
     {
       "tool": "author_sound",
