@@ -5,21 +5,21 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rmcp::handler::server::wrapper::Parameters;
-use sonarium::review::Archetype;
-use sonarium::server::{
+use tono::review::Archetype;
+use tono::server::{
     AddToBankReq, AuthorReq, CreateBankReq, EditReq, ExportBankReq, ExportReq, IdReq, MakeLoopReq,
-    ReplaySessionReq, ReviewReq, SaveSessionReq, ScaffoldReq, SetParamReq, Sonarium, VariantsReq,
+    ReplaySessionReq, ReviewReq, SaveSessionReq, ScaffoldReq, SetParamReq, Tono, VariantsReq,
     rehydrate,
 };
-use sonarium::session::Store;
+use tono::session::Store;
 
-fn fresh(tag: &str) -> (Sonarium, PathBuf) {
+fn fresh(tag: &str) -> (Tono, PathBuf) {
     let dir = std::env::temp_dir()
-        .join("sonarium_pipeline_test")
+        .join("tono_pipeline_test")
         .join(format!("{tag}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let store = Arc::new(Store::new(dir.clone()).unwrap());
-    (Sonarium::new(store), dir)
+    (Tono::new(store), dir)
 }
 
 fn author_req(json: &str) -> Parameters<AuthorReq> {
@@ -126,7 +126,7 @@ fn result_id(res: &rmcp::model::CallToolResult) -> String {
 }
 
 /// Fetch a sound's current graph as JSON (via the public tool surface).
-async fn graph_json(srv: &Sonarium, id: &str) -> serde_json::Value {
+async fn graph_json(srv: &Tono, id: &str) -> serde_json::Value {
     let resp = srv
         .get_sound(Parameters(IdReq { id: id.into() }))
         .await
@@ -166,7 +166,7 @@ async fn author_stamps_the_current_schema_version() {
     // the stored doc (and the journaled step) pin their render semantics.
     assert_eq!(
         g["version"].as_u64().unwrap() as u32,
-        sonarium::dsl::SCHEMA_VERSION
+        tono::dsl::SCHEMA_VERSION
     );
 }
 
@@ -484,7 +484,7 @@ async fn every_example_recipe_replays() {
 
 #[tokio::test]
 async fn layered_authoring_flow_round_trips_and_replays() {
-    use sonarium::server::{AddLayerReq, LayerOpsReq, SetLayerReq};
+    use tono::server::{AddLayerReq, LayerOpsReq, SetLayerReq};
 
     let (a, dir_a) = fresh("layers_a");
     a.author_sound(author_req(LASER)).await.unwrap();

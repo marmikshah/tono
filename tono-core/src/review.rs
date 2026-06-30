@@ -414,7 +414,7 @@ mod tests {
 
     fn analyze_doc(d: &SoundDoc) -> Analysis {
         let mono = render(d);
-        let dir = std::env::temp_dir().join("sonarium_review_test");
+        let dir = std::env::temp_dir().join("tono_review_test");
         std::fs::create_dir_all(&dir).unwrap();
         crate::analysis::analyze(&mono, d.sample_rate, &dir.join("r.png")).unwrap()
     }

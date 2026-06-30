@@ -1,9 +1,9 @@
-//! Sonarium — a sound-engineering MCP server: agents author symbolic synthesis
+//! Tono — a sound-engineering MCP server: agents author symbolic synthesis
 //! graphs; the server renders them deterministically and feeds back analysis.
 //!
 //! Two transports:
 //! - **stdio** (default) — for clients that spawn the binary directly.
-//! - **streamable HTTP** (`--http [addr]` or `SONARIUM_TRANSPORT=http`) — for
+//! - **streamable HTTP** (`--http [addr]` or `TONO_TRANSPORT=http`) — for
 //!   connecting any networked MCP client.
 
 use std::path::PathBuf;
@@ -19,9 +19,9 @@ use rmcp::{
     },
 };
 
-use sonarium::server::{Sonarium, rehydrate};
-use sonarium::service;
-use sonarium::session::Store;
+use tono::server::{Tono, rehydrate};
+use tono::service;
+use tono::session::Store;
 
 /// Default HTTP bind address.
 const DEFAULT_BIND: &str = "127.0.0.1:8787";
@@ -32,21 +32,21 @@ enum Transport {
     Http(String),
 }
 
-/// Resolve the working directory for rendered artifacts. `SONARIUM_WORKDIR`
+/// Resolve the working directory for rendered artifacts. `TONO_WORKDIR`
 /// overrides (point it at your game's assets); otherwise a stable per-user
-/// `~/.sonarium/sounds`, falling back to a temp dir only when no home exists.
+/// `~/.tono/sounds`, falling back to a temp dir only when no home exists.
 fn working_dir() -> PathBuf {
-    if let Some(p) = std::env::var_os("SONARIUM_WORKDIR") {
+    if let Some(p) = std::env::var_os("TONO_WORKDIR") {
         return PathBuf::from(p);
     }
     if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-        return PathBuf::from(home).join(".sonarium").join("sounds");
+        return PathBuf::from(home).join(".tono").join("sounds");
     }
-    std::env::temp_dir().join("sonarium")
+    std::env::temp_dir().join("tono")
 }
 
 /// Pick the transport from CLI args / env.
-/// `--http [addr]`, or `SONARIUM_TRANSPORT=http` (+ optional `SONARIUM_BIND`).
+/// `--http [addr]`, or `TONO_TRANSPORT=http` (+ optional `TONO_BIND`).
 fn transport() -> Transport {
     let args: Vec<String> = std::env::args().collect();
     if let Some(pos) = args.iter().position(|a| a == "--http") {
@@ -54,33 +54,33 @@ fn transport() -> Transport {
             .get(pos + 1)
             .filter(|a| !a.starts_with('-'))
             .cloned()
-            .or_else(|| std::env::var("SONARIUM_BIND").ok())
+            .or_else(|| std::env::var("TONO_BIND").ok())
             .unwrap_or_else(|| DEFAULT_BIND.to_string());
         return Transport::Http(addr);
     }
-    if std::env::var("SONARIUM_TRANSPORT").as_deref() == Ok("http") {
-        let addr = std::env::var("SONARIUM_BIND").unwrap_or_else(|_| DEFAULT_BIND.to_string());
+    if std::env::var("TONO_TRANSPORT").as_deref() == Ok("http") {
+        let addr = std::env::var("TONO_BIND").unwrap_or_else(|_| DEFAULT_BIND.to_string());
         return Transport::Http(addr);
     }
     Transport::Stdio
 }
 
-const HELP: &str = "sonarium — a sound-engineering MCP server driven by tool calls.
+const HELP: &str = "tono — a sound-engineering MCP server driven by tool calls.
 
 USAGE:
-    sonarium                       run the MCP server over stdio (for clients that spawn it)
-    sonarium --http [ADDR]         run the streamable-HTTP MCP server (default 127.0.0.1:8787, endpoint /mcp)
-    sonarium replay FILE           replay a session file / recipe into a fresh working directory
-            [--workdir DIR]        (default: ./sonarium-replay)
-    sonarium service install       install + start the background daemon (launchd / systemd --user)
+    tono                       run the MCP server over stdio (for clients that spawn it)
+    tono --http [ADDR]         run the streamable-HTTP MCP server (default 127.0.0.1:8787, endpoint /mcp)
+    tono replay FILE           replay a session file / recipe into a fresh working directory
+            [--workdir DIR]        (default: ./tono-replay)
+    tono service install       install + start the background daemon (launchd / systemd --user)
              [--bind ADDR] [--workdir DIR]
-    sonarium service status        show daemon state and log locations
-    sonarium service uninstall     stop + remove the daemon
-    sonarium --version             print the version
+    tono service status        show daemon state and log locations
+    tono service uninstall     stop + remove the daemon
+    tono --version             print the version
 
 ENVIRONMENT:
-    SONARIUM_WORKDIR    where renders/exports land (default ~/.sonarium/sounds) — point at your game's assets
-    SONARIUM_BIND       HTTP bind address (with SONARIUM_TRANSPORT=http)
+    TONO_WORKDIR    where renders/exports land (default ~/.tono/sounds) — point at your game's assets
+    TONO_BIND       HTTP bind address (with TONO_TRANSPORT=http)
     RUST_LOG            log filter (logs go to stderr)";
 
 #[tokio::main]
@@ -91,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
         Some("service") => std::process::exit(service::run(&args[2..])),
         Some("replay") => return replay_cli(&args[2..]).await,
         Some("--version") | Some("-V") => {
-            println!("sonarium {}", env!("CARGO_PKG_VERSION"));
+            println!("tono {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         Some("--help") | Some("-h") => {
@@ -114,11 +114,11 @@ async fn main() -> anyhow::Result<()> {
     // Rebuild the index from graphs persisted in a previous run so a restarted
     // server still sees earlier sounds (and banks).
     let restored = rehydrate(&store);
-    tracing::info!(workdir = %dir.display(), restored, "sonarium starting");
+    tracing::info!(workdir = %dir.display(), restored, "tono starting");
 
     match transport() {
         Transport::Stdio => {
-            let service = Sonarium::new(store).serve(stdio()).await?;
+            let service = Tono::new(store).serve(stdio()).await?;
             service.waiting().await?;
         }
         Transport::Http(addr) => serve_http(store, &addr).await?,
@@ -126,24 +126,24 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `sonarium replay FILE [--workdir DIR]` — reproduce a saved session without
+/// `tono replay FILE [--workdir DIR]` — reproduce a saved session without
 /// an MCP client: render every recorded tool call into a fresh directory.
 async fn replay_cli(args: &[String]) -> anyhow::Result<()> {
     use rmcp::handler::server::wrapper::Parameters;
     let Some(file) = args.first().filter(|a| !a.starts_with('-')) else {
-        anyhow::bail!("usage: sonarium replay FILE [--workdir DIR]");
+        anyhow::bail!("usage: tono replay FILE [--workdir DIR]");
     };
     let workdir = args
         .iter()
         .position(|a| a == "--workdir")
         .and_then(|i| args.get(i + 1))
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("./sonarium-replay"));
+        .unwrap_or_else(|| PathBuf::from("./tono-replay"));
 
     let store = Arc::new(Store::new(workdir.clone())?);
-    let server = Sonarium::new(store.clone());
+    let server = Tono::new(store.clone());
     let resp = server
-        .replay_session(Parameters(sonarium::server::ReplaySessionReq {
+        .replay_session(Parameters(tono::server::ReplaySessionReq {
             path: file.clone(),
         }))
         .await
@@ -170,7 +170,7 @@ async fn replay_cli(args: &[String]) -> anyhow::Result<()> {
 /// same store, the same journal (one append mutex — concurrent sessions can't
 /// tear journal lines), and the same replay flag.
 async fn serve_http(store: Arc<Store>, addr: &str) -> anyhow::Result<()> {
-    let handler = Sonarium::new(store);
+    let handler = Tono::new(store);
     let service = StreamableHttpService::new(
         move || Ok(handler.clone()),
         Arc::new(LocalSessionManager::default()),
@@ -179,7 +179,7 @@ async fn serve_http(store: Arc<Store>, addr: &str) -> anyhow::Result<()> {
     let router = axum::Router::new().nest_service("/mcp", service);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let bound = listener.local_addr()?;
-    tracing::info!("sonarium MCP listening at http://{bound}/mcp");
+    tracing::info!("tono MCP listening at http://{bound}/mcp");
     axum::serve(listener, router).await?;
     Ok(())
 }

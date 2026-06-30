@@ -4,9 +4,9 @@
 use crate::dsl::SoundDoc;
 
 /// URI of the DSL JSON Schema resource.
-pub const SCHEMA_URI: &str = "sonarium://schema/sounddoc";
+pub const SCHEMA_URI: &str = "tono://schema/sounddoc";
 /// URI of the example cookbook resource.
-pub const COOKBOOK_URI: &str = "sonarium://cookbook";
+pub const COOKBOOK_URI: &str = "tono://cookbook";
 
 /// The `SoundDoc` JSON Schema, pretty-printed.
 pub fn schema_json() -> String {

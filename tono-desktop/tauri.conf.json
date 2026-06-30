@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "sonarium",
+  "productName": "tono",
   "version": "0.1.0",
-  "identifier": "dev.sonarium.desktop",
+  "identifier": "dev.tono.desktop",
   "build": {
     "frontendDist": "../docs/playground"
   },
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "sonarium — studio",
+        "title": "tono — studio",
         "width": 1280,
         "height": 820,
         "minWidth": 900,

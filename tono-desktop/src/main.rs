@@ -1,10 +1,10 @@
-//! sonarium-desktop — the optional native studio.
+//! tono-desktop — the optional native studio.
 //!
 //! Not part of the default build, the MCP server, or CI; built only via
 //! `make desktop`. Two entry points on one engine:
-//! - `sonarium-desktop` (no args) launches the Tauri window (the node-patcher
+//! - `tono-desktop` (no args) launches the Tauri window (the node-patcher
 //!   frontend) with native real-time audio.
-//! - `sonarium-desktop play FILE.json [SECS]` is a headless native preview.
+//! - `tono-desktop play FILE.json [SECS]` is a headless native preview.
 
 mod audio;
 
@@ -13,9 +13,9 @@ use std::sync::Mutex;
 use audio::AudioHandle;
 use base64::Engine as _;
 use serde::Serialize;
-use sonarium_core::dsl::{Adsr, Shape, SoundDoc};
-use sonarium_core::{analysis, render};
 use tauri::State;
+use tono_core::dsl::{Adsr, Shape, SoundDoc};
+use tono_core::{analysis, render};
 
 /// App state: the lazily-created audio engine handle (built on first render,
 /// since it needs an output device).
@@ -145,11 +145,11 @@ fn note_off(key: u32, studio: State<Studio>) {
     }
 }
 
-const HELP: &str = "sonarium-desktop — native sonarium studio.
+const HELP: &str = "tono-desktop — native tono studio.
 
 USAGE:
-    sonarium-desktop                         launch the studio window (real-time audio)
-    sonarium-desktop play FILE.json [SECS]   headless: play a graph through the default device";
+    tono-desktop                         launch the studio window (real-time audio)
+    tono-desktop play FILE.json [SECS]   headless: play a graph through the default device";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -177,14 +177,14 @@ fn run_studio() {
             note_off
         ])
         .run(tauri::generate_context!())
-        .expect("failed to launch the sonarium studio window");
+        .expect("failed to launch the tono studio window");
 }
 
-/// `sonarium-desktop play FILE [SECS]` — audition a graph natively via cpal.
+/// `tono-desktop play FILE [SECS]` — audition a graph natively via cpal.
 fn play_cli(args: &[String]) -> anyhow::Result<()> {
     let path = args
         .first()
-        .ok_or_else(|| anyhow::anyhow!("usage: sonarium-desktop play FILE.json [SECS]"))?;
+        .ok_or_else(|| anyhow::anyhow!("usage: tono-desktop play FILE.json [SECS]"))?;
     let doc: SoundDoc = serde_json::from_str(&std::fs::read_to_string(path)?)?;
     let secs = args
         .get(1)
