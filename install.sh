@@ -1,18 +1,18 @@
 #!/bin/sh
-# sonarium installer — downloads the latest release binary for this machine.
+# tono installer — downloads the latest release binary for this machine.
 #
-#   curl -fsSL https://marmikshah.github.io/sonarium/install.sh | sh
-#   curl -fsSL https://marmikshah.github.io/sonarium/install.sh | sh -s -- uninstall
+#   curl -fsSL https://marmikshah.github.io/tono/install.sh | sh
+#   curl -fsSL https://marmikshah.github.io/tono/install.sh | sh -s -- uninstall
 #
 # Options (environment variables):
-#   SONARIUM_VERSION      install a specific tag (e.g. v0.1.0); default: latest
-#   SONARIUM_INSTALL_DIR  where the binary goes; default: ~/.local/bin
-#   SONARIUM_MODE         "stdio" (default) or "http" (background daemon)
+#   TONO_VERSION      install a specific tag (e.g. v0.1.0); default: latest
+#   TONO_INSTALL_DIR  where the binary goes; default: ~/.local/bin
+#   TONO_MODE         "stdio" (default) or "http" (background daemon)
 set -eu
 
-REPO="marmikshah/sonarium"
-INSTALL_DIR="${SONARIUM_INSTALL_DIR:-$HOME/.local/bin}"
-BIN="$INSTALL_DIR/sonarium"
+REPO="marmikshah/tono"
+INSTALL_DIR="${TONO_INSTALL_DIR:-$HOME/.local/bin}"
+BIN="$INSTALL_DIR/tono"
 MCP_URL="http://127.0.0.1:8787/mcp"
 
 say()  { printf '%s\n' "$*"; }
@@ -33,8 +33,8 @@ do_uninstall() {
   "$BIN" service uninstall >/dev/null 2>&1 || true # stop the daemon if present
   rm -f "$BIN"
   say "Removed $BIN (and stopped the background daemon, if one was installed)."
-  say "Sounds in ~/.sonarium are untouched. If registered with an MCP client,"
-  say "deregister manually, e.g.: claude mcp remove sonarium"
+  say "Sounds in ~/.tono are untouched. If registered with an MCP client,"
+  say "deregister manually, e.g.: claude mcp remove tono"
   exit 0
 }
 [ "${1:-}" = "uninstall" ] && do_uninstall
@@ -70,26 +70,26 @@ case "$OS" in
 esac
 
 # -- resolve the version (the /releases/latest redirect carries the tag) --------
-VERSION="${SONARIUM_VERSION:-}"
+VERSION="${TONO_VERSION:-}"
 if [ -z "$VERSION" ]; then
   VERSION="$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
     "https://github.com/$REPO/releases/latest" | sed 's|.*/tag/||')"
   [ -n "$VERSION" ] || fail "could not resolve the latest release tag"
 fi
 
-URL="https://github.com/$REPO/releases/download/$VERSION/sonarium-$VERSION-$TARGET.tar.gz"
+URL="https://github.com/$REPO/releases/download/$VERSION/tono-$VERSION-$TARGET.tar.gz"
 
 # -- download, extract, install --------------------------------------------------
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-say "Downloading sonarium $VERSION ($TARGET)..."
-curl -fsSL "$URL" -o "$TMP/sonarium.tar.gz" \
+say "Downloading tono $VERSION ($TARGET)..."
+curl -fsSL "$URL" -o "$TMP/tono.tar.gz" \
   || fail "download failed: $URL"
-tar -xzf "$TMP/sonarium.tar.gz" -C "$TMP"
+tar -xzf "$TMP/tono.tar.gz" -C "$TMP"
 
 mkdir -p "$INSTALL_DIR"
-install -m 755 "$TMP/sonarium" "$BIN"
+install -m 755 "$TMP/tono" "$BIN"
 
 say "Installed: $BIN ($("$BIN" --version))"
 
@@ -101,11 +101,11 @@ case ":$PATH:" in
      say "  export PATH=\"$INSTALL_DIR:\$PATH\"" ;;
 esac
 
-# -- choose how sonarium runs ------------------------------------------------------
-# stdio: each MCP client spawns its own sonarium (zero setup).
+# -- choose how tono runs ------------------------------------------------------
+# stdio: each MCP client spawns its own tono (zero setup).
 # http:  one shared background daemon (launchd / systemd --user) at $MCP_URL —
 #        all clients and sessions share a sound library; survives reboot.
-MODE="${SONARIUM_MODE:-}"
+MODE="${TONO_MODE:-}"
 if [ -z "$MODE" ]; then
   say ""
   case "$(ask "Run mode — [S]tdio (client spawns it) or [h]ttp (shared background daemon)?")" in
@@ -127,11 +127,11 @@ fi
 say ""
 say "Register with your MCP client (then restart its session):"
 if [ "$MODE" = "http" ]; then
-  say "  claude mcp add --scope user --transport http sonarium $MCP_URL   # Claude Code / Kimi Code"
-  say "  Cursor: ~/.cursor/mcp.json -> \"sonarium\": { \"url\": \"$MCP_URL\" }"
+  say "  claude mcp add --scope user --transport http tono $MCP_URL   # Claude Code / Kimi Code"
+  say "  Cursor: ~/.cursor/mcp.json -> \"tono\": { \"url\": \"$MCP_URL\" }"
 else
-  say "  claude mcp add --scope user sonarium -- $BIN     # Claude Code / Kimi Code: same shape"
-  say "  Cursor: ~/.cursor/mcp.json -> \"sonarium\": { \"command\": \"$BIN\" }"
+  say "  claude mcp add --scope user tono -- $BIN     # Claude Code / Kimi Code: same shape"
+  say "  Cursor: ~/.cursor/mcp.json -> \"tono\": { \"command\": \"$BIN\" }"
 fi
 say ""
 say "Optional, for real recorded instruments (the 'sampler' voice): download any"

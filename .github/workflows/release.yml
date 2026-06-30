@@ -31,14 +31,14 @@ jobs:
 
       - name: Archive (unix)
         if: runner.os != 'Windows'
-        run: tar -czf sonarium-${{ github.ref_name }}-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release sonarium
+        run: tar -czf tono-${{ github.ref_name }}-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release tono
       - name: Archive (windows)
         if: runner.os == 'Windows'
-        run: Compress-Archive -Path target/${{ matrix.target }}/release/sonarium.exe -DestinationPath sonarium-${{ github.ref_name }}-${{ matrix.target }}.zip
+        run: Compress-Archive -Path target/${{ matrix.target }}/release/tono.exe -DestinationPath tono-${{ github.ref_name }}-${{ matrix.target }}.zip
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: sonarium-${{ github.ref_name }}-${{ matrix.target }}.*
+          files: tono-${{ github.ref_name }}-${{ matrix.target }}.*
 
   # Silently skips when CARGO_REGISTRY_TOKEN is unset (secrets can't be read in
   # `if:` directly, so route it through env — the documented indirection).

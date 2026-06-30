@@ -1,6 +1,6 @@
 ---
 name: sound-review-loop
-description: Run an iterative Review → Polish → Review loop on a sonarium sound until it meets its archetype targets (or the user stops). Use when asked to "review and polish a sound", "iterate on this sound", "run a polish/review loop", "keep improving until it passes", or to set up a sound-review system. Review comes from the deterministic `review_sound` tool by default; the user can supply review in their own words at any iteration and it takes over.
+description: Run an iterative Review → Polish → Review loop on a tono sound until it meets its archetype targets (or the user stops). Use when asked to "review and polish a sound", "iterate on this sound", "run a polish/review loop", "keep improving until it passes", or to set up a sound-review system. Review comes from the deterministic `review_sound` tool by default; the user can supply review in their own words at any iteration and it takes over.
 ---
 
 # Sound Review Loop

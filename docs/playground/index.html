@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>sonarium — patch</title>
+<title>tono — patch</title>
 <style>
   :root { color-scheme: dark; --bg:#100e1a; --panel:#181527; --line:#2c2746; --ink:#dfe3ea;
           --mut:#6f7891; --acc:#50dca0; --vio:#8c6ee6; --node:#211c38; }
@@ -106,7 +106,7 @@
 </head>
 <body>
 <div class="topbar">
-  <img src="../logo.png" width="24" alt=""><strong style="letter-spacing:.03em">sonarium</strong><span class="pill">patch</span>
+  <img src="../logo.png" width="24" alt=""><strong style="letter-spacing:.03em">tono</strong><span class="pill">patch</span>
   <button id="play" class="primary">▶ Play</button>
   <select id="examples" title="Load an example patch"><option value="">— blank —</option></select>
   <button id="mixBtn" title="Channel-strip mixer (for tracks documents)">≡ mixer</button>
@@ -183,7 +183,7 @@ function tauriBackend(){
   };
 }
 async function wasmBackend(){
-  const wasm=await import('./pkg/sonarium_wasm.js');
+  const wasm=await import('./pkg/tono_wasm.js');
   await wasm.default();
   let last=null, actx=null, src=null, specU=null, waveU=null;
   const toUrl=(bytes,prev)=>{ if(!bytes||!bytes.length) return prev; const u=URL.createObjectURL(new Blob([bytes],{type:'image/png'})); if(prev) URL.revokeObjectURL(prev); return u; };
