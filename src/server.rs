@@ -39,7 +39,7 @@ use crate::review::{self, Archetype, Review};
 use crate::session::{Record, Store, now_secs, slugify};
 use crate::vary;
 
-const INSTRUCTIONS: &str = "Sonarium is a sound-engineering MCP server: you compose audio from instruments and effects by authoring a symbolic synthesis graph, and the server renders it deterministically, returning analysis (peak/true-peak/RMS, LUFS, spectral centroid, transients) plus two images — a spectrogram and a waveform — so you iterate by inspection, like a sound designer at a DAW.\n\
+const INSTRUCTIONS: &str = "Tono is a sound-engineering MCP server: you compose audio from instruments and effects by authoring a symbolic synthesis graph, and the server renders it deterministically, returning analysis (peak/true-peak/RMS, LUFS, spectral centroid, transients) plus two images — a spectrogram and a waveform — so you iterate by inspection, like a sound designer at a DAW.\n\
 Workflow: author_sound with a graph (the sound's FIRST layer) → read the stats, view the images → add_layer to stack each next instrument/component under a stable layer id (one layer per thing you'd fade, pan, time-shift, or analyze separately: transient/body/tail for SFX, one instrument each for music; every render reports each layer's pre-master contribution) → refine with set_param / edit_sound (surgical; with layer set, paths are layer-relative like env.a or notes[3].pitch — call describe_sound first for the map), set_layer for mixer moves (gain/pan/at/mute), or refine_sound (whole-graph replace) → export (wav/flac/ogg) when it matches. undo_sound / redo_sound step a 100-deep per-sound history; sounds persist across restarts under stable slug ids.\n\
 Graph vocabulary: root is one node; every node is a mono signal. Sources: square{freq,duty} (duty modulatable ⇒ PWM), triangle{freq}, sawtooth{freq}, sine{freq}, noise{color: white|pink|brown}, fm{freq,ratio,index} (bells / metallic), super{wave,freq,voices,detune_cents} (supersaw), and seq{bpm,steps_per_beat,wave,duty,env,notes} for melodies/basslines/drums — each note has its own pitch (a number, a NOTE NAME like \"C4\"/\"F#3\"/\"midi:60\", or a slide), a length in grid steps, and the shared per-note ADSR; gaps are rests; notes may overlap. Seq waves are square/triangle/sawtooth/sine/noise plus a core INSTRUMENT list: piano (acoustic — velocity brightness, bass rings/treble dies), epiano (Rhodes tine), organ (drawbars, sustains while held), strings (slow-swell ensemble — write notes slightly early), bass (filtered + sub), kit (drums on the General MIDI map — pitch picks the drum: midi:36 kick, 38 snare, 42/46 hats, 41-50 toms, 49 crash, 51 ride), fm (tunable mallets/bells via fm_ratio/fm_index/fm_strike), pluck (Karplus-Strong string via pluck_decay), cowbell (phonk lead), and sampler — REAL recorded instruments from any SoundFont: set sf2 to a .sf2 path and sf2_preset to the General MIDI program (0 piano, 32 bass, 48 strings; sf2_bank 128 = GM drum map). Every seq also takes swing (shuffle) and humanize (deterministic timing/velocity jitter), and the duck processor sidechain-pumps any chain to a trigger. For full productions use a top-level tracks root — the mixing console: tracks:[{id, node, pan(-1..1), gain, at, mute}] places every layer on the stereo stage by stable id (sampler tracks keep native stereo; `at` time-shifts a layer; each layer has its own deterministic RNG stream) and master:[processors] is the stereo bus chain with decorrelated reverb tails (address them at root.master[i]). mix still layers mono inside one track — but prefer real layers for anything you'd balance separately. Envelope: env{a,d,s,r,punch}. Combinators: mix (sum), mul (source × env), chain (source → processors). Processors: lowpass/highpass/bandpass/notch{cutoff,q}, peak{cutoff,q,gain_db}, lowshelf/highshelf{cutoff,gain_db}, gain, drive{amount,shape}, ringmod, chorus, flanger, phaser, compress, bitcrush, downsample, delay, reverb. Any numeric param may be a modulator: {\"slide\":{from,to,secs,curve}}, {\"lfo\":{shape,rate,depth,center}}, {\"arp\":{steps,rate}}, {\"env\":{a,d,s,r,from,to}} (the key to filter/pitch envelopes).\n\
 Output shaping: add top-level stereo {\"mode\":\"wide\"|\"haas\"} for BGM/ambience width, playback {\"mode\":\"loop\",crossfade_secs} for a seamless loop (or call make_loop on an existing sound — the exported WAV carries a smpl loop chunk engines read), and normalize {target_lufs,ceiling_dbtp} for level-matched, click-safe renders. export also takes target_lufs.\n\
@@ -47,13 +47,13 @@ Variations on sounds you made: mutate_sound nudges parameters; generate_variants
 Packs: create_bank / add_to_bank{category?,rr_group?} / list_banks, then export_bank or export_all write every member (wav/flac/ogg) plus a sounds.json manifest; pass engine:\"godot\"|\"unity\"|\"bevy\" to also emit engine integration files.\n\
 Sessions are reproducible: every mutating call is journaled to session.jsonl in the working directory; save_session snapshots it and replay_session re-applies a saved journal — same calls, same seeds, byte-identical audio. Read the resources (DSL JSON Schema + cookbook) for the full vocabulary and worked examples.";
 
-/// The Sonarium MCP server.
+/// The Tono MCP server.
 ///
 /// `Clone` shares all state (store, journal, replay flag): in HTTP mode one
 /// handler is built and cloned per session, so concurrent sessions append to
 /// the journal through ONE mutex instead of racing on the file.
 #[derive(Clone)]
-pub struct Sonarium {
+pub struct Tono {
     store: Arc<Store>,
     journal: Arc<Journal>,
     /// True while `replay_session` runs: per-tool journaling is suppressed and
@@ -654,7 +654,7 @@ pub struct ExportBankReq {
     pub quality: Option<f32>,
     /// Also emit engine integration files: godot (.import sidecars with loop
     /// mode), unity (.meta sidecars with stable GUIDs), or bevy (a generated
-    /// sonarium_sounds.rs asset-key module).
+    /// tono_sounds.rs asset-key module).
     #[serde(default)]
     pub engine: Option<EngineTarget>,
 }
@@ -758,7 +758,7 @@ pub struct ReplaySessionResp {
 }
 
 #[tool_router(router = tool_router)]
-impl Sonarium {
+impl Tono {
     /// Construct the server over a session store (the journal lives in the
     /// store's working directory).
     pub fn new(store: Arc<Store>) -> Self {
@@ -783,7 +783,7 @@ impl Sonarium {
         let mut req = params.0;
         // New documents follow the current render semantics. The resolved
         // version is stamped into the journaled args (like mutate_sound's
-        // seed) so a future sonarium replays this step byte-faithfully.
+        // seed) so a future tono replays this step byte-faithfully.
         // During replay the stamp must NOT run: a journaled step missing
         // `version` predates stamping and was recorded under v1 semantics.
         if !self.replaying.load(std::sync::atomic::Ordering::SeqCst) {
@@ -1840,7 +1840,7 @@ impl Sonarium {
     /// Export a pack — one bank, or the whole library.
     #[tool(
         name = "export_pack",
-        description = "Export a pack into `dest` plus a sounds.json manifest (id, file, category, rr_group, duration, loudness, peak, channels) so a game engine wires the whole set with no hand-listing. With `bank_id`, exports that bank (by_category lays sounds into per-category subfolders); omit `bank_id` to export the entire library. Optional target_lufs level-matches the set; engine: godot | unity | bevy also emits .import / .meta sidecars or a sonarium_sounds.rs module."
+        description = "Export a pack into `dest` plus a sounds.json manifest (id, file, category, rr_group, duration, loudness, peak, channels) so a game engine wires the whole set with no hand-listing. With `bank_id`, exports that bank (by_category lays sounds into per-category subfolders); omit `bank_id` to export the entire library. Optional target_lufs level-matches the set; engine: godot | unity | bevy also emits .import / .meta sidecars or a tono_sounds.rs module."
     )]
     pub async fn export_pack(
         &self,
@@ -1958,7 +1958,7 @@ impl Sonarium {
             return Err(
                 "replay_session requires a fresh session: the working directory already \
                  contains sounds, banks, or a session journal. Start the server with an \
-                 empty SONARIUM_WORKDIR and replay there."
+                 empty TONO_WORKDIR and replay there."
                     .into(),
             );
         }
@@ -2635,7 +2635,7 @@ fn sound_result(rec: &Record, include_graph: bool) -> CallToolResult {
 }
 
 #[tool_handler(router = self.tool_router)]
-impl ServerHandler for Sonarium {
+impl ServerHandler for Tono {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
         info.capabilities = ServerCapabilities::builder()
@@ -2646,7 +2646,7 @@ impl ServerHandler for Sonarium {
         let mut imp = Implementation::from_build_env();
         imp.name = env!("CARGO_PKG_NAME").to_string();
         imp.version = env!("CARGO_PKG_VERSION").to_string();
-        imp.title = Some("Sonarium".to_string());
+        imp.title = Some("Tono".to_string());
         info.server_info = imp;
         info.instructions = Some(INSTRUCTIONS.to_string());
         info

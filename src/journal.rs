@@ -137,7 +137,7 @@ mod tests {
 
     fn tmp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir()
-            .join("sonarium_journal_test")
+            .join("tono_journal_test")
             .join(format!("{tag}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

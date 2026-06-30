@@ -1,19 +1,19 @@
 [workspace]
-members = ["sonarium-core", "sonarium-wasm", "sonarium-desktop"]
-# sonarium-wasm (wasm32 cdylib) and sonarium-desktop (optional native GUI/audio,
+members = ["tono-core", "tono-wasm", "tono-desktop"]
+# tono-wasm (wasm32 cdylib) and tono-desktop (optional native GUI/audio,
 # heavy cpal/webview deps) are kept OUT of the default native build/test/clippy
 # and CI. Build them explicitly: `make wasm` / `make desktop`.
-default-members = [".", "sonarium-core"]
+default-members = [".", "tono-core"]
 
 [workspace.package]
 version = "1.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/marmikshah/sonarium"
+repository = "https://github.com/marmikshah/tono"
 
 [workspace.dependencies]
-sonarium-core = { path = "sonarium-core" }
+tono-core = { path = "tono-core" }
 anyhow = "1.0.102"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
 base64 = "0.22.1"
@@ -33,7 +33,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 vorbis_rs = "0.5.5"
 
 [package]
-name = "sonarium"
+name = "tono"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -45,7 +45,7 @@ keywords = ["mcp", "audio", "synthesis", "chiptune", "gamedev"]
 categories = ["multimedia::audio", "game-development"]
 
 [dependencies]
-sonarium-core = { workspace = true }
+tono-core = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }

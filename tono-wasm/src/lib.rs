@@ -1,16 +1,16 @@
-//! WebAssembly bindings for the sonarium audio engine.
+//! WebAssembly bindings for the tono audio engine.
 //!
 //! One entry point — [`render`] — takes a `SoundDoc` graph as JSON and returns
 //! the same things the MCP server hands an agent: stereo audio samples, the
 //! analysis numbers, and the log-frequency spectrogram + waveform PNGs. It runs
-//! the *identical* deterministic [`sonarium_core`] render path, so the browser
+//! the *identical* deterministic [`tono_core`] render path, so the browser
 //! playground hears and sees exactly what an agent would. No filesystem, no
 //! network: a graph in, audio + feedback out.
 //!
 //! The SoundFont `sampler` voice is unavailable here (it needs a file on disk);
 //! every synthesis and SFX voice works.
 
-use sonarium_core::{analysis, dsl::SoundDoc, dsl::Stereo, render};
+use tono_core::{analysis, dsl::SoundDoc, dsl::Stereo, render};
 use wasm_bindgen::prelude::*;
 
 /// Install a panic hook that surfaces Rust panics in the browser console.

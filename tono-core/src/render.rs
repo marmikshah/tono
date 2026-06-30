@@ -2454,7 +2454,7 @@ mod tests {
                      ] }} }}"#
             ))
         };
-        let dir = std::env::temp_dir().join("sonarium_adaa_inharm");
+        let dir = std::env::temp_dir().join("tono_adaa_inharm");
         std::fs::create_dir_all(&dir).unwrap();
         let inharm = |name: &str, d: &SoundDoc| {
             crate::analysis::analyze(&render(d), 44_100, &dir.join(name))
@@ -2827,12 +2827,12 @@ mod tests {
     }
 
     /// Full sampler audio check — needs a real SoundFont. Set
-    /// SONARIUM_TEST_SF2=/path/to/any_gm_bank.sf2 to enable; skipped (and
+    /// TONO_TEST_SF2=/path/to/any_gm_bank.sf2 to enable; skipped (and
     /// printed as such) otherwise so CI stays hermetic.
     #[test]
     fn sampler_renders_real_instruments_deterministically() {
-        let Some(sf2) = std::env::var_os("SONARIUM_TEST_SF2") else {
-            eprintln!("skipping sampler audio test: SONARIUM_TEST_SF2 not set");
+        let Some(sf2) = std::env::var_os("TONO_TEST_SF2") else {
+            eprintln!("skipping sampler audio test: TONO_TEST_SF2 not set");
             return;
         };
         let sf2 = sf2.to_string_lossy().replace('"', "");

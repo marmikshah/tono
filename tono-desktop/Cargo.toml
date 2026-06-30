@@ -1,6 +1,6 @@
 [package]
-name = "sonarium-desktop"
-description = "Optional native desktop studio for sonarium — real-time audition (cpal) over the deterministic engine. Built only via `make desktop`; never part of the default build, MCP server, or CI."
+name = "tono-desktop"
+description = "Optional native desktop studio for tono — real-time audition (cpal) over the deterministic engine. Built only via `make desktop`; never part of the default build, MCP server, or CI."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-sonarium-core = { workspace = true }
+tono-core = { workspace = true }
 anyhow = { workspace = true }
 base64 = { workspace = true }
 serde = { workspace = true }

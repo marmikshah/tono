@@ -1,18 +1,18 @@
 //! OS daemon management: install / uninstall / status for the HTTP MCP server,
-//! so Sonarium runs in the background and survives logout/reboot.
+//! so Tono runs in the background and survives logout/reboot.
 //!
 //! Detects the OS: macOS uses a per-user **launchd** LaunchAgent
-//! (`~/Library/LaunchAgents/com.sonarium.server.plist`, KeepAlive); Linux uses
-//! a **systemd --user** unit (`~/.config/systemd/user/sonarium.service`,
-//! Restart=on-failure). Logs land in `~/.sonarium/logs/`.
+//! (`~/Library/LaunchAgents/com.tono.server.plist`, KeepAlive); Linux uses
+//! a **systemd --user** unit (`~/.config/systemd/user/tono.service`,
+//! Restart=on-failure). Logs land in `~/.tono/logs/`.
 
 use std::path::PathBuf;
 use std::process::Command;
 
-const LABEL: &str = "com.sonarium.server";
+const LABEL: &str = "com.tono.server";
 const DEFAULT_BIND: &str = "127.0.0.1:8787";
 
-/// Entry point for `sonarium service <install|uninstall|status> [--bind ADDR]
+/// Entry point for `tono service <install|uninstall|status> [--bind ADDR]
 /// [--workdir DIR]`. Returns a process exit code.
 pub fn run(args: &[String]) -> i32 {
     let cmd = args.first().map(|s| s.as_str());
@@ -26,7 +26,7 @@ pub fn run(args: &[String]) -> i32 {
         Some("status") => status(),
         _ => {
             eprintln!(
-                "usage: sonarium service <install|uninstall|status> [--bind ADDR] [--workdir DIR]\n\
+                "usage: tono service <install|uninstall|status> [--bind ADDR] [--workdir DIR]\n\
                  \n\
                  install    set up + start the background service (launchd / systemd --user)\n\
                  uninstall  stop + remove the service\n\
@@ -52,14 +52,14 @@ fn home() -> Option<PathBuf> {
 
 fn default_workdir() -> PathBuf {
     home()
-        .map(|h| h.join(".sonarium").join("sounds"))
-        .unwrap_or_else(|| std::env::temp_dir().join("sonarium"))
+        .map(|h| h.join(".tono").join("sounds"))
+        .unwrap_or_else(|| std::env::temp_dir().join("tono"))
 }
 
 fn log_dir() -> PathBuf {
     home()
-        .map(|h| h.join(".sonarium").join("logs"))
-        .unwrap_or_else(|| std::env::temp_dir().join("sonarium_logs"))
+        .map(|h| h.join(".tono").join("logs"))
+        .unwrap_or_else(|| std::env::temp_dir().join("tono_logs"))
 }
 
 fn current_uid() -> String {
@@ -87,12 +87,12 @@ fn launchd_plist(bin: &str, bind: &str, workdir: &str, logs: &str) -> String {
     </array>
     <key>EnvironmentVariables</key>
     <dict>
-        <key>SONARIUM_WORKDIR</key><string>{workdir}</string>
+        <key>TONO_WORKDIR</key><string>{workdir}</string>
     </dict>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>{logs}/sonarium.out.log</string>
-    <key>StandardErrorPath</key><string>{logs}/sonarium.err.log</string>
+    <key>StandardOutPath</key><string>{logs}/tono.out.log</string>
+    <key>StandardErrorPath</key><string>{logs}/tono.err.log</string>
 </dict>
 </plist>
 "#
@@ -103,12 +103,12 @@ fn launchd_plist(bin: &str, bind: &str, workdir: &str, logs: &str) -> String {
 fn systemd_unit(bin: &str, bind: &str, workdir: &str) -> String {
     format!(
         "[Unit]\n\
-         Description=Sonarium MCP audio server\n\
+         Description=Tono MCP audio server\n\
          After=network.target\n\
          \n\
          [Service]\n\
          ExecStart={bin} --http {bind}\n\
-         Environment=SONARIUM_WORKDIR={workdir}\n\
+         Environment=TONO_WORKDIR={workdir}\n\
          Restart=on-failure\n\
          RestartSec=2\n\
          \n\
@@ -119,7 +119,7 @@ fn systemd_unit(bin: &str, bind: &str, workdir: &str) -> String {
 
 fn install(bind: &str, workdir: &std::path::Path) -> i32 {
     let Ok(bin) = std::env::current_exe() else {
-        eprintln!("cannot resolve the sonarium binary path");
+        eprintln!("cannot resolve the tono binary path");
         return 1;
     };
     let bin = bin.to_string_lossy().into_owned();
@@ -168,7 +168,7 @@ fn install(bind: &str, workdir: &std::path::Path) -> i32 {
                 return 1;
             }
             println!(
-                "✓ launchd service installed and started\n  label:    {LABEL}\n  plist:    {}\n  endpoint: http://{bind}/mcp\n  workdir:  {wd}\n  logs:     {}/sonarium.{{out,err}}.log\n\nConnect a client:\n  claude mcp add --transport http sonarium http://{bind}/mcp",
+                "✓ launchd service installed and started\n  label:    {LABEL}\n  plist:    {}\n  endpoint: http://{bind}/mcp\n  workdir:  {wd}\n  logs:     {}/tono.{{out,err}}.log\n\nConnect a client:\n  claude mcp add --transport http tono http://{bind}/mcp",
                 plist_path.display(),
                 logs.display()
             );
@@ -181,7 +181,7 @@ fn install(bind: &str, workdir: &std::path::Path) -> i32 {
             };
             let unit_dir = home.join(".config").join("systemd").join("user");
             let _ = std::fs::create_dir_all(&unit_dir);
-            let unit_path = unit_dir.join("sonarium.service");
+            let unit_path = unit_dir.join("tono.service");
             if let Err(e) = std::fs::write(&unit_path, systemd_unit(&bin, bind, &wd)) {
                 eprintln!("failed to write {}: {e}", unit_path.display());
                 return 1;
@@ -190,7 +190,7 @@ fn install(bind: &str, workdir: &std::path::Path) -> i32 {
                 .args(["--user", "daemon-reload"])
                 .status();
             let enable = Command::new("systemctl")
-                .args(["--user", "enable", "--now", "sonarium"])
+                .args(["--user", "enable", "--now", "tono"])
                 .status();
             if !(reload.map(|s| s.success()).unwrap_or(false)
                 && enable.map(|s| s.success()).unwrap_or(false))
@@ -199,14 +199,14 @@ fn install(bind: &str, workdir: &std::path::Path) -> i32 {
                 return 1;
             }
             println!(
-                "✓ systemd --user service installed and started\n  unit:     {}\n  endpoint: http://{bind}/mcp\n  workdir:  {wd}\n  logs:     journalctl --user -u sonarium -f\n\nConnect a client:\n  claude mcp add --transport http sonarium http://{bind}/mcp",
+                "✓ systemd --user service installed and started\n  unit:     {}\n  endpoint: http://{bind}/mcp\n  workdir:  {wd}\n  logs:     journalctl --user -u tono -f\n\nConnect a client:\n  claude mcp add --transport http tono http://{bind}/mcp",
                 unit_path.display()
             );
             0
         }
         other => {
             eprintln!(
-                "no native daemon support for '{other}'. Run `sonarium --http {bind}` under your\n\
+                "no native daemon support for '{other}'. Run `tono --http {bind}` under your\n\
                  service manager of choice (e.g. NSSM or Task Scheduler on Windows)."
             );
             1
@@ -245,9 +245,9 @@ fn uninstall() -> i32 {
                 .join(".config")
                 .join("systemd")
                 .join("user")
-                .join("sonarium.service");
+                .join("tono.service");
             let _ = Command::new("systemctl")
-                .args(["--user", "disable", "--now", "sonarium"])
+                .args(["--user", "disable", "--now", "tono"])
                 .output();
             let _ = std::fs::remove_file(&unit_path);
             let _ = Command::new("systemctl")
@@ -283,20 +283,20 @@ fn status() -> i32 {
                         .map(|l| l.trim().to_string())
                         .unwrap_or_else(|| "state = unknown".into());
                     println!(
-                        "● {LABEL}: loaded ({state})\n  logs: {}/sonarium.{{out,err}}.log",
+                        "● {LABEL}: loaded ({state})\n  logs: {}/tono.{{out,err}}.log",
                         logs.display()
                     );
                     0
                 }
                 _ => {
-                    println!("○ {LABEL}: not installed (run `sonarium service install`)");
+                    println!("○ {LABEL}: not installed (run `tono service install`)");
                     1
                 }
             }
         }
         "linux" => {
             let st = Command::new("systemctl")
-                .args(["--user", "status", "sonarium", "--no-pager"])
+                .args(["--user", "status", "tono", "--no-pager"])
                 .status();
             st.map(|s| if s.success() { 0 } else { 1 }).unwrap_or(1)
         }
@@ -315,20 +315,20 @@ mod tests {
     // env var name, and label must stay in lockstep with main.rs and the docs.
     #[test]
     fn launchd_plist_wires_the_http_server() {
-        let p = launchd_plist("/usr/local/bin/sonarium", "127.0.0.1:9000", "/wd", "/logs");
-        assert!(p.contains("<string>com.sonarium.server</string>"));
+        let p = launchd_plist("/usr/local/bin/tono", "127.0.0.1:9000", "/wd", "/logs");
+        assert!(p.contains("<string>com.tono.server</string>"));
         assert!(p.contains("<string>--http</string>"));
         assert!(p.contains("<string>127.0.0.1:9000</string>"));
-        assert!(p.contains("<key>SONARIUM_WORKDIR</key><string>/wd</string>"));
-        assert!(p.contains("/logs/sonarium.out.log"));
+        assert!(p.contains("<key>TONO_WORKDIR</key><string>/wd</string>"));
+        assert!(p.contains("/logs/tono.out.log"));
         assert!(p.contains("<key>KeepAlive</key><true/>"));
     }
 
     #[test]
     fn systemd_unit_wires_the_http_server() {
-        let u = systemd_unit("/usr/bin/sonarium", "127.0.0.1:8787", "/wd");
-        assert!(u.contains("ExecStart=/usr/bin/sonarium --http 127.0.0.1:8787"));
-        assert!(u.contains("Environment=SONARIUM_WORKDIR=/wd"));
+        let u = systemd_unit("/usr/bin/tono", "127.0.0.1:8787", "/wd");
+        assert!(u.contains("ExecStart=/usr/bin/tono --http 127.0.0.1:8787"));
+        assert!(u.contains("Environment=TONO_WORKDIR=/wd"));
         assert!(u.contains("Restart=on-failure"));
     }
 }
