@@ -1,5 +1,5 @@
 //! MIDI export: write a document's `seq` compositions to a Standard MIDI File,
-//! so a melody/drum pattern written in sonarium can round-trip into a DAW.
+//! so a melody/drum pattern written in tono can round-trip into a DAW.
 //! Read-only and additive — it never touches the audio render.
 //!
 //! Each `seq` becomes one MIDI track; notes map by their `(step, len)` on a
@@ -12,7 +12,7 @@ use anyhow::Result;
 use midly::{
     Format, Header, MetaMessage, MidiMessage, Smf, Timing, Track, TrackEvent, TrackEventKind,
 };
-use sonarium_core::dsl::{Modulator, Node, SeqNote, SoundDoc, Value, note_to_hz};
+use tono_core::dsl::{Modulator, Node, SeqNote, SoundDoc, Value, note_to_hz};
 
 const PPQ: u16 = 480;
 
@@ -175,7 +175,7 @@ mod tests {
                         {"step":4,"len":4,"pitch":"G4"} ] } }"#,
         )
         .unwrap();
-        let dir = std::env::temp_dir().join("sonarium-midi-test");
+        let dir = std::env::temp_dir().join("tono-midi-test");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("m.mid");
         let s = export_midi(&doc, &path).unwrap();

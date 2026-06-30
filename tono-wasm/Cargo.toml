@@ -1,6 +1,6 @@
 [package]
-name = "sonarium-wasm"
-description = "WebAssembly bindings for the sonarium audio engine — render a synthesis graph to audio + analysis in the browser."
+name = "tono-wasm"
+description = "WebAssembly bindings for the tono audio engine — render a synthesis graph to audio + analysis in the browser."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-sonarium-core = { workspace = true }
+tono-core = { workspace = true }
 serde_json = { workspace = true }
 wasm-bindgen = "0.2.126"
 console_error_panic_hook = "0.1.7"

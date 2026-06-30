@@ -351,7 +351,7 @@ mod tests {
 
     pub(super) fn tmp_store(tag: &str) -> Store {
         let dir = std::env::temp_dir()
-            .join("sonarium_session_test")
+            .join("tono_session_test")
             .join(format!("{tag}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         Store::new(dir).unwrap()

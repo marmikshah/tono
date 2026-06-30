@@ -14,9 +14,9 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Result, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use midir::{MidiInput, MidiInputConnection};
-use sonarium_core::dsl::{Adsr, Shape, SoundDoc};
-use sonarium_core::stream::Player;
-use sonarium_core::voice::PolySynth;
+use tono_core::dsl::{Adsr, Shape, SoundDoc};
+use tono_core::stream::Player;
+use tono_core::voice::PolySynth;
 
 const MAX_VOICES: usize = 16;
 /// Headroom so a fistful of held notes doesn't clip against the patch preview.
@@ -118,7 +118,7 @@ impl AudioHandle {
 pub fn spawn(doc: SoundDoc) -> Result<AudioHandle> {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
-        .name("sonarium-audio".into())
+        .name("tono-audio".into())
         .spawn(move || match build_stream(doc) {
             Ok((stream, handle)) => {
                 let _midi = connect_midi(handle.clone()); // keep MIDI connections alive
@@ -161,7 +161,7 @@ fn build_stream(mut doc: SoundDoc) -> Result<(cpal::Stream, AudioHandle)> {
     let cb_synth = synth.clone();
     let mut stereo = Vec::<f32>::new();
     let mut mono = Vec::<f32>::new();
-    let err_fn = |e| eprintln!("sonarium audio stream error: {e}");
+    let err_fn = |e| eprintln!("tono audio stream error: {e}");
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device.build_output_stream(
@@ -242,26 +242,26 @@ fn mix(
 /// plugged in later aren't hot-detected in v1.
 fn connect_midi(handle: AudioHandle) -> Vec<MidiInputConnection<()>> {
     let mut conns = Vec::new();
-    let Ok(scan) = MidiInput::new("sonarium-scan") else {
+    let Ok(scan) = MidiInput::new("tono-scan") else {
         return conns;
     };
     for port in scan.ports() {
-        let Ok(input) = MidiInput::new("sonarium") else {
+        let Ok(input) = MidiInput::new("tono") else {
             continue;
         };
         let name = input.port_name(&port).unwrap_or_else(|_| "midi".into());
         let h = handle.clone();
         match input.connect(
             &port,
-            "sonarium-in",
+            "tono-in",
             move |_t, msg, _| midi_message(msg, &h),
             (),
         ) {
             Ok(conn) => {
-                eprintln!("sonarium: MIDI connected — {name}");
+                eprintln!("tono: MIDI connected — {name}");
                 conns.push(conn);
             }
-            Err(e) => eprintln!("sonarium: MIDI connect failed ({name}): {e}"),
+            Err(e) => eprintln!("tono: MIDI connect failed ({name}): {e}"),
         }
     }
     conns

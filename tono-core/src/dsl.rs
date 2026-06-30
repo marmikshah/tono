@@ -1,4 +1,4 @@
-//! The Sonarium synthesis-graph DSL.
+//! The Tono synthesis-graph DSL.
 //!
 //! A [`SoundDoc`] is the canonical, declarative source of a sound. The AI agent
 //! authors one of these; the renderer turns it into samples. Everything here is
@@ -146,7 +146,7 @@ pub struct SoundDoc {
     /// DSL schema version. Omitted ⇒ 1, the semantics documents were authored
     /// under before versioning mattered; the authoring tools stamp new
     /// documents with the current [`SCHEMA_VERSION`]. Documents from a newer
-    /// sonarium are rejected by `validate` instead of silently misrendered.
+    /// tono are rejected by `validate` instead of silently misrendered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<u32>,
     /// DSP-kernel revision (see [`ENGINE_VERSION`]). Omitted ⇒ 0, the original
@@ -154,7 +154,7 @@ pub struct SoundDoc {
     /// The authoring tools stamp new documents with the current
     /// [`ENGINE_VERSION`]; raising a document's `engine` opts it into newer,
     /// higher-quality kernels (anti-aliased `drive`, …) and DOES change its
-    /// output. A document from a newer sonarium (engine > `ENGINE_VERSION`) is
+    /// output. A document from a newer tono (engine > `ENGINE_VERSION`) is
     /// rejected by `validate` rather than silently misrendered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<u32>,
@@ -1130,14 +1130,14 @@ impl SoundDoc {
         if v == 0 || v > SCHEMA_VERSION {
             return Err(format!(
                 "version must be in [1, {SCHEMA_VERSION}], got {v} — a document from a newer \
-                 sonarium cannot render correctly here; upgrade sonarium"
+                 tono cannot render correctly here; upgrade tono"
             ));
         }
         let e = self.effective_engine();
         if e > ENGINE_VERSION {
             return Err(format!(
                 "engine must be in [0, {ENGINE_VERSION}], got {e} — a document authored against \
-                 a newer DSP kernel cannot render correctly here; upgrade sonarium"
+                 a newer DSP kernel cannot render correctly here; upgrade tono"
             ));
         }
         // 600 s covers full songs; the cap exists only to bound render memory.
@@ -1693,7 +1693,7 @@ mod tests {
         assert_eq!(doc.validate(), Ok(()));
         doc.version = Some(SCHEMA_VERSION + 1);
         let err = doc.validate().unwrap_err();
-        assert!(err.contains("upgrade sonarium"), "unhelpful error: {err}");
+        assert!(err.contains("upgrade tono"), "unhelpful error: {err}");
         doc.version = Some(0);
         assert!(doc.validate().is_err());
     }

@@ -598,7 +598,7 @@ mod tests {
         let samples: Vec<f32> = (0..sr / 10)
             .map(|i| (std::f32::consts::TAU * 440.0 * i as f32 / sr as f32).sin() * 0.5)
             .collect();
-        let dir = std::env::temp_dir().join("sonarium_analysis_test");
+        let dir = std::env::temp_dir().join("tono_analysis_test");
         std::fs::create_dir_all(&dir).unwrap();
         let png = dir.join("sine.png");
         let a = analyze(&samples, sr, &png).unwrap();
@@ -631,7 +631,7 @@ mod tests {
                 *sample = 0.8;
             }
         }
-        let dir = std::env::temp_dir().join("sonarium_analysis_test");
+        let dir = std::env::temp_dir().join("tono_analysis_test");
         std::fs::create_dir_all(&dir).unwrap();
         let a = analyze(&samples, sr as u32, &dir.join("bursts.png")).unwrap();
         assert_eq!(a.onset_count, 2);

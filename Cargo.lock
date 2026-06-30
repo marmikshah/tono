@@ -3529,66 +3529,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sonarium"
-version = "1.2.0"
-dependencies = [
- "anyhow",
- "axum",
- "base64 0.22.1",
- "flacenc",
- "hound",
- "midly",
- "rmcp",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "sonarium-core",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "vorbis_rs",
-]
-
-[[package]]
-name = "sonarium-core"
-version = "1.2.0"
-dependencies = [
- "anyhow",
- "image",
- "rustfft",
- "rustysynth",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "sonarium-desktop"
-version = "1.2.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "cpal",
- "midir",
- "serde",
- "serde_json",
- "sonarium-core",
- "tauri",
- "tauri-build",
-]
-
-[[package]]
-name = "sonarium-wasm"
-version = "1.2.0"
-dependencies = [
- "console_error_panic_hook",
- "serde_json",
- "sonarium-core",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "soup3"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4287,6 +4227,66 @@ name = "toml_writer"
 version = "1.1.1+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "756daf9b1013ebe47a8776667b466417e2d4c5679d441c26230efd9ef78692db"
+
+[[package]]
+name = "tono"
+version = "1.2.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "flacenc",
+ "hound",
+ "midly",
+ "rmcp",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tono-core",
+ "tracing",
+ "tracing-subscriber",
+ "vorbis_rs",
+]
+
+[[package]]
+name = "tono-core"
+version = "1.2.0"
+dependencies = [
+ "anyhow",
+ "image",
+ "rustfft",
+ "rustysynth",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "tono-desktop"
+version = "1.2.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "cpal",
+ "midir",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tono-core",
+]
+
+[[package]]
+name = "tono-wasm"
+version = "1.2.0"
+dependencies = [
+ "console_error_panic_hook",
+ "serde_json",
+ "tono-core",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "tower"
