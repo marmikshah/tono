@@ -1,9 +1,9 @@
-# Sonarium — sound-engineering MCP server.
+# Tono — sound-engineering MCP server.
 #
 # Bare `make` builds release and runs the HTTP MCP server (the default).
 # `make help` lists everything.
 
-BIN     := target/release/sonarium
+BIN     := target/release/tono
 BIND    ?= 127.0.0.1:8787
 WORKDIR ?= ./sounds
 
@@ -17,34 +17,34 @@ help: ## List available targets
 run: serve ## Default: release build, then run the HTTP MCP server
 
 serve: release ## Run the streamable HTTP MCP server (BIND, WORKDIR overridable)
-	@echo "sonarium HTTP MCP → http://$(BIND)/mcp   (workdir: $(WORKDIR))"
-	SONARIUM_WORKDIR=$(WORKDIR) $(BIN) --http $(BIND)
+	@echo "tono HTTP MCP → http://$(BIND)/mcp   (workdir: $(WORKDIR))"
+	TONO_WORKDIR=$(WORKDIR) $(BIN) --http $(BIND)
 
 stdio: release ## Run the stdio MCP server (client spawns the binary)
-	SONARIUM_WORKDIR=$(WORKDIR) $(BIN)
+	TONO_WORKDIR=$(WORKDIR) $(BIN)
 
 build: ## Debug build
 	cargo build
 
-release: ## Optimized release build → target/release/sonarium
+release: ## Optimized release build → target/release/tono
 	cargo build --release
 
 WASM_BINDGEN_VERSION := 0.2.126
 
-wasm: ## Build the browser playground (sonarium-core → WASM into docs/playground/pkg)
+wasm: ## Build the browser playground (tono-core → WASM into docs/playground/pkg)
 	rustup target add wasm32-unknown-unknown
 	command -v wasm-bindgen >/dev/null || cargo install wasm-bindgen-cli --version $(WASM_BINDGEN_VERSION) --locked
 	# Remap the builder's home out of embedded panic-location strings so the
 	# committed binary carries no machine paths / usernames.
 	RUSTFLAGS='--remap-path-prefix=$(HOME)=~' \
-		cargo build -p sonarium-wasm --target wasm32-unknown-unknown --release
-	wasm-bindgen target/wasm32-unknown-unknown/release/sonarium_wasm.wasm \
+		cargo build -p tono-wasm --target wasm32-unknown-unknown --release
+	wasm-bindgen target/wasm32-unknown-unknown/release/tono_wasm.wasm \
 		--out-dir docs/playground/pkg --target web --no-typescript
 	@echo "→ serve it:  python3 -m http.server -d docs/playground 8080"
 
 desktop: ## Build the optional native studio (cpal real-time audio) — NOT in the default build/CI
-	cargo build -p sonarium-desktop --release
-	@echo "→ native preview:  target/release/sonarium-desktop play docs/examples/retro-coin.json"
+	cargo build -p tono-desktop --release
+	@echo "→ native preview:  target/release/tono-desktop play docs/examples/retro-coin.json"
 
 branding: wasm ## Refresh demo/branding assets — the WASM playground (logo + wordmark are hand-authored in atelier under docs/)
 	@echo "branding: playground rebuilt; logo + wordmark live in docs/ (authored in atelier)"
@@ -84,4 +84,4 @@ daemon-uninstall: ## Stop + remove the daemon
 
 install: release ## Print the command to register with Claude Code over HTTP
 	@echo "1) start the server:  make serve"
-	@echo "2) register client:   claude mcp add --transport http sonarium http://$(BIND)/mcp"
+	@echo "2) register client:   claude mcp add --transport http tono http://$(BIND)/mcp"
