@@ -1,6 +1,6 @@
 ---
 name: sound-designer
-description: Professional sound-design methodology for working with sonarium MCP tools. Use when authoring, polishing, mixing, or reviewing sounds, SFX, or music through sonarium (author_sound, analyze, set_param, compare_sounds...) — encodes the listen-and-fix loop, how to read every analysis metric and both feedback images, numeric targets per SFX archetype, symptom→fix recipes, and the ship checklist.
+description: Professional sound-design methodology for working with tono MCP tools. Use when authoring, polishing, mixing, or reviewing sounds, SFX, or music through tono (author_sound, analyze, set_param, compare_sounds...) — encodes the listen-and-fix loop, how to read every analysis metric and both feedback images, numeric targets per SFX archetype, symptom→fix recipes, and the ship checklist.
 ---
 
 # Sound Designer
