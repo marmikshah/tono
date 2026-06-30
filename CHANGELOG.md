@@ -8,7 +8,7 @@ play sound in** — a browser playground and an optional native desktop app, bot
 on the one deterministic core, with the MCP face unchanged.
 
 ### Real-time engine + native desktop studio
-- **`sonarium-core::stream::Player`** — the host-agnostic audition seam an audio
+- **`tono-core::stream::Player`** — the host-agnostic audition seam an audio
   callback fills in blocks. The invariant that makes live editing safe is pinned
   by test: audio served block-by-block is **byte-identical to an offline bounce**
   of the same document.
@@ -16,7 +16,7 @@ on the one deterministic core, with the MCP face unchanged.
   with gate-on/off, reusing the renderer's exact kernels) and a `PolySynth`
   voice allocator with voice-stealing. The live-performance path, distinct from
   the byte-identical offline render.
-- **`sonarium-desktop`** — an **optional** Tauri + `cpal` native studio running
+- **`tono-desktop`** — an **optional** Tauri + `cpal` native studio running
   the full node patcher with real-time audio: edits play live, ▶ Play auditions
   the patch, and you **play the patch like an instrument** from the computer
   keyboard (A–K) or a hardware **MIDI** controller (native CoreMIDI via `midir`),
@@ -66,13 +66,13 @@ on the one deterministic core, with the MCP face unchanged.
   name, so every saved session and shipped recipe replays byte-for-byte.
 
 ### Workspace + browser playground
-- **`sonarium-core` crate** — the pure, headless engine (graph DSL, DSP,
+- **`tono-core` crate** — the pure, headless engine (graph DSL, DSP,
   deterministic renderer, analysis, critique, graph transforms) extracted into
-  its own crate with **no I/O, no MCP, no transport**. The `sonarium` binary is
+  its own crate with **no I/O, no MCP, no transport**. The `tono` binary is
   now a thin shell (MCP server, encoders, persistence, daemon) that re-exports
   it, so every existing path is unchanged. One core, three targets: native MCP,
   WASM, and a future in-engine runtime.
-- **WASM build + manual node patcher** — `sonarium-wasm` compiles the core to
+- **WASM build + manual node patcher** — `tono-wasm` compiles the core to
   WebAssembly; `make wasm` emits it into `docs/playground/`, a zero-install
   browser studio where a human **builds a sound effect by hand, modular-synth
   style**: drop nodes from a palette (oscillators, envelopes, filters,
@@ -258,7 +258,7 @@ First release. A headless sound studio for AI agents, driven over MCP.
 
 ### Sessions
 - Every mutating call journaled; `save_session` / `replay_session` (and the
-  `sonarium replay` CLI) reproduce a project **byte-for-byte** in a fresh
+  `tono replay` CLI) reproduce a project **byte-for-byte** in a fresh
   directory. Annotated recipe files double as tutorials; nine showcases —
   including the complete *River Flows in You*, its phonk remix, and an
   iconic-sounds pack — replay in CI, with playable renders committed.

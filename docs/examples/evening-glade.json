@@ -1,6 +1,6 @@
 {
   "name": "evening-glade",
-  "description": "A soft game BGM loop: broken e-piano chords drift over a string pad and a held bass through C-G-Am-F, with a sparse piano answer in the back half \u2014 humanized, reverb-glued, and loop-wrapped on a G turnaround. Replay with: sonarium replay docs/examples/evening-glade.json",
+  "description": "A soft game BGM loop: broken e-piano chords drift over a string pad and a held bass through C-G-Am-F, with a sparse piano answer in the back half \u2014 humanized, reverb-glued, and loop-wrapped on a G turnaround. Replay with: tono replay docs/examples/evening-glade.json",
   "steps": [
     {
       "tool": "author_sound",

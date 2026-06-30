@@ -1,6 +1,6 @@
 {
   "name": "iron-gauntlet",
-  "description": "Boss-battle BGM at 156 bpm in E phrygian: a tanh-driven bass riff ducks under the kick, a sawtooth lead snarls in over backbeat organ stabs and a dark string drone, with a tom fill spilling into the loop wrap. Replay with: sonarium replay docs/examples/iron-gauntlet.json",
+  "description": "Boss-battle BGM at 156 bpm in E phrygian: a tanh-driven bass riff ducks under the kick, a sawtooth lead snarls in over backbeat organ stabs and a dark string drone, with a tom fill spilling into the loop wrap. Replay with: tono replay docs/examples/iron-gauntlet.json",
   "steps": [
     {
       "tool": "author_sound",

@@ -1,6 +1,6 @@
 {
   "name": "sunny-steps",
-  "description": "Idle-platformer BGM: a swung square-wave hook bounces over triangle oom-pah bass, off-beat e-piano comps and a featherweight kit \u2014 126 bpm, shuffle 0.55, humanized, with a two-note pickup winking into the loop wrap. Replay with: sonarium replay docs/examples/sunny-steps.json",
+  "description": "Idle-platformer BGM: a swung square-wave hook bounces over triangle oom-pah bass, off-beat e-piano comps and a featherweight kit \u2014 126 bpm, shuffle 0.55, humanized, with a two-note pickup winking into the loop wrap. Replay with: tono replay docs/examples/sunny-steps.json",
   "steps": [
     {
       "tool": "author_sound",
