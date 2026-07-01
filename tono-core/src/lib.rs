@@ -25,5 +25,6 @@ pub mod render;
 pub mod review;
 pub mod runtime;
 pub mod stream;
+pub mod streaming;
 pub mod vary;
 pub mod voice;
