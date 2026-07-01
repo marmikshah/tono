@@ -1,6 +1,6 @@
 [package]
 name = "tono-desktop"
-description = "Optional native desktop studio for tono — real-time audition (cpal) over the deterministic engine. Built only via `make desktop`; never part of the default build, MCP server, or CI."
+description = "Optional native desktop studio for tono — real-time audition (cpal) over the deterministic engine. Built only via `make desktop`; never part of the default build or CI."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

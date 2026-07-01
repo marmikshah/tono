@@ -1,185 +1,147 @@
-//! Tono — a sound-engineering MCP server: agents author symbolic synthesis
-//! graphs; the server renders them deterministically and feeds back analysis.
+//! tono — a deterministic sound engine on the command line.
 //!
-//! Two transports:
-//! - **stdio** (default) — for clients that spawn the binary directly.
-//! - **streamable HTTP** (`--http [addr]` or `TONO_TRANSPORT=http`) — for
-//!   connecting any networked MCP client.
+//! Render a `SoundDoc` to audio plus the two feedback images and stats, so any
+//! tool — or an agent with a shell — can author sound by the loop: write a doc,
+//! render it, look at the spectrogram/waveform, refine.
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::fs;
+use std::path::{Path, PathBuf};
 
-use rmcp::{
-    ServiceExt,
-    transport::{
-        stdio,
-        streamable_http_server::{
-            StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
-        },
-    },
-};
+use tono_core::dsl::SoundDoc;
+use tono_core::render;
 
-use tono::server::{Tono, rehydrate};
-use tono::service;
-use tono::session::Store;
-
-/// Default HTTP bind address.
-const DEFAULT_BIND: &str = "127.0.0.1:8787";
-
-/// Selected transport.
-enum Transport {
-    Stdio,
-    Http(String),
-}
-
-/// Resolve the working directory for rendered artifacts. `TONO_WORKDIR`
-/// overrides (point it at your game's assets); otherwise a stable per-user
-/// `~/.tono/sounds`, falling back to a temp dir only when no home exists.
-fn working_dir() -> PathBuf {
-    if let Some(p) = std::env::var_os("TONO_WORKDIR") {
-        return PathBuf::from(p);
-    }
-    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-        return PathBuf::from(home).join(".tono").join("sounds");
-    }
-    std::env::temp_dir().join("tono")
-}
-
-/// Pick the transport from CLI args / env.
-/// `--http [addr]`, or `TONO_TRANSPORT=http` (+ optional `TONO_BIND`).
-fn transport() -> Transport {
-    let args: Vec<String> = std::env::args().collect();
-    if let Some(pos) = args.iter().position(|a| a == "--http") {
-        let addr = args
-            .get(pos + 1)
-            .filter(|a| !a.starts_with('-'))
-            .cloned()
-            .or_else(|| std::env::var("TONO_BIND").ok())
-            .unwrap_or_else(|| DEFAULT_BIND.to_string());
-        return Transport::Http(addr);
-    }
-    if std::env::var("TONO_TRANSPORT").as_deref() == Ok("http") {
-        let addr = std::env::var("TONO_BIND").unwrap_or_else(|_| DEFAULT_BIND.to_string());
-        return Transport::Http(addr);
-    }
-    Transport::Stdio
-}
-
-const HELP: &str = "tono — a sound-engineering MCP server driven by tool calls.
+const HELP: &str = "tono — a deterministic sound engine.
 
 USAGE:
-    tono                       run the MCP server over stdio (for clients that spawn it)
-    tono --http [ADDR]         run the streamable-HTTP MCP server (default 127.0.0.1:8787, endpoint /mcp)
-    tono replay FILE           replay a session file / recipe into a fresh working directory
-            [--workdir DIR]        (default: ./tono-replay)
-    tono service install       install + start the background daemon (launchd / systemd --user)
-             [--bind ADDR] [--workdir DIR]
-    tono service status        show daemon state and log locations
-    tono service uninstall     stop + remove the daemon
-    tono --version             print the version
+    tono render FILE.json [-o DIR] [--format wav|flac|ogg]
+        Render a SoundDoc into DIR (default: .):
+          <name>.wav|flac|ogg   the audio
+          <name>.png            spectrogram   (look at this)
+          <name>_wave.png       waveform      (and this)
+          <name>.stats.json     peak/RMS/LUFS/spectral/transient analysis
 
-ENVIRONMENT:
-    TONO_WORKDIR    where renders/exports land (default ~/.tono/sounds) — point at your game's assets
-    TONO_BIND       HTTP bind address (with TONO_TRANSPORT=http)
-    RUST_LOG            log filter (logs go to stderr)";
+    tono midi FILE.json [-o FILE.mid]
+        Export a SoundDoc's sequences to a Standard MIDI File.
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Subcommands / flags that don't start the server.
+    tono --version | --help
+
+The SoundDoc format and the node vocabulary are documented in docs/cookbook.md.";
+
+fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    match args.get(1).map(|s| s.as_str()) {
-        Some("service") => std::process::exit(service::run(&args[2..])),
-        Some("replay") => return replay_cli(&args[2..]).await,
+    match args.get(1).map(String::as_str) {
+        Some("render") => render_cmd(&args[2..]),
+        Some("midi") => midi_cmd(&args[2..]),
         Some("--version") | Some("-V") => {
             println!("tono {}", env!("CARGO_PKG_VERSION"));
-            return Ok(());
+            Ok(())
         }
-        Some("--help") | Some("-h") => {
+        _ => {
             println!("{HELP}");
-            return Ok(());
+            Ok(())
         }
-        _ => {}
     }
-
-    // Logs go to stderr so they never corrupt the stdio JSON-RPC stream.
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-        )
-        .init();
-
-    let dir = working_dir();
-    let store = Arc::new(Store::new(dir.clone())?);
-    // Rebuild the index from graphs persisted in a previous run so a restarted
-    // server still sees earlier sounds (and banks).
-    let restored = rehydrate(&store);
-    tracing::info!(workdir = %dir.display(), restored, "tono starting");
-
-    match transport() {
-        Transport::Stdio => {
-            let service = Tono::new(store).serve(stdio()).await?;
-            service.waiting().await?;
-        }
-        Transport::Http(addr) => serve_http(store, &addr).await?,
-    }
-    Ok(())
 }
 
-/// `tono replay FILE [--workdir DIR]` — reproduce a saved session without
-/// an MCP client: render every recorded tool call into a fresh directory.
-async fn replay_cli(args: &[String]) -> anyhow::Result<()> {
-    use rmcp::handler::server::wrapper::Parameters;
-    let Some(file) = args.first().filter(|a| !a.starts_with('-')) else {
-        anyhow::bail!("usage: tono replay FILE [--workdir DIR]");
-    };
-    let workdir = args
-        .iter()
-        .position(|a| a == "--workdir")
+/// The value after `flag` (e.g. `-o DIR`).
+fn opt<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    args.iter()
+        .position(|a| a == flag)
         .and_then(|i| args.get(i + 1))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("./tono-replay"));
+        .map(String::as_str)
+}
 
-    let store = Arc::new(Store::new(workdir.clone())?);
-    let server = Tono::new(store.clone());
-    let resp = server
-        .replay_session(Parameters(tono::server::ReplaySessionReq {
-            path: file.clone(),
-        }))
-        .await
-        .map_err(|e| anyhow::anyhow!(e))?;
+/// The first non-flag argument.
+fn positional(args: &[String]) -> Option<&str> {
+    args.iter()
+        .find(|a| !a.starts_with('-'))
+        .map(String::as_str)
+}
 
-    println!(
-        "replayed {} step(s) into {}",
-        resp.0.applied,
-        workdir.display()
+fn load_doc(path: &str) -> anyhow::Result<SoundDoc> {
+    let mut doc: SoundDoc = serde_json::from_str(&fs::read_to_string(path)?)?;
+    doc.ensure_track_ids();
+    doc.validate().map_err(|e| anyhow::anyhow!(e))?;
+    Ok(doc)
+}
+
+fn render_cmd(args: &[String]) -> anyhow::Result<()> {
+    let file = positional(args).ok_or_else(|| {
+        anyhow::anyhow!("usage: tono render FILE.json [-o DIR] [--format wav|flac|ogg]")
+    })?;
+    let out_dir = PathBuf::from(
+        opt(args, "-o")
+            .or_else(|| opt(args, "--out"))
+            .unwrap_or("."),
     );
-    for rec in store.list() {
-        println!(
-            "  {}  {:.2}s  {}",
-            rec.id,
-            rec.graph.duration,
-            rec.wav_path.display()
-        );
+    let format = opt(args, "--format").unwrap_or("wav");
+
+    let doc = load_doc(file)?;
+    fs::create_dir_all(&out_dir)?;
+
+    let product = render::render_product(&doc);
+    let stem = if doc.name.is_empty() {
+        Path::new(file)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("sound")
+            .to_string()
+    } else {
+        doc.name.clone()
+    };
+    let (left, right) = product
+        .stereo
+        .clone()
+        .unwrap_or_else(|| (product.mono.clone(), product.mono.clone()));
+
+    let audio_path = out_dir.join(format!("{stem}.{}", audio_ext(format)));
+    match format {
+        "flac" => tono::audio::write_flac(
+            &audio_path,
+            &[left.as_slice(), right.as_slice()],
+            doc.sample_rate,
+            16,
+        )?,
+        "ogg" => tono::audio::write_ogg(
+            &audio_path,
+            &[left.as_slice(), right.as_slice()],
+            doc.sample_rate,
+            0.7,
+        )?,
+        _ => tono::audio::write_wav_stereo(&audio_path, &left, &right, doc.sample_rate, 16)?,
     }
+
+    // The feedback images + numeric analysis — the loop's "look at it" half.
+    let png = out_dir.join(format!("{stem}.png"));
+    let analysis = tono::imaging::analyze_to_disk(&product.mono, doc.sample_rate, &png)?;
+    let stats = out_dir.join(format!("{stem}.stats.json"));
+    fs::write(&stats, serde_json::to_string_pretty(&analysis)?)?;
+
+    println!("{}", audio_path.display());
+    println!("{}", png.display());
+    println!("{}", analysis.waveform_png_path);
+    println!("{}", stats.display());
     Ok(())
 }
 
-/// Serve over streamable HTTP at `addr`, mounting the MCP endpoint at `/mcp`.
-/// ONE handler is built and cloned per session: every connection shares the
-/// same store, the same journal (one append mutex — concurrent sessions can't
-/// tear journal lines), and the same replay flag.
-async fn serve_http(store: Arc<Store>, addr: &str) -> anyhow::Result<()> {
-    let handler = Tono::new(store);
-    let service = StreamableHttpService::new(
-        move || Ok(handler.clone()),
-        Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig::default(),
+fn audio_ext(format: &str) -> &str {
+    match format {
+        "flac" => "flac",
+        "ogg" => "ogg",
+        _ => "wav",
+    }
+}
+
+fn midi_cmd(args: &[String]) -> anyhow::Result<()> {
+    let file = positional(args)
+        .ok_or_else(|| anyhow::anyhow!("usage: tono midi FILE.json [-o FILE.mid]"))?;
+    let out = PathBuf::from(
+        opt(args, "-o")
+            .or_else(|| opt(args, "--out"))
+            .unwrap_or("out.mid"),
     );
-    let router = axum::Router::new().nest_service("/mcp", service);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    let bound = listener.local_addr()?;
-    tracing::info!("tono MCP listening at http://{bound}/mcp");
-    axum::serve(listener, router).await?;
+    let doc = load_doc(file)?;
+    tono::midi::export_midi(&doc, &out)?;
+    println!("{}", out.display());
     Ok(())
 }

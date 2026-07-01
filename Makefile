@@ -1,28 +1,19 @@
-# Tono — sound-engineering MCP server.
+# tono — a deterministic sound engine (library + CLI).
 #
-# Bare `make` builds release and runs the HTTP MCP server (the default).
-# `make help` lists everything.
+# `make help` lists every target. `make verify` is exactly what CI runs.
 
 BIN     := target/release/tono
-BIND    ?= 127.0.0.1:8787
-WORKDIR ?= ./sounds
 RELEASE_BRANCH ?= master
 
-.DEFAULT_GOAL := run
-.PHONY: help run serve stdio build build-release release desktop play test fmt lint check pre-commit-checks verify hooks clean install daemon daemon-status daemon-uninstall
+.DEFAULT_GOAL := help
+.PHONY: help run build build-release install desktop play test fmt lint check pre-commit-checks verify release hooks clean
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-run: serve ## Default: release build, then run the HTTP MCP server
-
-serve: build-release ## Run the streamable HTTP MCP server (BIND, WORKDIR overridable)
-	@echo "tono HTTP MCP → http://$(BIND)/mcp   (workdir: $(WORKDIR))"
-	TONO_WORKDIR=$(WORKDIR) $(BIN) --http $(BIND)
-
-stdio: build-release ## Run the stdio MCP server (client spawns the binary)
-	TONO_WORKDIR=$(WORKDIR) $(BIN)
+run: build-release ## Build release and print the CLI usage
+	$(BIN) --help
 
 build: ## Debug build
 	cargo build
@@ -30,7 +21,10 @@ build: ## Debug build
 build-release: ## Optimized release build → target/release/tono
 	cargo build --release
 
-desktop: ## Build the native desktop studio (Tauri window + cpal audio + MIDI) — NOT in the default build/CI
+install: ## Install the `tono` CLI into ~/.cargo/bin
+	cargo install --path .
+
+desktop: ## Build the native desktop studio (Tauri + cpal + MIDI) — NOT in the default build/CI
 	cargo build -p tono-desktop --release
 	@echo "→ run it:  target/release/tono-desktop"
 
@@ -69,16 +63,3 @@ hooks: ## Enable the pre-push gate (runs 'make verify' before every push)
 
 clean: ## Remove build artifacts
 	cargo clean
-
-daemon: build-release ## Install + start the background daemon (launchd / systemd --user)
-	$(BIN) service install --bind $(BIND) --workdir $(abspath $(WORKDIR))
-
-daemon-status: ## Show daemon state
-	$(BIN) service status
-
-daemon-uninstall: ## Stop + remove the daemon
-	$(BIN) service uninstall
-
-install: build-release ## Print the command to register with Claude Code over HTTP
-	@echo "1) start the server:  make serve"
-	@echo "2) register client:   claude mcp add --transport http tono http://$(BIND)/mcp"

@@ -1,0 +1,10 @@
+{
+  "name": "hat",
+  "duration": 0.15,
+  "engine": 2,
+  "root": { "type": "mul", "inputs": [
+    { "type": "chain", "stages": [
+      { "type": "noise", "color": "white" },
+      { "type": "highpass", "cutoff": 7000, "q": 0.7 } ] },
+    { "type": "env", "a": 0.001, "d": 0.04, "s": 0.0, "r": 0.02 } ] }
+}

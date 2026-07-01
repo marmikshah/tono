@@ -1,7 +1,20 @@
-# Tono Cookbook
+# The tono cookbook — the `SoundDoc` DSL and how to build sounds
 
-A sound is one `SoundDoc`:
-`{ "name": ..., "duration": secs, "sample_rate": 44100, "seed": 0, "root": <node> }`
+`tono` is a deterministic sound engine. You author a sound as a **`SoundDoc`** —
+a JSON synthesis graph — and render it. Rendering is a pure function of
+`(graph, seed, sample_rate)` → **byte-identical** audio: the same doc always
+produces the same WAV, so a `doc.json` *is* the reproducible artifact.
+
+The loop is: write a doc → render it → read the images and stats → change one
+thing → re-render.
+
+1. Write a doc:
+   `{ "name": ..., "duration": secs, "sample_rate": 44100, "seed": 0, "root": <node> }`.
+2. Render it: `tono render doc.json -o out/` writes `out/<name>.wav`,
+   `out/<name>.png` (spectrogram), `out/<name>_wave.png` (waveform), and
+   `out/<name>.stats.json` (peak / RMS / LUFS / spectral / transient analysis).
+3. Look at the two images, read the stats, edit one field in the JSON,
+   re-render. Repeat.
 
 `root` is a single node; every node is a mono signal. Multiply a source by an
 envelope (`mul`), layer sources with `mix`, and pipe a source through processors
@@ -41,52 +54,66 @@ with `chain`. Any numeric param is a constant or a modulator
 
 ## Reading the feedback
 
-Every render returns **two images** — a spectrogram (freq×time) and a waveform
-(amplitude×time) — plus numbers. The spectrogram's frequency axis is
-**logarithmic**, so bass and low-mids (basslines, modal partials, the body of a
-sound) get real vertical space instead of being crushed into a bottom strip.
-Read the waveform for the *envelope shape*: a sharp vertical onset = punchy; a
-long fade = ringing tail; two humps = a double-trigger. The numeric
-`attack_time_ms` / `attack_slope_db_per_ms` / `decay_time_ms` / `onset_count` /
-`head_silence_ms` / `tail_silence_ms` quantify exactly that — `attack_slope` is
-the snappiness readout (big = a click/impact, small = a swell). Two spectral
-descriptors round out the picture: `spectral_flatness` (≈0 tonal/pitched, ≈1
-noisy/hissy) and `inharmonicity` (share of energy *off* the harmonic grid — low
-for a clean tone, high for noise, bells/metal, **and aliasing**: it's the meter
-that shows an anti-aliasing fix working). To converge a sound toward a
-reference, call `compare_sounds { a, b }` and drive the reported deltas
-(centroid/brightness, LUFS, attack, …) toward zero.
+`tono render` writes **two images** — a spectrogram (freq×time) and a waveform
+(amplitude×time) — plus the numbers in `.stats.json`. The spectrogram's
+frequency axis is **logarithmic**, so bass and low-mids (basslines, modal
+partials, the body of a sound) get real vertical space instead of being crushed
+into a bottom strip. Read the waveform for the *envelope shape*: a sharp
+vertical onset = punchy; a long fade = ringing tail; two humps = a
+double-trigger. The numeric `attack_time_ms` / `attack_slope_db_per_ms` /
+`decay_time_ms` / `onset_count` / `head_silence_ms` / `tail_silence_ms` quantify
+exactly that — `attack_slope` is the snappiness readout (big = a click/impact,
+small = a swell). Two spectral descriptors round out the picture:
+`spectral_flatness` (≈0 tonal/pitched, ≈1 noisy/hissy) and `inharmonicity`
+(share of energy *off* the harmonic grid — low for a clean tone, high for noise,
+bells/metal, **and aliasing**: it's the meter that shows an anti-aliasing fix
+working). To converge a sound toward a reference, render both and compare their
+`.stats.json` — drive the deltas (centroid/brightness, LUFS, attack, …) toward
+zero.
 
-## Reviewing & iterating (review → polish → review)
+## Judging a sound — targets, not vibes
 
-`review_sound { id, archetype }` grades a sound against its archetype's targets
-(attack / centroid / crest / duration) and the universal ship checklist
-(clipping, true-peak, head/tail silence, onset count, loop seam). It returns
-PASS / WARN / FAIL findings — each with the measured value, the target, and the
-**concrete fix to try** — so judging a sound is reproducible, not vibes:
-```json
-{ "id": "laser_zap", "archetype": "laser" }
-→ FAIL: crest 7 dB (target 12–99) → "add punch, shorten attack";
-   centroid 1200 Hz (target 2000–8000) → "raise a filter cutoff / brighter wave"
-```
-Archetypes: `laser` `coin` `jump` `impact` `ui` `ambience` `bgm` (omit for the
-universal checks only). Drive a **polish loop** with it: review → apply the
-highest-severity finding's fix with one `set_param` → review again →
-`history { op: "undo" }` if it regressed → repeat until PASS. The **sound-review-loop**
-skill runs exactly this, and lets you hand in review in your own words at any
-step. Don't chase a WARN the sound's character justifies (a bell's long tail, a
-gusting wind's crest) — stop at the targets, not past them.
+Judge a sound by reading its `.stats.json` against concrete targets, so the call
+is reproducible rather than a matter of taste. There are two layers of targets.
+
+**The universal ship checklist** (every sound): no clipping — keep
+`true_peak_dbfs` below 0; trimmed dead air — small `head_silence_ms` /
+`tail_silence_ms`; the right `onset_count` (one hit ⇒ 1; a double-trigger shows
+up as 2); and a clean loop seam for anything that repeats.
+
+**Per-archetype targets** — what "good" means for a kind of sound, judged mostly
+on attack, spectral centroid, crest, and duration:
+
+| archetype | character to hit |
+|-----------|------------------|
+| `laser` | short, bright, falling, very punchy |
+| `coin` | two bright blips, moderate punch |
+| `jump` | short rising sweep, fast gate |
+| `impact` | low-centred body with a ring tail |
+| `ui` | tiny, bright, instant |
+| `ambience` | sustained, dark, low crest, looping |
+| `bgm` | a mixed musical loop |
+
+For a `laser`, aim for a crest of at least ~12 dB and a `spectral_centroid_hz`
+in the 2–8 kHz range. If the stats read crest 7 dB, add `punch` and shorten the
+attack; if the centroid reads 1200 Hz, raise a filter cutoff or pick a brighter
+wave. Drive a **polish loop**: read the stats → apply the single highest-impact
+fix by editing one field → re-render → if it regressed, revert that edit →
+repeat until the targets are met. Don't chase a deviation the sound's character
+justifies (a bell's long tail, a gusting wind's crest) — stop at the targets,
+not past them. (`tono_core::review` grades a doc against an archetype
+programmatically if you want the checklist automated in Rust.)
 
 ## Tips
 - **Punchy/percussive:** `a: 0` (instant attack), short `d`, `s: 0`, add `punch`.
 - **Pitch sweeps:** `slide` with `curve: "exp"` reads as natural pitch glide.
-- **Brightness:** read `spectral_centroid_hz` from analysis — higher = brighter.
+- **Brightness:** read `spectral_centroid_hz` from the stats — higher = brighter.
   Tame harshness with a `lowpass`; add bite with a `highpass`.
 - **Crunch/lo-fi:** `chain` a source into `bitcrush` (low `bits`) or `downsample`.
 - **Vibrato:** put an `lfo` on a source's `freq`. **Tremolo:** `mul` by an `lfo`-driven `gain`... or just an `env`.
-- Iterate in small steps: render, read the analysis, change one thing
-  (`set_param`), render again. Use `mutate_sound` with a small `amount` to
-  nudge a graph toward a variant.
+- Iterate in small steps: render, read the stats, change one field, render again.
+  `tono_core::vary::mutate(doc, amount, seed)` (a Rust API) nudges a graph toward
+  a variant with a small `amount`.
 
 ## Music with `seq`
 
@@ -268,81 +295,72 @@ reproducible.
 - **Crackle / sparse events (`dust`):** `{ "type": "dust", "density": 80, "decay": 0.025 }` is a Poisson click train — `density` grains/sec, each ringing `decay` seconds (0 = bare impulses). Fire crackle, rain, geiger ticks, sparks, debris. Band-shape it through a `bandpass`/`highpass`, or feed a `modal` for pitched debris.
 - **Organic motion (`rand`):** a random-walk modulator — `{ "rand": { "from": 250, "to": 1500, "rate": 0.7, "seed": 1 } }` — drifts non-periodically between `from` and `to`, `rate` new targets/sec. The gusting the periodic `lfo` can't do: wind (on a lowpass `cutoff`), fire flicker (on a `gain`), drifting detune. Give two `rand`s different `seed`s to decorrelate them; the walk is deterministic and edit-stable (seeded from its own fields, never shifts when siblings change).
 - **Metallic / clang:** a `modal` bank with off-harmonic mode ratios excited by a hard `impact` (the physical way — see "Struck bodies" above); or, cheaper, `fm` with integer-ish `ratio` (3, 3.5) and high `index`, or `ringmod{freq}` on a tone.
-- **Tuning a modal bank:** address one partial at a time — `set_param { id, path: "root.stages[1].modes[0].freq", value: 540 }` (each mode is its own `describe_sound` row). Stretch every `decay` for a cathedral bell, shrink them for a desk bell; raise `hardness` toward 1 to wake the upper modes. Then `generate_variants` for a non-repeating round-robin of hits.
+- **Tuning a modal bank:** address one partial at a time — set the field at
+  `root.stages[1].modes[0].freq` to 540 (each mode is its own node with its own
+  path). Stretch every `decay` for a cathedral bell, shrink them for a desk
+  bell; raise `hardness` toward 1 to wake the upper modes. `tono_core::vary::mutate`
+  then gives a non-repeating round-robin of hits.
 - **Width / thickening:** `chorus{rate,depth,mix}` on pads and leads.
 - **Glue & loudness:** end a busy chain with `compress{threshold,ratio,attack,release,makeup}`. Watch the
-  analysis: keep `true_peak_dbfs` below 0, use `loudness_lufs` to match levels across a set, and read
+  stats: keep `true_peak_dbfs` below 0, use `loudness_lufs` to match levels across a set, and read
   `crest_factor_db` (big = punchy transient, small = dense/compressed).
-- **Variations (round-robin):** `generate_variants` (or `mutate_sound` with small `amount` 0.1–0.2) spawns N
-  subtly different takes of a footstep / impact / pickup so repeats don't sound identical.
+- **Variations (round-robin):** `tono_core::vary::mutate(doc, amount, seed)` — a
+  Rust API — with a small `amount` (0.1–0.2) spawns N subtly different takes of a
+  footstep / impact / pickup so repeats don't sound identical.
 - **Stereo (BGM / ambience):** add a top-level `"stereo"` to the doc —
   `{ "mode": "wide", "amount": 0.6 }` for pseudo-stereo width, or
   `{ "mode": "haas", "ms": 12, "pan": -1 }` for precedence widening. SFX usually stay mono (engine spatialises).
 
-## Editing without re-sending the whole graph
+## Editing by path
 
-A sound persists across restarts and has a stable slug id (from its name, e.g.
-`laser_zap`). To change it, you do **not** re-send the whole graph:
-
-1. `describe_sound { id }` → every node's path + type + params, e.g.
-   `root.inputs[0].freq`, `root.stages[1].cutoff`.
-2. `set_param { id, path, value }` → change one value. `value` is a number, a
-   modulator object, or a whole node:
-   ```json
-   { "id": "laser_zap", "path": "root.inputs[0].inputs[0].freq",
-     "value": { "slide": { "from": 880, "to": 140, "secs": 0.18, "curve": "exp" } } }
-   ```
-3. `edit_sound { id, ops }` → many edits in one re-render (the batch form):
-   ```json
-   { "id": "impact", "ops": [
-     { "op": "set", "path": "root.stages[1].cutoff", "value": 180 },
-     { "op": "insert", "path": "root.stages", "index": 2,
-       "node": { "type": "compress", "threshold": -14, "ratio": 4, "makeup": 3 } },
-     { "op": "remove", "path": "root.stages[0]" } ] }
-   ```
-   Ops: `set{path,value}` · `insert{path,index?,node}` (into a `chain`'s
-   `stages` or a `mix`/`mul`'s `inputs`) · `remove{path,index?}`. Prefer these
-   over `refine_sound` (whole-graph replace) for surgical changes.
+Every node has a **path**: `root.inputs[0].freq`, `root.stages[1].cutoff`,
+`root.stages[1].modes[0].freq`. To change a sound you edit that field in the JSON
+and re-render — no need to rewrite the whole graph. Paths index into a `chain`'s
+`stages`, a `mix`/`mul`'s `inputs`, a `seq`'s `notes`, and a `tracks`' `tracks`.
+A field's value can be a number, a modulator object, or a whole node — e.g. set
+`root.inputs[0].inputs[0].freq` to:
+```json
+{ "slide": { "from": 880, "to": 140, "secs": 0.18, "curve": "exp" } }
+```
+For programmatic editing there's a small Rust API in `tono_core::edit`:
+`describe(doc)` returns the path → type → params map; `apply_ops(doc, ops)`
+applies a batch of `set{path,value}` · `insert{path,index?,node}` (into a
+`chain`'s `stages` or a `mix`/`mul`'s `inputs`) · `remove{path,index?}` ops in
+one pass; and `morph(a, b, t)` blends two docs.
 
 ## Building sounds in layers
 
 Pro SFX are stacks: a transient (the click that says "now"), a body (the
-identity), a tail (the space). Build them as **layers** — each one a mixer
-track with a stable id you address directly.
+identity), a tail (the space). Build them as a **`tracks` root** — the mixer —
+with one track per component. Each track carries a stable `id`, its own `pan`
+(−1..1, equal-power), a `gain` (0..2, 1 = unity), a start offset `at` (seconds —
+a tail 20 ms late is `at: 0.02`, a pre-click 5 ms early against a body at
+`at: 0.005`), and a `mute` flag. `mute` is rendered state, not a monitoring
+convenience: exports ship without muted tracks.
 
-**Quick start:** `scaffold_layered_sfx { base_freq?, seed? }` drops a blank,
-band-disciplined skeleton — four layers (`sub` / `body` / `top` / `transient`),
-each with a band-splitting filter, a one-shot envelope, and a starting gain
-already wired. The sources are neutral placeholders; `describe_sound` the
-result, swap the real source into each role with `set_param` (e.g. replace the
-`body` layer's placeholder sine with an `fm` or `super`), and rebalance with
-`layer { op: "set" }` using the per-layer stats. It is structure, not a sound — you fill
-it in.
+A disciplined SFX skeleton is four band-split layers — `sub` / `body` / `top` /
+`transient` — each a `chain` of its source into a band-splitting filter and a
+one-shot envelope, with a starting `gain`. Fill in the real source per role
+(an `fm` or `super` for the body, `noise` → `highpass` for the top, an `impact`
+for the transient), then rebalance by reading each layer's contribution.
 
-To build by hand instead:
+Balance with the per-layer stats every render returns: `.stats.json` carries a
+`layers` array, one entry per track — `{ id, peak_dbfs, rms_dbfs, share, muted }`,
+where `share` is that layer's percentage of the pre-master energy (e.g.
+`crack 38% • peak −8.1 dBFS | body 52% … | tail 10%`). Nudge a track's `gain`
+until the split reads right, and edit inside a layer with paths into its `node`
+(e.g. `root.tracks[0].node.env.d`).
 
-1. `author_sound` with the FIRST layer's graph (the body, usually).
-2. `layer { op: "add", layer: "crack", node: {...}, at: 0.0 }` for each next
-   component — `at` places it in time (a tail layer 20 ms late, a pre-click
-   5 ms early relative to a body at `at: 0.005`).
-3. Balance with the per-layer feedback every render returns
-   (`crack 38% • peak −8.1 dBFS | body 52% … | tail 10%`):
-   `layer { op: "set", layer: "tail", gain: 0.4 }`.
-4. Edit inside a layer with layer-relative paths:
-   `set_param { id, layer: "crack", path: "env.d", value: 0.03 }`.
+**One layer per thing you'd fade, pan, time-shift, or analyze separately** — an
+instrument in a song, a component in an SFX. Use `mix` only for sub-signals that
+share one envelope/filter; never one track holding a mix of seqs (it makes the
+per-layer stats useless).
 
-**One layer per thing you'd fade, pan, time-shift, or analyze separately** —
-an instrument in a song, a component in an SFX. Use `mix` only for sub-signals
-that share one envelope/filter; never one layer holding a mix of seqs (it
-makes the per-layer feedback useless). The first `layer { op: "add" }` on a plain sound
-wraps the existing graph as a layer named after the sound — level-compensated
-and announced, nothing changes audibly.
-
-Layers are independent by construction: each has its own deterministic RNG
-stream keyed by its id, so muting, removing, duplicating, or editing one layer
-never changes a sibling's noise grains. `mute` is rendered state (exports ship
-without muted layers); `layer { op: "duplicate" }` is a built-in variation —
-the copy re-grains its noise deterministically from the new id.
+Layers are independent by construction: each track's noise is drawn from a
+deterministic RNG stream keyed by its `id`, so muting, removing, duplicating, or
+editing one track never changes a sibling's noise grains. Duplicating a track
+under a new `id` is a built-in variation — the copy re-grains its noise
+deterministically from the new id.
 
 ## Level-matched, click-safe output
 
@@ -351,23 +369,11 @@ the true peak (so the file never inter-sample clips):
 ```json
 "normalize": { "target_lufs": -16, "ceiling_dbtp": -1 }
 ```
-Pick **one** `target_lufs` for a whole pack so every sound plays at the same
-perceived level (≈ −16 LUFS for SFX, ≈ −14 for music). `export` also takes a
-`target_lufs` to write a level-matched asset without touching the stored graph.
-`generate_variants` level-matches its round-robin takes automatically.
-
-## Sound packs (the engine-wireable set)
-
-Group related sounds and export them with a manifest a game can read directly:
-
-1. `bank { op: "create", name }` → a pack with a stable id.
-2. `bank { op: "add", bank_id, sound_id, category?, rr_group? }` — `category`
-   (`ui`/`weapon`/`footstep`) lays out subfolders; `rr_group` marks
-   interchangeable round-robin takes.
-3. `export_pack { bank_id, dest, by_category?, target_lufs? }` → every member
-   WAV + a `sounds.json` manifest `{ id, file, category, rr_group, duration_ms,
-   sample_rate, channels, lufs, peak_dbfs, true_peak_dbfs }`. Omit `bank_id`
-   to export the whole library.
+Pick **one** `target_lufs` for a whole set so every sound plays at the same
+perceived level (≈ −16 LUFS for SFX, ≈ −14 for music). To ship a set, render
+each doc into the same output folder with the same `target_lufs`; each
+`.stats.json` reports the resulting `loudness_lufs` / `true_peak_dbfs` so you
+can confirm they match.
 
 ## Loops, ambience & BGM
 
@@ -382,9 +388,8 @@ rendered file is a seamless loop body. The exported WAV carries a `smpl` loop
 chunk, so Godot / Unity / FMOD loop it at the sample-accurate points with no
 manual setup.
 
-- `make_loop { id, crossfade_secs?, start_secs?, end_secs? }` does the same to
-  an existing sound and reports the **loop-seam discontinuity in dB** — if it's
-  high, raise `crossfade_secs` or match the graph's start/end levels.
+- Watch the loop seam: if it clicks, raise `crossfade_secs` or match the graph's
+  start/end levels.
 - An ambience bed from scratch — slow filter-swept pink noise over a low drone,
   widened and looped:
   ```json
@@ -413,13 +418,13 @@ original kernels (byte-for-byte forever); new documents are stamped with the
 current engine and get the upgrades. Revision 1 adds anti-aliased `drive`
 (ADAA). To modernise an existing sound, set `"engine": 1` on it (its output
 will change — that's the point); to keep a legacy sound bit-exact, leave
-`engine` off. `refine_sound` preserves whatever a sound already had.
+`engine` off.
 
-## Reproducible sessions
+## Determinism
 
-Every mutating tool call is journaled to `session.jsonl` in the working
-directory. `save_session { dest }` snapshots that journal; `replay_session
-{ path }` re-applies a saved journal — same tool calls, same seeds,
-byte-identical audio. Replay requires a **fresh** session (an empty working
-directory) and fails otherwise: ids derive from sound names, so replaying
-over existing content would silently edit the wrong sounds.
+Rendering is a pure function of `(graph, seed, sample_rate)` — a doc renders
+**byte-identical** every time, on any machine. The doc's top-level `seed` drives
+every noise source, `dust` train, and Karplus-Strong pluck burst, so takes are
+reproducible; change `seed` for a different-but-equivalent roll. Because the doc
+*is* the artifact, version your `.json` files and you can always reproduce the
+exact WAV — no separate session log needed.
