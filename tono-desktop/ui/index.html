@@ -112,6 +112,7 @@
           <select id="preset"><option value="">— designed graph —</option></select>
         </label>
         <label>bend <input type="range" id="bend" min="-1" max="1" step="0.01" value="0" /></label>
+        <label>brightness <input type="range" id="brightness" min="-2" max="2" step="0.02" value="0" /></label>
         <span style="color: var(--dim)">· pitch wheel springs back to center</span>
       </div>
       <div class="keys" id="keys"></div>
@@ -196,6 +197,12 @@
       };
       bend.addEventListener("pointerup", centerBend);
       bend.addEventListener("pointerleave", centerBend);
+
+      // --- brightness (filter cutoff, octaves around the designed sound) -----
+      const brightness = $("brightness");
+      brightness.addEventListener("input", () =>
+        invoke("set_brightness", { scale: 2 ** +brightness.value }),
+      );
 
       const held = new Set();
       const on = (midi) => {

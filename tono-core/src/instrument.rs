@@ -317,6 +317,9 @@ pub struct Instrument {
     /// Pitch-wheel bend as a frequency ratio (1.0 = centered), applied live to
     /// every sounding voice and any new one.
     bend: f32,
+    /// Filter-cutoff (brightness) scale, 1.0 = as designed. Applied live to every
+    /// voice's filters — a mod-wheel / CC74 brightness sweep without a rebuild.
+    brightness: f32,
     /// Notes physically held, oldest→newest — mono note priority. On a note-off
     /// the voice falls back to the last still-held note. Unused in poly mode.
     held: Vec<Note>,
@@ -412,6 +415,7 @@ impl Instrument {
             next_handle: 1,
             sustain: false,
             bend: 1.0,
+            brightness: 1.0,
             held: Vec::new(),
             master,
             scratch: Vec::new(),
@@ -476,6 +480,9 @@ impl Instrument {
             let mut graph = self.build_result(note, velocity, detune).ok()?;
             if self.bend != 1.0 {
                 graph.set_bend(self.bend);
+            }
+            if self.brightness != 1.0 {
+                graph.set_cutoff(self.brightness); // catch a new note up to the knob
             }
             let pan = spread * self.design.unison_width;
             copies.push(Copy {
@@ -661,6 +668,19 @@ impl Instrument {
         for v in self.voices.iter_mut() {
             for c in v.copies.iter_mut() {
                 c.graph.set_bend(self.bend);
+            }
+        }
+    }
+
+    /// Sweep the filter cutoff of every sounding voice (and any struck later) —
+    /// a live brightness control (`scale` multiplies each filter's cutoff, 1.0 =
+    /// as designed). Recomputes coefficients in place, so a knob/CC74 sweep is
+    /// click-free. Voices with no filter are simply unaffected.
+    pub fn set_brightness(&mut self, scale: f32) {
+        self.brightness = scale.max(0.01);
+        for v in self.voices.iter_mut() {
+            for c in v.copies.iter_mut() {
+                c.graph.set_cutoff(self.brightness);
             }
         }
     }
@@ -904,6 +924,32 @@ mod tests {
         bent.fill(&mut ob);
         plain.fill(&mut op);
         assert_eq!(bits(&ob), bits(&op), "a centered wheel changes nothing");
+    }
+
+    #[test]
+    fn brightness_sweeps_the_voice_filter() {
+        let rms = |s: &[f32]| (s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32).sqrt();
+        let mut bright = Instrument::new(InstrumentDesign::new(saw_patch()), 48_000).unwrap();
+        bright.note_on(Note::C4, 0.9);
+        let mut a = vec![0.0f32; 1024 * 2];
+        bright.fill(&mut a);
+
+        // A voice struck after the knob is turned down is darker.
+        let mut dark = Instrument::new(InstrumentDesign::new(saw_patch()), 48_000).unwrap();
+        dark.set_brightness(0.15);
+        dark.note_on(Note::C4, 0.9);
+        let mut b = vec![0.0f32; 1024 * 2];
+        dark.fill(&mut b);
+        assert!(rms(&b) < rms(&a), "lower brightness darkens a new note");
+
+        // Turning the knob down on the already-sounding bright voice darkens it too.
+        bright.set_brightness(0.15);
+        let mut c = vec![0.0f32; 1024 * 2];
+        bright.fill(&mut c);
+        assert!(
+            rms(&c) < rms(&a),
+            "live brightness sweep darkens a held note"
+        );
     }
 
     #[test]

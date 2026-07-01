@@ -350,6 +350,12 @@ struct ModalMode {
 enum Proc {
     Gain(f32),
     Biquad {
+        // The filter spec, kept so a live cutoff sweep can recompute the
+        // coefficients without a rebuild (see `Proc::set_cutoff`).
+        kind: Filt,
+        fc: f32,
+        q: f32,
+        sr: u32,
         b0: f32,
         b1: f32,
         b2: f32,
@@ -607,6 +613,19 @@ impl Src {
             }
         }
     }
+
+    /// Apply a live cutoff `scale` to every biquad filter in the signal tree —
+    /// the instrument brightness control. Recurses through mix/mul/chain.
+    fn set_cutoff(&mut self, scale: f32) {
+        match self {
+            Src::Mix(cs) | Src::Mul(cs) => cs.iter_mut().for_each(|c| c.set_cutoff(scale)),
+            Src::Chain { src, procs } => {
+                src.set_cutoff(scale);
+                procs.iter_mut().for_each(|p| p.set_cutoff(scale));
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Proc {
@@ -626,6 +645,7 @@ impl Proc {
                 x2,
                 y1,
                 y2,
+                ..
             } => {
                 let y0 = *b0 * x0 + *b1 * *x1 + *b2 * *x2 - *a1 * *y1 - *a2 * *y2;
                 *x2 = *x1;
@@ -822,9 +842,37 @@ impl Proc {
             }
         }
     }
+
+    /// Recompute a biquad's coefficients for a live cutoff `scale` (1.0 = as
+    /// built), preserving filter state so a sweep is click-free. Only biquad
+    /// filters respond; every other processor ignores it. At `scale == 1.0` the
+    /// coefficients are bit-identical to the baked ones.
+    fn set_cutoff(&mut self, scale: f32) {
+        if let Proc::Biquad {
+            kind,
+            fc,
+            q,
+            sr,
+            b0,
+            b1,
+            b2,
+            a1,
+            a2,
+            ..
+        } = self
+        {
+            let (nb0, nb1, nb2, na1, na2) = biquad_coeffs(*kind, *fc * scale, *q, *sr);
+            *b0 = nb0;
+            *b1 = nb1;
+            *b2 = nb2;
+            *a1 = na1;
+            *a2 = na2;
+        }
+    }
 }
 
 /// The RBJ biquad kinds we stream (constant cutoff), each with its shelf/peak gain.
+#[derive(Clone, Copy)]
 enum Filt {
     Low,
     High,
@@ -835,9 +883,10 @@ enum Filt {
     HighShelf(f32),
 }
 
-/// Precompute the (a0-normalised) biquad coefficients — identical values to the
-/// offline `biquad`, which recomputes them per sample from a constant cutoff.
-fn biquad(kind: Filt, fc: f32, q: f32, sr: u32) -> Proc {
+/// The (a0-normalised) biquad coefficients `(b0, b1, b2, a1, a2)` for a constant
+/// cutoff — identical values to the offline `biquad`. Pure, so a live cutoff
+/// sweep can recompute them (see [`Proc::set_cutoff`]).
+fn biquad_coeffs(kind: Filt, fc: f32, q: f32, sr: u32) -> (f32, f32, f32, f32, f32) {
     let srf = sr as f32;
     let q = q.max(0.05);
     let nyq = srf / 2.0;
@@ -901,12 +950,23 @@ fn biquad(kind: Filt, fc: f32, q: f32, sr: u32) -> Proc {
             )
         }
     };
+    (b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0)
+}
+
+/// Build a streaming biquad, keeping its spec so [`Proc::set_cutoff`] can
+/// recompute the coefficients for a live cutoff sweep.
+fn biquad(kind: Filt, fc: f32, q: f32, sr: u32) -> Proc {
+    let (b0, b1, b2, a1, a2) = biquad_coeffs(kind, fc, q, sr);
     Proc::Biquad {
-        b0: b0 / a0,
-        b1: b1 / a0,
-        b2: b2 / a0,
-        a1: a1 / a0,
-        a2: a2 / a0,
+        kind,
+        fc,
+        q,
+        sr,
+        b0,
+        b1,
+        b2,
+        a1,
+        a2,
         x1: 0.0,
         x2: 0.0,
         y1: 0.0,
@@ -1319,6 +1379,14 @@ impl StreamGraph {
     pub fn set_bend(&mut self, mul: f32) {
         self.bend = mul.max(0.0);
     }
+
+    /// Sweep every filter's cutoff live — a brightness control. `scale`
+    /// multiplies each biquad's cutoff (1.0 = as built); coefficients are
+    /// recomputed in place, preserving state, so the sweep never clicks.
+    /// Bit-identical to the built graph at `scale == 1.0`.
+    pub fn set_cutoff(&mut self, scale: f32) {
+        self.root.set_cutoff(scale.max(0.01));
+    }
 }
 
 /// Whether `doc`'s graph can be streamed. A cheap check the runtime uses to pick
@@ -1434,6 +1502,32 @@ mod tests {
         lo.fill(&mut a);
         hi.fill(&mut b);
         assert_eq!(bits(&a), bits(&b), "pitch ×3 on 220 Hz == 660 Hz");
+    }
+
+    #[test]
+    fn set_cutoff_sweeps_the_filter_and_is_identity_at_one() {
+        let doc = parse(
+            r#"{ "name":"s", "duration":0.05, "root": { "type":"chain", "stages": [
+                { "type":"sawtooth", "freq":220 },
+                { "type":"lowpass", "cutoff":4000, "q":0.7 } ] } }"#,
+        );
+        let rms = |s: &[f32]| (s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32).sqrt();
+
+        // scale 1.0 recomputes to the exact baked coefficients — byte-identical.
+        let mut base = StreamGraph::try_from_doc(&doc).unwrap();
+        let mut same = StreamGraph::try_from_doc(&doc).unwrap();
+        same.set_cutoff(1.0);
+        let (mut a, mut b) = (vec![0.0f32; 1024], vec![0.0f32; 1024]);
+        base.fill(&mut a);
+        same.fill(&mut b);
+        assert_eq!(bits(&a), bits(&b), "cutoff scale 1.0 is identity");
+
+        // Closing the lowpass (scale down) strips the saw's upper harmonics.
+        let mut dark = StreamGraph::try_from_doc(&doc).unwrap();
+        dark.set_cutoff(0.15); // 4000 Hz → ~600 Hz
+        let mut d = vec![0.0f32; 1024];
+        dark.fill(&mut d);
+        assert!(rms(&d) < rms(&a), "closing the lowpass darkens the tone");
     }
 
     #[test]
