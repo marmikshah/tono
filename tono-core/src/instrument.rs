@@ -167,6 +167,19 @@ pub struct InstrumentDesign {
     /// arrives asymptotically.
     #[serde(default)]
     pub glide_secs: f32,
+    /// Unison: detuned copies stacked per note for a fat, wide sound (1 = off).
+    #[serde(default = "one")]
+    pub unison: usize,
+    /// Total detune spread across the unison stack, in cents (e.g. 20).
+    #[serde(default)]
+    pub detune_cents: f32,
+    /// Stereo spread of the unison copies, 0 (mono) .. 1 (hard L↔R).
+    #[serde(default)]
+    pub unison_width: f32,
+}
+
+fn one() -> usize {
+    1
 }
 
 impl InstrumentDesign {
@@ -195,6 +208,9 @@ impl InstrumentDesign {
             master: Vec::new(),
             mode: PlayMode::Poly,
             glide_secs: 0.0,
+            unison: 1,
+            detune_cents: 0.0,
+            unison_width: 0.0,
             patch,
         }
     }
@@ -242,6 +258,16 @@ impl InstrumentDesign {
         self.glide_secs = secs.max(0.0);
         self
     }
+
+    /// Stack `count` detuned copies per note across `cents` of detune, spread
+    /// `width` (0..1) across the stereo field — a fat, wide unison (builder
+    /// style). `count == 1` is no unison.
+    pub fn with_unison(mut self, count: usize, cents: f32, width: f32) -> Self {
+        self.unison = count.max(1);
+        self.detune_cents = cents.max(0.0);
+        self.unison_width = width.clamp(0.0, 1.0);
+        self
+    }
 }
 
 /// Handle to one sounding voice (a single note-on). Stable until the voice is
@@ -249,12 +275,23 @@ impl InstrumentDesign {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct VoiceHandle(u64);
 
+/// One detuned, panned copy in a (possibly unison) voice. The detune is baked
+/// into the graph at build; `l`/`r` are its channel gains (already unison-
+/// normalised so a stack isn't louder than a single voice).
+struct Copy {
+    graph: StreamGraph,
+    l: f32,
+    r: f32,
+}
+
 struct Voice {
     handle: u64,
     note: Note,
-    graph: StreamGraph,
-    /// The frequency the graph was baked at (the note it was built for). A live
-    /// pitch scale of `target.freq() / built_hz` retunes it to any other note
+    /// The unison stack — one entry unless unison is on. All copies share the
+    /// note pitch (so glide/bend move them together); each is detuned + panned.
+    copies: Vec<Copy>,
+    /// The frequency the graphs were baked at (the note the voice was built for).
+    /// A live pitch scale of `target.freq() / built_hz` retunes to any other note
     /// without a rebuild — how mono glide moves between notes.
     built_hz: f32,
     env: EnvGen,
@@ -283,12 +320,17 @@ pub struct Instrument {
     /// Notes physically held, oldest→newest — mono note priority. On a note-off
     /// the voice falls back to the last still-held note. Unused in poly mode.
     held: Vec<Note>,
-    /// The shared master effect chain (built from `design.master`).
-    master: Option<EffectChain>,
-    /// Per-voice render scratch (mono).
+    /// The shared master effect chain, one instance per stereo channel (identical
+    /// coefficients, independent state) so a reverb/chorus reads as stereo. Both
+    /// are one shared instance for the whole instrument — a tail outlives its note.
+    master: Option<(EffectChain, EffectChain)>,
+    /// Per-copy render scratch (mono).
     scratch: Vec<f32>,
-    /// Summed-voices bus (mono), fed to the master chain.
-    mix: Vec<f32>,
+    /// Per-voice amp-envelope scratch (one env, shared across its unison copies).
+    env_buf: Vec<f32>,
+    /// Summed-voices stereo bus, fed to the master chains.
+    mix_l: Vec<f32>,
+    mix_r: Vec<f32>,
 }
 
 /// Multiply every pitch-determining frequency (oscillator freqs, seq note
@@ -354,10 +396,12 @@ impl Instrument {
             None
         } else {
             let engine = design.patch.doc.effective_engine();
-            Some(
-                EffectChain::try_new(&design.master, sample_rate, engine)
-                    .ok_or(InstrumentError::NotStreamable)?,
-            )
+            let build = || EffectChain::try_new(&design.master, sample_rate, engine);
+            let (l, r) = (
+                build().ok_or(InstrumentError::NotStreamable)?,
+                build().ok_or(InstrumentError::NotStreamable)?,
+            );
+            Some((l, r))
         };
         let values = design.patch.defaults();
         let inst = Instrument {
@@ -371,17 +415,28 @@ impl Instrument {
             held: Vec::new(),
             master,
             scratch: Vec::new(),
-            mix: Vec::new(),
+            env_buf: Vec::new(),
+            mix_l: Vec::new(),
+            mix_r: Vec::new(),
         };
-        inst.build_result(Note::A4, 1.0)?; // validate the reference voice
+        inst.build_result(Note::A4, 1.0, 1.0)?; // validate the reference voice
         Ok(inst)
     }
 
     /// Build the streamable graph for one note at the current parameter values.
-    fn build_result(&self, note: Note, velocity: f32) -> Result<StreamGraph, InstrumentError> {
+    /// `detune` is a frequency multiplier baked into the graph (1.0 = none) — a
+    /// unison copy bakes its slight detune here, so glide/bend (which ride the
+    /// live pitch scale, keyed off the *nominal* note) preserve the spread.
+    fn build_result(
+        &self,
+        note: Note,
+        velocity: f32,
+        detune: f32,
+    ) -> Result<StreamGraph, InstrumentError> {
+        let hz = note.freq() * detune;
         let mut values = self.values.clone();
         if let PitchMap::Param(name) = &self.design.pitch {
-            values.insert(name.clone(), note.freq());
+            values.insert(name.clone(), hz);
         }
         if let Some(vp) = &self.design.velocity_param {
             // Map velocity across the param's declared [min, max] (a musical
@@ -398,9 +453,38 @@ impl Instrument {
             .map_err(InstrumentError::BadPatch)?;
         doc.sample_rate = self.sample_rate;
         if let PitchMap::Transpose { reference } = &self.design.pitch {
-            transpose(&mut doc.root, note.freq() / reference.freq());
+            transpose(&mut doc.root, hz / reference.freq());
         }
         StreamGraph::try_from_doc(&doc).ok_or(InstrumentError::NotStreamable)
+    }
+
+    /// Build the unison stack for `note`: `unison` detuned, panned, level-
+    /// normalised copies (one copy, centered, when unison is off). `None` if the
+    /// patch can't build.
+    fn build_copies(&self, note: Note, velocity: f32) -> Option<Vec<Copy>> {
+        let n = self.design.unison.max(1);
+        let norm = 1.0 / (n as f32).sqrt(); // a stack shouldn't be louder than one
+        let mut copies = Vec::with_capacity(n);
+        for k in 0..n {
+            // Spread copies symmetrically over [-1, 1] × the configured amounts.
+            let spread = if n == 1 {
+                0.0
+            } else {
+                (k as f32 / (n - 1) as f32 - 0.5) * 2.0
+            };
+            let detune = 2f32.powf(spread * self.design.detune_cents / 1200.0);
+            let mut graph = self.build_result(note, velocity, detune).ok()?;
+            if self.bend != 1.0 {
+                graph.set_bend(self.bend);
+            }
+            let pan = spread * self.design.unison_width;
+            copies.push(Copy {
+                graph,
+                l: (1.0 - pan).min(1.0) * norm,
+                r: (1.0 + pan).min(1.0) * norm,
+            });
+        }
+        Some(copies)
     }
 
     /// Start a note; `velocity` in `[0, 1]` shapes its level. Returns the voice's
@@ -424,12 +508,9 @@ impl Instrument {
     /// if full. A no-op on an un-buildable patch (a bad param) — the caller still
     /// gets a handle, just a silent voice.
     fn spawn_voice(&mut self, handle: u64, note: Note, velocity: f32) {
-        let Ok(mut graph) = self.build_result(note, velocity) else {
-            return;
+        let Some(copies) = self.build_copies(note, velocity) else {
+            return; // catch of the pitch wheel is applied inside build_copies
         };
-        if self.bend != 1.0 {
-            graph.set_bend(self.bend); // catch a newly struck note up to the wheel
-        }
         let mut env = EnvGen::new(&self.design.amp, self.sample_rate);
         env.gate_on();
         if self.voices.len() >= self.design.max_voices
@@ -441,7 +522,7 @@ impl Instrument {
             handle,
             note,
             built_hz: note.freq(),
-            graph,
+            copies,
             env,
             gain: velocity,
             releasing: false,
@@ -469,7 +550,10 @@ impl Instrument {
         if let Some(v) = self.voices.iter_mut().find(|v| !v.releasing) {
             v.note = note;
             v.sustained = false;
-            v.graph.glide_pitch(note.freq() / v.built_hz, coeff);
+            let scale = note.freq() / v.built_hz;
+            for c in v.copies.iter_mut() {
+                c.graph.glide_pitch(scale, coeff);
+            }
             if !legato {
                 v.env.gate_on(); // re-strike unless we're playing legato
                 v.gain = velocity;
@@ -496,7 +580,10 @@ impl Instrument {
                 let coeff = self.glide_coeff();
                 if let Some(v) = self.voices.iter_mut().find(|v| !v.releasing) {
                     v.note = prev;
-                    v.graph.glide_pitch(prev.freq() / v.built_hz, coeff);
+                    let scale = prev.freq() / v.built_hz;
+                    for c in v.copies.iter_mut() {
+                        c.graph.glide_pitch(scale, coeff);
+                    }
                 }
                 1
             }
@@ -572,7 +659,9 @@ impl Instrument {
     pub fn set_bend(&mut self, semitones: f32) {
         self.bend = 2f32.powf(semitones / 12.0);
         for v in self.voices.iter_mut() {
-            v.graph.set_bend(self.bend);
+            for c in v.copies.iter_mut() {
+                c.graph.set_bend(self.bend);
+            }
         }
     }
 
@@ -617,7 +706,8 @@ impl Instrument {
         self.voices
             .iter()
             .find(|v| v.handle == handle.0)
-            .map(|v| v.graph.pitch())
+            .and_then(|v| v.copies.first())
+            .map(|c| c.graph.pitch())
     }
 
     /// Set a named parameter for future notes. Returns whether it was accepted —
@@ -653,28 +743,45 @@ impl AudioSource for Instrument {
         if frames == 0 {
             return 0;
         }
-        if self.scratch.len() < frames {
-            self.scratch.resize(frames, 0.0);
-        }
-        if self.mix.len() < frames {
-            self.mix.resize(frames, 0.0);
-        }
-        let voice = &mut self.scratch[..frames]; // per-voice render
-        let mix = &mut self.mix[..frames]; // summed bus
-        mix.fill(0.0);
-        for v in self.voices.iter_mut() {
-            v.graph.fill(voice);
-            for (m, &s) in mix.iter_mut().zip(voice.iter()) {
-                *m += s * v.env.tick() * v.gain;
+        for buf in [
+            &mut self.scratch,
+            &mut self.env_buf,
+            &mut self.mix_l,
+            &mut self.mix_r,
+        ] {
+            if buf.len() < frames {
+                buf.resize(frames, 0.0);
             }
         }
-        // One shared master chain (a reverb tail is not multiplied per voice).
-        if let Some(chain) = &mut self.master {
-            chain.process(mix);
+        let copy = &mut self.scratch[..frames]; // per-copy render
+        let env = &mut self.env_buf[..frames]; // per-voice envelope × gain
+        let (mix_l, mix_r) = (&mut self.mix_l[..frames], &mut self.mix_r[..frames]);
+        mix_l.fill(0.0);
+        mix_r.fill(0.0);
+        for v in self.voices.iter_mut() {
+            // The amp envelope advances once per sample and is shared across the
+            // voice's unison copies (they differ only in detune and pan).
+            for e in env.iter_mut() {
+                *e = v.env.tick() * v.gain;
+            }
+            for c in v.copies.iter_mut() {
+                c.graph.fill(copy);
+                for f in 0..frames {
+                    let s = copy[f] * env[f];
+                    mix_l[f] += s * c.l;
+                    mix_r[f] += s * c.r;
+                }
+            }
         }
-        for (f, &m) in mix.iter().enumerate() {
-            out[f * 2] = m;
-            out[f * 2 + 1] = m;
+        // One shared master per channel (a reverb tail is not multiplied per
+        // voice); identical coefficients, independent state ⇒ a stereo image.
+        if let Some((chain_l, chain_r)) = &mut self.master {
+            chain_l.process(mix_l);
+            chain_r.process(mix_r);
+        }
+        for f in 0..frames {
+            out[f * 2] = mix_l[f];
+            out[f * 2 + 1] = mix_r[f];
         }
         // Cull voices whose envelope has fully released — or a percussive voice
         // (sustain ≈ 0) that has decayed to silence but never got a note-off.
@@ -927,6 +1034,30 @@ mod tests {
             inst.fill(&mut out);
         }
         assert_eq!(inst.active_voices(), 0, "released on pedal-up");
+    }
+
+    #[test]
+    fn unison_spreads_detuned_copies_across_stereo() {
+        let design = InstrumentDesign::new(saw_patch()).with_unison(4, 22.0, 1.0);
+        let mut inst = Instrument::new(design, 48_000).unwrap();
+        inst.note_on(Note::C4, 0.9);
+        let mut out = vec![0.0f32; 2048 * 2];
+        inst.fill(&mut out);
+        assert!(peak(&out) > 0.0, "unison makes sound");
+        // Detuned copies panned L/R decorrelate the channels.
+        let differs = (0..2048).any(|f| out[f * 2] != out[f * 2 + 1]);
+        assert!(differs, "unison + width produces a stereo image");
+    }
+
+    #[test]
+    fn no_unison_stays_centered_mono() {
+        // The default (one copy) must remain identical L/R — no silent regression
+        // from the stereo bus.
+        let mut inst = Instrument::new(InstrumentDesign::new(saw_patch()), 48_000).unwrap();
+        inst.note_on(Note::C4, 0.9);
+        let mut out = vec![0.0f32; 512 * 2];
+        inst.fill(&mut out);
+        assert!((0..512).all(|f| out[f * 2] == out[f * 2 + 1]), "centered");
     }
 
     #[test]
