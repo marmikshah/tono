@@ -14,6 +14,7 @@
 //! playground, or a lean in-engine runtime. The MCP server, file encoders,
 //! persistence, and daemon live in the `tono` shell crate that depends on this one.
 
+pub mod adaptive;
 #[cfg(feature = "analysis")]
 pub mod analysis;
 pub mod drumkit;
