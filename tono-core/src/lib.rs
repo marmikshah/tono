@@ -19,6 +19,7 @@ pub mod analysis;
 pub mod dsl;
 pub mod dsp;
 pub mod edit;
+pub mod instrument;
 pub mod patch;
 pub mod render;
 #[cfg(feature = "analysis")]
