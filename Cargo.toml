@@ -1,9 +1,13 @@
 [workspace]
-members = ["tono-core", "tono-desktop"]
-# tono-desktop (native GUI + real-time audio + MIDI) carries heavy deps, so it
-# stays OUT of the default native build/test/clippy and CI. Build it explicitly:
-# `make desktop`.
+members = ["tono-core", "tono-desktop", "tono-play"]
+# tono-desktop (native GUI + real-time audio + MIDI) and tono-play (cpal speaker
+# output for the programmatic playground) carry heavy deps, so they stay OUT of
+# the default native build/test/clippy and CI. Build them explicitly:
+# `make desktop` / `make play`.
 default-members = [".", "tono-core"]
+
+[workspace.dependencies.cpal]
+version = "0.15.3"
 
 [workspace.package]
 version = "1.2.0"

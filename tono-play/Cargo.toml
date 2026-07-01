@@ -1,0 +1,15 @@
+[package]
+name = "tono-play"
+description = "Programmatic playground for tono — play any AudioSource / SoundDoc / Instrument through the speakers from a few lines of Rust."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+tono-core = { workspace = true }
+anyhow = { workspace = true }
+cpal = { workspace = true }
+serde_json = { workspace = true }
