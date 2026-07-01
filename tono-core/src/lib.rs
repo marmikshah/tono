@@ -26,6 +26,7 @@ pub mod render;
 #[cfg(feature = "analysis")]
 pub mod review;
 pub mod runtime;
+pub mod song;
 pub mod stream;
 pub mod streaming;
 pub mod vary;
