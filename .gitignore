@@ -4,13 +4,6 @@
 *.swp
 /crates/tono-desktop/gen/
 
-# Python extension (tono-py) build artifacts
-__pycache__/
-*.so
-*.pyd
-/tono-py/.venv/
-/tono-py/dist/
-
 # Local-only helpers/notes kept out of the repo
 /docs/architecture.html
 /resume.sh

@@ -9,7 +9,7 @@ WORKDIR ?= ./sounds
 RELEASE_BRANCH ?= master
 
 .DEFAULT_GOAL := run
-.PHONY: help run serve stdio build build-release release desktop play python test fmt lint check pre-commit-checks verify hooks clean install daemon daemon-status daemon-uninstall
+.PHONY: help run serve stdio build build-release release desktop play test fmt lint check pre-commit-checks verify hooks clean install daemon daemon-status daemon-uninstall
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -36,10 +36,6 @@ desktop: ## Build the native desktop studio (Tauri window + cpal audio + MIDI) �
 
 play: ## Run the programmatic playground (cpal speaker output) — NOT in the default build/CI
 	cargo run -p tono-play --example playground
-
-python: ## Build + install the Python extension into the active venv (needs maturin) — NOT in CI
-	cd crates/tono-py && maturin develop --release
-	@echo "→ try it:  python crates/tono-py/examples/blip.py"
 
 test: ## Run the test suite
 	cargo test

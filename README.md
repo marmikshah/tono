@@ -118,20 +118,6 @@ let speaker = Speaker::open(inst)?;                 // plays until dropped
 speaker.control(|i| i.note_on(Note::C4, 0.9));      // drive it live
 ```
 
-From **Python** (`pip install maturin && make python`):
-
-```python
-import json, tono
-
-doc = json.dumps({"name": "blip", "duration": 0.3, "engine": 2,
-    "root": {"type": "mul", "inputs": [
-        {"type": "sine", "freq": 880},
-        {"type": "env", "a": 0.002, "d": 0.08, "s": 0.0, "r": 0.05}]}})
-
-samples = tono.render(doc) # list[float], deterministic
-tono.play(doc, 0.4)        # hear it
-```
-
 ## Quickstart: the MCP server
 
 ```sh
@@ -223,7 +209,7 @@ engine-ready packs with manifests, and both record replayable recipes.
   worked recipes (also served to agents as the `tono://cookbook` resource;
   every example in it is validated by the test suite).
 - `make help` lists every target — `make verify` mirrors CI (fmt + clippy +
-  test); `make desktop` / `make play` / `make python` build the native faces.
+  test); `make desktop` / `make play` build the native faces.
 
 ## License
 
