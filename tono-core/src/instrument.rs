@@ -15,6 +15,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
+use serde::{Deserialize, Serialize};
+
 use crate::dsl::{Adsr, Node, SoundDoc, Value, note_to_hz};
 use crate::patch::Patch;
 use crate::runtime::AudioSource;
@@ -49,7 +51,7 @@ impl fmt::Display for InstrumentError {
 impl std::error::Error for InstrumentError {}
 
 /// A musical pitch as a MIDI note number (0–127). `A4` = 69 = 440 Hz.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Note(pub u8);
 
 impl Note {
@@ -114,7 +116,7 @@ impl From<u8> for Note {
 }
 
 /// How a note sets an instrument's pitch.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum PitchMap {
     /// Set this named patch parameter to the note's frequency (Hz). Precise — the
     /// patch author decides exactly what the pitch drives.
@@ -125,8 +127,9 @@ pub enum PitchMap {
     Transpose { reference: Note },
 }
 
-/// The recipe that makes a [`Patch`] playable.
-#[derive(Clone, Debug)]
+/// The recipe that makes a [`Patch`] playable. Serializable, so an instrument is
+/// a saveable/recallable preset (patch + envelope + pitch map + master).
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InstrumentDesign {
     /// The sound: a graph + its named params (authored as a sustaining voice).
     pub patch: Patch,
@@ -218,6 +221,8 @@ struct Voice {
     gain: f32,
     /// Set once `note_off` has gated the envelope into release.
     releasing: bool,
+    /// A note-off arrived while the sustain pedal was down — release on pedal-up.
+    sustained: bool,
 }
 
 /// A polyphonic, pitched, gated instrument. Play it with
@@ -230,6 +235,8 @@ pub struct Instrument {
     values: BTreeMap<String, f32>,
     voices: Vec<Voice>,
     next_handle: u64,
+    /// Sustain-pedal state: while down, note-offs are deferred until pedal-up.
+    sustain: bool,
     /// The shared master effect chain (built from `design.master`).
     master: Option<EffectChain>,
     /// Per-voice render scratch (mono).
@@ -313,6 +320,7 @@ impl Instrument {
             values,
             voices: Vec::new(),
             next_handle: 1,
+            sustain: false,
             master,
             scratch: Vec::new(),
             mix: Vec::new(),
@@ -370,6 +378,7 @@ impl Instrument {
                 env,
                 gain: velocity,
                 releasing: false,
+                sustained: false,
             });
         }
         VoiceHandle(handle)
@@ -383,22 +392,42 @@ impl Instrument {
             .map(|(i, _)| i)
     }
 
-    /// Release the newest still-held voice of `note`; returns how many were
-    /// released (0 or 1). MIDI note-off arrives by pitch, so this is the common
-    /// path.
+    /// Release the newest still-held voice of `note` (or defer it if the sustain
+    /// pedal is down); returns how many were released/deferred (0 or 1). MIDI
+    /// note-off arrives by pitch, so this is the common path.
     pub fn note_off(&mut self, note: Note) -> usize {
+        let sustain = self.sustain;
         match self
             .voices
             .iter_mut()
             .rev()
-            .find(|v| v.note == note && !v.releasing)
+            .find(|v| v.note == note && !v.releasing && !v.sustained)
         {
+            Some(v) if sustain => {
+                v.sustained = true; // hold until pedal-up
+                1
+            }
             Some(v) => {
                 v.env.gate_off();
                 v.releasing = true;
                 1
             }
             None => 0,
+        }
+    }
+
+    /// Set the sustain pedal. While down, note-offs are held; on release, every
+    /// deferred voice enters its release. (MIDI CC64.)
+    pub fn set_sustain(&mut self, down: bool) {
+        self.sustain = down;
+        if !down {
+            for v in self.voices.iter_mut() {
+                if v.sustained {
+                    v.env.gate_off();
+                    v.releasing = true;
+                    v.sustained = false;
+                }
+            }
         }
     }
 
@@ -682,6 +711,44 @@ mod tests {
         assert!(
             peak(&tail) > 0.0,
             "shared reverb tail continues past the note"
+        );
+    }
+
+    #[test]
+    fn sustain_pedal_defers_release() {
+        let amp = Adsr {
+            a: 0.001,
+            d: 0.001,
+            s: 0.8,
+            r: 0.01,
+            punch: 0.0,
+        };
+        let design = InstrumentDesign::new(saw_patch()).with_amp(amp);
+        let mut inst = Instrument::new(design, 48_000).unwrap();
+        inst.set_sustain(true);
+        inst.note_on(Note::A4, 1.0);
+        let mut out = vec![0.0f32; 256 * 2];
+        inst.fill(&mut out);
+        inst.note_off(Note::A4); // deferred by the pedal
+        for _ in 0..40 {
+            inst.fill(&mut out);
+        }
+        assert_eq!(inst.active_voices(), 1, "held by the sustain pedal");
+        inst.set_sustain(false); // pedal up → release
+        for _ in 0..40 {
+            inst.fill(&mut out);
+        }
+        assert_eq!(inst.active_voices(), 0, "released on pedal-up");
+    }
+
+    #[test]
+    fn design_round_trips_through_serde() {
+        let design = InstrumentDesign::new(saw_patch());
+        let json = serde_json::to_string(&design).unwrap();
+        let recalled: InstrumentDesign = serde_json::from_str(&json).unwrap();
+        assert!(
+            Instrument::new(recalled, 48_000).is_ok(),
+            "preset recall works"
         );
     }
 }
