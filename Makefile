@@ -38,8 +38,8 @@ play: ## Run the programmatic playground (cpal speaker output) — NOT in the de
 	cargo run -p tono-play --example playground
 
 python: ## Build + install the Python extension into the active venv (needs maturin) — NOT in CI
-	cd tono-py && maturin develop --release
-	@echo "→ try it:  python tono-py/examples/blip.py"
+	cd crates/tono-py && maturin develop --release
+	@echo "→ try it:  python crates/tono-py/examples/blip.py"
 
 test: ## Run the test suite
 	cargo test

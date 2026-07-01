@@ -7,20 +7,24 @@ playable-instrument layer, a native desktop studio, and a programmatic playgroun
 
 ## Workspace layout (one core, several faces)
 
-- **`tono-core/`** — the pure engine: the `SoundDoc` graph DSL, DSP, deterministic
-  renderer, analysis/critique, graph transforms, the byte-identical **streaming**
-  real-time renderer, the **runtime** (`Engine`/`Mixer`/`AudioSource`), and the
-  **instrument** layer (polyphonic, pitched, playable). No I/O, no MCP, no
-  transport; pure compute.
+The root is the `tono` crate (the MCP server); the sub-crates live under `crates/`.
+
+- **`crates/tono-core/`** — the pure engine: the `SoundDoc` graph DSL, DSP,
+  deterministic renderer, analysis/critique, graph transforms, the byte-identical
+  **streaming** real-time renderer, the **runtime** (`Engine`/`Mixer`/`AudioSource`),
+  the **instrument** layer (polyphonic, pitched, playable), and the **song**
+  arrangement layer. No I/O, no MCP, no transport; pure compute.
 - **`tono` (root crate, `src/`)** — the MCP server binary + a thin shell
-  (file encoders, bank/session persistence, engine emitters, daemon). Depends on
-  and re-exports `tono-core`.
-- **`tono-desktop/`** — the native desktop studio (Tauri window + `cpal` real-time
-  audio + MIDI keyboard input). Excluded from `default-members` and CI; built via
-  `make desktop`. Heavy deps (webview/cpal/midir) never touch the default build.
-- **`tono-play/`** — the programmatic playground: a `cpal` speaker so a Rust
+  (file encoders, bank/session persistence, engine emitters, image I/O, daemon).
+  Depends on and re-exports `tono-core`.
+- **`crates/tono-desktop/`** — the native desktop studio (Tauri window + `cpal`
+  real-time audio + MIDI keyboard input). Excluded from `default-members` and CI;
+  built via `make desktop`. Heavy deps (webview/cpal/midir) never touch the default build.
+- **`crates/tono-play/`** — the programmatic playground: a `cpal` speaker so a Rust
   program can build a sound/instrument and hear it in a couple of lines. Excluded
   from `default-members`/CI; run via `make play`.
+- **`crates/tono-py/`** — pyo3 bindings (render/play a `SoundDoc` from Python).
+  Off the default build/CI; built via `make python`.
 
 ## The invariant that matters
 

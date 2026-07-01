@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn shipped_impact_patch_renders_across_its_range() {
         let patch: Patch = serde_json::from_str(include_str!(
-            "../../docs/examples/parametric-impact.patch.json"
+            "../../../docs/examples/parametric-impact.patch.json"
         ))
         .expect("valid patch");
         let d = patch.render(&patch.defaults()).unwrap();

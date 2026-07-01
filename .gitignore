@@ -2,7 +2,7 @@
 /sounds
 .DS_Store
 *.swp
-/tono-desktop/gen/
+/crates/tono-desktop/gen/
 
 # Python extension (tono-py) build artifacts
 __pycache__/
