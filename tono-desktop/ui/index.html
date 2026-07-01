@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>tono — studio</title>
+    <style>
+      :root {
+        --bg: #14131a;
+        --panel: #1d1b26;
+        --line: #322f40;
+        --ink: #e9e6f2;
+        --dim: #8f8aa6;
+        --accent: #8c6ee6;
+        --key: #2a2735;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 13px/1.5 -apple-system, system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      header b { color: var(--accent); letter-spacing: 0.5px; }
+      header span { color: var(--dim); }
+      main { flex: 1; display: flex; min-height: 0; }
+      .col { padding: 14px; overflow: auto; }
+      .left { width: 44%; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
+      .right { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+      textarea {
+        flex: 1;
+        min-height: 220px;
+        background: var(--panel);
+        color: var(--ink);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        font: 12px/1.5 ui-monospace, Menlo, monospace;
+        resize: none;
+      }
+      button {
+        background: var(--key);
+        color: var(--ink);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 7px 12px;
+        cursor: pointer;
+      }
+      button:hover { border-color: var(--accent); }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #120f1c; font-weight: 600; }
+      .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      img { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; display: block; }
+      .stats { color: var(--dim); font: 12px/1.6 ui-monospace, monospace; white-space: pre-wrap; }
+      .err { color: #e46b6b; }
+      label { color: var(--dim); display: inline-flex; gap: 6px; align-items: center; }
+      select, input[type="range"] { accent-color: var(--accent); }
+      .kbd { border-top: 1px solid var(--line); padding: 12px 14px; background: var(--panel); }
+      .keys { position: relative; height: 120px; user-select: none; }
+      .wkey, .bkey {
+        position: absolute;
+        border: 1px solid #0c0b12;
+        border-radius: 0 0 5px 5px;
+        cursor: pointer;
+      }
+      .wkey { top: 0; height: 120px; background: #e9e6f2; }
+      .wkey.down { background: var(--accent); }
+      .bkey { top: 0; height: 76px; background: #201d2b; z-index: 2; }
+      .bkey.down { background: var(--accent); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <b>tono</b><span>studio · design a sound, hear it, play it</span>
+    </header>
+    <main>
+      <div class="col left">
+        <div class="row">
+          <button class="primary" id="render">Render + preview</button>
+          <button id="play">▶ Play</button>
+          <button id="stop">■ Stop</button>
+        </div>
+        <textarea id="graph" spellcheck="false"></textarea>
+        <div class="stats" id="err"></div>
+      </div>
+      <div class="col right">
+        <img id="spec" alt="spectrogram" />
+        <img id="wave" alt="waveform" />
+        <div class="stats" id="stats"></div>
+      </div>
+    </main>
+    <div class="kbd">
+      <div class="row" style="margin-bottom: 10px">
+        <label>voice
+          <select id="wave">
+            <option value="sawtooth">saw</option>
+            <option value="square">square</option>
+            <option value="triangle">triangle</option>
+            <option value="sine">sine</option>
+          </select>
+        </label>
+        <label>A <input type="range" id="a" min="0" max="0.5" step="0.005" value="0.01" /></label>
+        <label>D <input type="range" id="d" min="0" max="0.6" step="0.005" value="0.12" /></label>
+        <label>S <input type="range" id="s" min="0" max="1" step="0.01" value="0.6" /></label>
+        <label>R <input type="range" id="r" min="0" max="1" step="0.01" value="0.2" /></label>
+        <span style="color: var(--dim)">play with the mouse or your computer keyboard (A–K = white keys)</span>
+      </div>
+      <div class="keys" id="keys"></div>
+    </div>
+
+    <script>
+      const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
+      const $ = (id) => document.getElementById(id);
+
+      const STARTER = {
+        name: "lead",
+        duration: 1.5,
+        engine: 2,
+        root: {
+          type: "chain",
+          stages: [
+            { type: "super", wave: "sawtooth", freq: 220, voices: 5, detune_cents: 14 },
+            { type: "lowpass", cutoff: 2400, q: 0.9 },
+          ],
+        },
+      };
+      $("graph").value = JSON.stringify(STARTER, null, 2);
+
+      async function render() {
+        $("err").textContent = "";
+        let res;
+        try {
+          res = await invoke("render_graph", { graph: $("graph").value });
+        } catch (e) {
+          $("err").innerHTML = `<span class="err">${e}</span>`;
+          return;
+        }
+        if (!res.ok) {
+          $("err").innerHTML = `<span class="err">${res.error}</span>`;
+          return;
+        }
+        $("spec").src = "data:image/png;base64," + res.spectrogram_png;
+        $("wave").src = "data:image/png;base64," + res.waveform_png;
+        const s = JSON.parse(res.stats_json);
+        $("stats").textContent =
+          `${res.duration.toFixed(2)}s @ ${res.sample_rate} Hz\n` +
+          `peak ${s.peak_dbfs?.toFixed(1)} dB · rms ${s.rms_dbfs?.toFixed(1)} dB · ` +
+          `centroid ${Math.round(s.spectral_centroid_hz)} Hz · LUFS ${s.loudness_lufs?.toFixed(1)}`;
+      }
+
+      $("render").onclick = render;
+      $("play").onclick = () => invoke("transport", { action: "play" });
+      $("stop").onclick = () => invoke("transport", { action: "stop" });
+
+      // --- live keyboard --------------------------------------------------
+      const freqOf = (midi) => 440 * Math.pow(2, (midi - 69) / 12);
+      function pushInstrument() {
+        invoke("set_instrument", {
+          wave: $("wave").value,
+          a: +$("a").value, d: +$("d").value, s: +$("s").value, r: +$("r").value, duty: 0.5,
+        });
+      }
+      ["wave", "a", "d", "s", "r"].forEach((id) => $(id).addEventListener("input", pushInstrument));
+
+      const held = new Set();
+      const on = (midi) => {
+        if (held.has(midi)) return;
+        held.add(midi);
+        invoke("note_on", { key: midi, freq: freqOf(midi) });
+        document.querySelector(`[data-midi="${midi}"]`)?.classList.add("down");
+      };
+      const off = (midi) => {
+        if (!held.has(midi)) return;
+        held.delete(midi);
+        invoke("note_off", { key: midi });
+        document.querySelector(`[data-midi="${midi}"]`)?.classList.remove("down");
+      };
+
+      // Draw two octaves from C4.
+      const base = 60, octaves = 2;
+      const isBlack = (n) => [1, 3, 6, 8, 10].includes(n % 12);
+      const keys = $("keys");
+      const whites = [];
+      for (let i = 0; i < octaves * 12; i++) if (!isBlack(base + i)) whites.push(base + i);
+      const w = 100 / whites.length;
+      whites.forEach((midi, i) => {
+        const el = document.createElement("div");
+        el.className = "wkey";
+        el.dataset.midi = midi;
+        el.style.left = i * w + "%";
+        el.style.width = w + "%";
+        keys.appendChild(el);
+      });
+      // Black keys sit between the whites.
+      let wi = 0;
+      for (let i = 0; i < octaves * 12; i++) {
+        const midi = base + i;
+        if (isBlack(midi)) {
+          const el = document.createElement("div");
+          el.className = "bkey";
+          el.dataset.midi = midi;
+          el.style.left = wi * w - w * 0.3 + "%";
+          el.style.width = w * 0.6 + "%";
+          keys.appendChild(el);
+        } else wi++;
+      }
+      keys.addEventListener("pointerdown", (e) => {
+        const m = e.target.dataset.midi;
+        if (m) on(+m);
+      });
+      keys.addEventListener("pointerup", (e) => {
+        const m = e.target.dataset.midi;
+        if (m) off(+m);
+      });
+      keys.addEventListener("pointerleave", (e) => {
+        const m = e.target.dataset.midi;
+        if (m) off(+m);
+      });
+
+      // Computer-keyboard mapping (one octave from C4).
+      const map = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12 };
+      addEventListener("keydown", (e) => {
+        if (e.repeat) return;
+        const n = map[e.key];
+        if (n !== undefined) on(base + n);
+      });
+      addEventListener("keyup", (e) => {
+        const n = map[e.key];
+        if (n !== undefined) off(base + n);
+      });
+
+      pushInstrument();
+      render();
+    </script>
+  </body>
+</html>

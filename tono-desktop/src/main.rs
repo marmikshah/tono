@@ -24,8 +24,8 @@ struct Studio {
     engine: Mutex<Option<AudioHandle>>,
 }
 
-/// What `render_graph` hands the frontend: the same feedback the WASM build
-/// returns, minus audio samples (audio plays natively through the engine).
+/// What `render_graph` hands the frontend: the analysis feedback for a graph,
+/// minus audio samples (audio plays natively through the engine).
 #[derive(Serialize)]
 struct RenderResult {
     ok: bool,

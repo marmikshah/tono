@@ -9,7 +9,7 @@ WORKDIR ?= ./sounds
 RELEASE_BRANCH ?= master
 
 .DEFAULT_GOAL := run
-.PHONY: help run serve stdio build build-release release wasm desktop branding test fmt lint check pre-commit-checks verify hooks clean install daemon daemon-status daemon-uninstall
+.PHONY: help run serve stdio build build-release release desktop play test fmt lint check pre-commit-checks verify hooks clean install daemon daemon-status daemon-uninstall
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -30,25 +30,12 @@ build: ## Debug build
 build-release: ## Optimized release build → target/release/tono
 	cargo build --release
 
-WASM_BINDGEN_VERSION := 0.2.126
-
-wasm: ## Build the browser playground (tono-core → WASM into docs/playground/pkg)
-	rustup target add wasm32-unknown-unknown
-	command -v wasm-bindgen >/dev/null || cargo install wasm-bindgen-cli --version $(WASM_BINDGEN_VERSION) --locked
-	# Remap the builder's home out of embedded panic-location strings so the
-	# committed binary carries no machine paths / usernames.
-	RUSTFLAGS='--remap-path-prefix=$(HOME)=~' \
-		cargo build -p tono-wasm --target wasm32-unknown-unknown --release
-	wasm-bindgen target/wasm32-unknown-unknown/release/tono_wasm.wasm \
-		--out-dir docs/playground/pkg --target web --no-typescript
-	@echo "→ serve it:  python3 -m http.server -d docs/playground 8080"
-
-desktop: ## Build the optional native studio (cpal real-time audio) — NOT in the default build/CI
+desktop: ## Build the native desktop studio (Tauri window + cpal audio + MIDI) — NOT in the default build/CI
 	cargo build -p tono-desktop --release
-	@echo "→ native preview:  target/release/tono-desktop play docs/examples/retro-coin.json"
+	@echo "→ run it:  target/release/tono-desktop"
 
-branding: wasm ## Refresh demo/branding assets — the WASM playground (logo + wordmark are hand-authored in atelier under docs/)
-	@echo "branding: playground rebuilt; logo + wordmark live in docs/ (authored in atelier)"
+play: ## Run the programmatic playground (cpal speaker output) — NOT in the default build/CI
+	cargo run -p tono-play --example playground
 
 test: ## Run the test suite
 	cargo test
