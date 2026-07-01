@@ -1274,6 +1274,48 @@ pub fn is_streamable(doc: &SoundDoc) -> bool {
     StreamGraph::try_from_doc(doc).is_some()
 }
 
+/// A stateful chain of streaming effect processors applied to an input signal
+/// block-by-block — byte-identical to the offline processors, carrying delay
+/// lines / filter state across blocks. Used for a shared bus (e.g. an
+/// instrument's master reverb/delay, so a tail is one shared instance rather than
+/// one per voice).
+pub struct EffectChain {
+    procs: Vec<Proc>,
+    pos: usize,
+}
+
+impl EffectChain {
+    /// Build a chain from processor nodes at `sr`/`engine`, or `None` if any node
+    /// isn't a streamable processor. (Modulated effect params are evaluated
+    /// against a one-second reference for an `EnvMod` release anchor.)
+    pub fn try_new(nodes: &[Node], sr: u32, engine: u32) -> Option<Self> {
+        let n = sr as usize;
+        let procs = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, node)| try_proc(node, sr, n, engine, node_path(0, i)))
+            .collect::<Option<_>>()?;
+        Some(EffectChain { procs, pos: 0 })
+    }
+
+    /// Process a mono block in place.
+    pub fn process(&mut self, block: &mut [f32]) {
+        for x in block.iter_mut() {
+            let mut v = *x;
+            for p in self.procs.iter_mut() {
+                v = p.step(v, self.pos);
+            }
+            *x = v;
+            self.pos += 1;
+        }
+    }
+
+    /// Whether the chain has no processors.
+    pub fn is_empty(&self) -> bool {
+        self.procs.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
