@@ -362,6 +362,17 @@ pub fn render(doc: &SoundDoc) -> Signal {
     render_product(doc).mono
 }
 
+/// Raw graph evaluation — [`render_node`] on the root with no output stage (loop
+/// / normalize / peak-limit / stereo). This is the reference the streaming
+/// renderer matches byte-for-byte (used by the streaming byte-identity tests).
+#[cfg(test)]
+pub(crate) fn render_graph(doc: &SoundDoc) -> Signal {
+    let sr = doc.sample_rate;
+    let n = ((doc.duration * sr as f32).ceil() as usize).max(1);
+    let mut rng = Rng::new(doc.seed);
+    render_node(&doc.root, n, sr, &mut rng, doc.effective_engine())
+}
+
 /// The non-mixer render path: one graph, one mono buffer.
 fn render_plain(doc: &SoundDoc) -> Signal {
     let sr = doc.sample_rate;
