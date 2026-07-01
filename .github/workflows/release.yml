@@ -4,53 +4,16 @@ on:
   push:
     tags: ["v*"]
 
+# Publishes the library + CLI to crates.io on a v* tag. The token is a
+# production-environment secret (CRATES_API_TOKEN), exposed to cargo as
+# CARGO_REGISTRY_TOKEN. Silently skips when the token is unset (secrets can't be
+# read in `if:` directly, so route it through env — the documented indirection).
 jobs:
-  build:
-    # action-gh-release creates the GitHub Release; the default GITHUB_TOKEN is
-    # read-only, so grant write access to repository contents (releases).
-    permissions:
-      contents: write
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          # One macOS build: Apple Silicon on the latest runner. Intel users
-          # build from source (cargo install --path .).
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - run: cargo build --release --locked --target ${{ matrix.target }}
-
-      - name: Archive (unix)
-        if: runner.os != 'Windows'
-        run: tar -czf tono-${{ github.ref_name }}-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release tono
-      - name: Archive (windows)
-        if: runner.os == 'Windows'
-        run: Compress-Archive -Path target/${{ matrix.target }}/release/tono.exe -DestinationPath tono-${{ github.ref_name }}-${{ matrix.target }}.zip
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: tono-${{ github.ref_name }}-${{ matrix.target }}.*
-
-  # Publishes the library + binary to crates.io. The token is a production-
-  # environment secret (CRATES_API_TOKEN), exposed to cargo as CARGO_REGISTRY_TOKEN.
-  # Silently skips when the token is unset (secrets can't be read in `if:`
-  # directly, so route it through env — the documented indirection).
   publish:
-    needs: build
     runs-on: ubuntu-latest
     environment: production
     env:
       HAS_TOKEN: ${{ secrets.CRATES_API_TOKEN != '' }}
-    if: ${{ needs.build.result == 'success' }}
     steps:
       - uses: actions/checkout@v5
         if: env.HAS_TOKEN == 'true'
@@ -64,8 +27,8 @@ jobs:
           if [ "$CRATE_VERSION" != "$TAG_VERSION" ]; then
             echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $CRATE_VERSION"; exit 1
           fi
-      # Workspace publish order: the library first, then the binary that depends
-      # on it. cargo publish waits for each crate to be indexed before returning.
+      # Workspace publish order: the library first, then the CLI that depends on
+      # it. cargo publish waits for each crate to be indexed before returning.
       - name: Publish tono-core
         if: env.HAS_TOKEN == 'true'
         run: cargo publish --locked -p tono-core

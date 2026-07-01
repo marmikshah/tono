@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="https://github.com/marmikshah/tono/actions/workflows/ci.yml"><img src="https://github.com/marmikshah/tono/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/marmikshah/tono/releases/latest"><img src="https://img.shields.io/github/v/release/marmikshah/tono" alt="release"></a>
+  <a href="https://crates.io/crates/tono-core"><img src="https://img.shields.io/crates/v/tono-core" alt="crates.io"></a>
   <img src="https://img.shields.io/badge/license-MIT-8c6ee6" alt="license">
 </p>
 
@@ -116,14 +116,12 @@ The programmatic playground hears any of these in a couple of lines
 
 ## Install
 
-Prebuilt binaries for macOS (Apple Silicon), Linux x86_64, and Windows:
-
 ```sh
-curl -fsSL https://raw.githubusercontent.com/marmikshah/tono/master/install.sh | sh
+cargo add tono-core      # the engine, as a library (games, tools)
+cargo install tono       # the `tono render` CLI
 ```
 
-Or from source: `cargo install --path .` (the CLI), or `cargo add tono-core`
-(the library). Sampled instruments need a free General MIDI SoundFont once
+Sampled instruments need a free General MIDI SoundFont once
 (FluidR3 GM, GeneralUser GS): `wave: "sampler", sf2: "/path/to/gm.sf2",
 sf2_preset: 0` (0 grand, 32 bass, 48 strings; `sf2_bank: 128` = GM drums).
 
