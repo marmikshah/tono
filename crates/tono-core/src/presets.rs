@@ -110,6 +110,18 @@ pub static PRESETS: &[Preset] = &[
         description: "Warm nylon-string pluck — a soft, rounded playable guitar.",
         build: nylon,
     },
+    Preset {
+        name: "vibrato_lead",
+        category: Category::Lead,
+        description: "Singing lead with vibrato — a saw that breathes as you hold it.",
+        build: vibrato_lead,
+    },
+    Preset {
+        name: "wobble_bass",
+        category: Category::Bass,
+        description: "Wobble bass — the filter sweeps under the note (dubstep-ish).",
+        build: wobble_bass,
+    },
 ];
 
 /// Parse a factory patch. The JSON is a compile-time constant validated by the
@@ -258,6 +270,34 @@ fn nylon() -> InstrumentDesign {
     .with_unison(2, 5.0, 0.2)
 }
 
+fn vibrato_lead() -> InstrumentDesign {
+    InstrumentDesign::new(patch(
+        r#"{ "doc": { "name":"vibrato_lead", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+                { "type":"sawtooth", "freq":220 },
+                { "type":"lowpass", "cutoff":2600, "q":0.8 } ] } },
+             "params": [
+                { "name":"pitch", "paths":["root.stages[0].freq"], "min":20, "max":8000, "default":220 } ] }"#,
+    ))
+    .with_amp(adsr(0.02, 0.1, 0.85, 0.2))
+    .with_mode(PlayMode::Mono { legato: true })
+    .with_glide(0.05)
+    .with_vibrato(5.5, 22.0)
+}
+
+fn wobble_bass() -> InstrumentDesign {
+    InstrumentDesign::new(patch(
+        r#"{ "doc": { "name":"wobble_bass", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+                { "type":"sawtooth", "freq":55 },
+                { "type":"lowpass", "cutoff":600, "q":0.9 } ] } },
+             "params": [
+                { "name":"pitch", "paths":["root.stages[0].freq"], "min":20, "max":2000, "default":55 } ] }"#,
+    ))
+    .with_amp(adsr(0.005, 0.1, 0.9, 0.15))
+    .with_mode(PlayMode::Mono { legato: true })
+    .with_unison(2, 16.0, 0.3)
+    .with_wobble(3.5, 1.6)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,7 +324,7 @@ mod tests {
     fn preset_lookup_by_name() {
         assert!(preset("warm_lead").is_some());
         assert!(preset("nope").is_none());
-        assert_eq!(PRESETS.len(), 9);
+        assert_eq!(PRESETS.len(), 11);
     }
 
     #[test]
