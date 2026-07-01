@@ -41,6 +41,7 @@ use crate::dsl::{Node, SoundDoc};
 use crate::edit::{EditOp, apply_ops};
 use crate::patch::Patch;
 use crate::stream::Player;
+use crate::streaming::StreamGraph;
 
 /// A block-serving audio source: fill `out` (interleaved stereo L,R,L,R…) and
 /// return the number of frames written. Runs indefinitely. This is the single
@@ -602,6 +603,43 @@ impl Engine {
     }
 }
 
+/// An [`AudioSource`] over the stateful [`StreamGraph`]: streams a streamable
+/// doc's graph **indefinitely and allocation-free**, with no up-front render —
+/// mono duplicated to stereo. Returns `None` for docs outside the streamable
+/// subset (the caller falls back to a buffer-backed [`Player`]/instance). This is
+/// how a game feeds the streaming renderer straight to a cpal / AudioWorklet
+/// callback for continuous generative content.
+pub struct StreamSource {
+    graph: StreamGraph,
+    scratch: Vec<f32>,
+}
+
+impl StreamSource {
+    /// Build a streaming source for `doc`, or `None` if it isn't streamable.
+    pub fn from_doc(doc: &SoundDoc) -> Option<Self> {
+        StreamGraph::try_from_doc(doc).map(|graph| StreamSource {
+            graph,
+            scratch: Vec::new(),
+        })
+    }
+}
+
+impl AudioSource for StreamSource {
+    fn fill(&mut self, out: &mut [f32]) -> usize {
+        let frames = out.len() / 2;
+        if self.scratch.len() < frames {
+            self.scratch.resize(frames, 0.0);
+        }
+        let mono = &mut self.scratch[..frames];
+        self.graph.fill(mono);
+        for f in 0..frames {
+            out[f * 2] = mono[f];
+            out[f * 2 + 1] = mono[f];
+        }
+        frames
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -778,5 +816,30 @@ mod tests {
         fn assert_send<T: Send>() {}
         assert_send::<Controller>();
         assert_send::<Renderer>();
+    }
+
+    #[test]
+    fn stream_source_streams_a_streamable_doc() {
+        let d: SoundDoc = serde_json::from_str(
+            r#"{ "name":"s", "duration":0.1, "root": { "type":"chain", "stages": [
+                { "type":"sawtooth", "freq":220 },
+                { "type":"lowpass", "cutoff":900, "q":0.7 } ] } }"#,
+        )
+        .unwrap();
+        let mut src = StreamSource::from_doc(&d).expect("streamable");
+        let mut out = vec![0.0f32; 256 * 2];
+        assert_eq!(src.fill(&mut out), 256);
+        assert!(peak(&out) > 0.0, "streams real audio");
+        // Mono duplicated to stereo: channels are identical.
+        assert!((0..256).all(|f| out[f * 2] == out[f * 2 + 1]));
+    }
+
+    #[test]
+    fn stream_source_rejects_non_streamable() {
+        let d: SoundDoc = serde_json::from_str(
+            r#"{ "name":"n", "duration":0.05, "root": { "type":"noise", "color":"white" } }"#,
+        )
+        .unwrap();
+        assert!(StreamSource::from_doc(&d).is_none());
     }
 }
