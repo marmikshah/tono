@@ -40,20 +40,39 @@ jobs:
         with:
           files: tono-${{ github.ref_name }}-${{ matrix.target }}.*
 
-  # Silently skips when CARGO_REGISTRY_TOKEN is unset (secrets can't be read in
-  # `if:` directly, so route it through env — the documented indirection).
+  # Publishes the library + binary to crates.io. The token is a production-
+  # environment secret (CRATES_API_TOKEN), exposed to cargo as CARGO_REGISTRY_TOKEN.
+  # Silently skips when the token is unset (secrets can't be read in `if:`
+  # directly, so route it through env — the documented indirection).
   publish:
     needs: build
     runs-on: ubuntu-latest
+    environment: production
     env:
-      HAS_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
+      HAS_TOKEN: ${{ secrets.CRATES_API_TOKEN != '' }}
     if: ${{ needs.build.result == 'success' }}
     steps:
       - uses: actions/checkout@v5
         if: env.HAS_TOKEN == 'true'
       - uses: dtolnay/rust-toolchain@stable
         if: env.HAS_TOKEN == 'true'
-      - run: cargo publish --locked
+      - name: Verify tag matches Cargo.toml version
         if: env.HAS_TOKEN == 'true'
+        run: |
+          CRATE_VERSION="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$CRATE_VERSION" != "$TAG_VERSION" ]; then
+            echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $CRATE_VERSION"; exit 1
+          fi
+      # Workspace publish order: the library first, then the binary that depends
+      # on it. cargo publish waits for each crate to be indexed before returning.
+      - name: Publish tono-core
+        if: env.HAS_TOKEN == 'true'
+        run: cargo publish --locked -p tono-core
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_API_TOKEN }}
+      - name: Publish tono
+        if: env.HAS_TOKEN == 'true'
+        run: cargo publish --locked -p tono
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_API_TOKEN }}
