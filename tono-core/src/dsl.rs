@@ -1484,7 +1484,20 @@ fn validate_node(node: &Node) -> Result<(), String> {
             }
             Ok(())
         }
-        Node::Env { adsr } => adsr.validate("env"),
+        Node::Env { adsr } => {
+            adsr.validate("env")?;
+            // An all-zero envelope is always silent — never intended. It's also
+            // the tell-tale of the flatten footgun: the env's a/d/s/r are inlined
+            // (`{"type":"env","a":..,"d":..}`), so wrapping them in an `"adsr"`
+            // object silently drops them all to 0. Reject it with that hint.
+            if adsr.a == 0.0 && adsr.d == 0.0 && adsr.s == 0.0 && adsr.r == 0.0 {
+                return Err("env is silent — a/d/s/r are all 0. The envelope fields \
+                    are inlined on the node (e.g. {\"type\":\"env\",\"a\":0.01,\"d\":0.1,\
+                    \"s\":0.7,\"r\":0.2}); don't nest them under \"adsr\""
+                    .into());
+            }
+            Ok(())
+        }
         // Nested mixers are rejected earlier; this guards direct calls.
         Node::Tracks { .. } => Err("tracks must be the document's root node".into()),
         Node::Mix { inputs } | Node::Mul { inputs } => {
@@ -1929,6 +1942,20 @@ mod tests {
         assert!(d.validate().unwrap_err().contains("reverb.mix"));
         let d = doc(r#"{ "name": "n", "root": { "type": "env", "s": 2 } }"#);
         assert!(d.validate().unwrap_err().contains("env.s"));
+    }
+
+    #[test]
+    fn validate_rejects_silent_all_zero_env() {
+        // The flatten footgun: nesting a/d/s/r under an "adsr" object silently
+        // drops them all to 0, so the env renders pure silence.
+        let d = doc(r#"{ "name": "n", "root": { "type": "env",
+                "adsr": { "a": 0.01, "d": 0.1, "s": 0.7, "r": 0.2 } } }"#);
+        assert!(d.validate().unwrap_err().contains("env is silent"));
+        // Correctly inlined, it validates.
+        let ok = doc(
+            r#"{ "name": "n", "root": { "type": "env", "a": 0.01, "d": 0.1, "s": 0.7, "r": 0.2 } }"#,
+        );
+        assert!(ok.validate().is_ok());
     }
 
     #[test]
