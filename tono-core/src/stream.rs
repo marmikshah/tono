@@ -69,6 +69,17 @@ impl Player {
         self.left.len()
     }
 
+    /// Current play-head position, in frames.
+    pub fn position(&self) -> usize {
+        self.pos
+    }
+
+    /// Move the play head to `frame` (clamped into range). Lets a re-rendered
+    /// player resume where the outgoing one left off, for a click-free swap.
+    pub fn seek(&mut self, frame: usize) {
+        self.pos = frame.min(self.left.len());
+    }
+
     /// Start playing from the current position.
     pub fn play(&mut self) {
         self.playing = true;
