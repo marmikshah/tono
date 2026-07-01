@@ -15,7 +15,12 @@ use base64::Engine as _;
 use serde::Serialize;
 use tauri::State;
 use tono_core::dsl::{Adsr, SoundDoc};
-use tono_core::{analysis, render};
+use tono_core::{analysis, presets, render};
+
+/// A minimal doc used to spin up the audio engine when a preset is loaded before
+/// anything has been rendered (silent until the preview transport is played).
+const INIT_DOC: &str =
+    r#"{"name":"init","duration":1.0,"engine":2,"root":{"type":"sine","freq":220}}"#;
 
 /// App state: the lazily-created audio engine handle (built on first render,
 /// since it needs an output device).
@@ -139,6 +144,53 @@ fn note_off(key: u32, studio: State<Studio>) {
     }
 }
 
+/// Bend the sounding keyboard voices by `semitones` (the pitch wheel).
+#[tauri::command]
+fn set_bend(semitones: f32, studio: State<Studio>) {
+    if let Ok(slot) = studio.engine.lock()
+        && let Some(engine) = slot.as_ref()
+    {
+        engine.set_bend(semitones);
+    }
+}
+
+/// A factory preset's metadata for the UI picker.
+#[derive(Serialize)]
+struct PresetInfo {
+    name: String,
+    category: String,
+    description: String,
+}
+
+/// List the built-in instrument presets.
+#[tauri::command]
+fn list_presets() -> Vec<PresetInfo> {
+    presets::PRESETS
+        .iter()
+        .map(|p| PresetInfo {
+            name: p.name.to_string(),
+            category: format!("{:?}", p.category),
+            description: p.description.to_string(),
+        })
+        .collect()
+}
+
+/// Load a factory preset onto the keyboard, spinning up the audio engine first
+/// if nothing has been rendered yet.
+#[tauri::command]
+fn load_preset(name: String, studio: State<Studio>) {
+    if let Ok(mut slot) = studio.engine.lock() {
+        if slot.is_none()
+            && let Ok(doc) = serde_json::from_str::<SoundDoc>(INIT_DOC)
+        {
+            *slot = audio::spawn(doc).ok();
+        }
+        if let Some(engine) = slot.as_ref() {
+            engine.load_preset(&name);
+        }
+    }
+}
+
 const HELP: &str = "tono-desktop — native tono studio.
 
 USAGE:
@@ -168,7 +220,10 @@ fn run_studio() {
             transport,
             set_amp,
             note_on,
-            note_off
+            note_off,
+            set_bend,
+            list_presets,
+            load_preset
         ])
         .run(tauri::generate_context!())
         .expect("failed to launch the tono studio window");
