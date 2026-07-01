@@ -16,6 +16,7 @@ pub use tono_core::{analysis, dsl, dsp, edit, render, review, vary};
 pub mod audio;
 pub mod bank;
 pub mod engines;
+pub mod imaging;
 pub mod journal;
 pub mod midi;
 pub mod resources;

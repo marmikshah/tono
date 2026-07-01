@@ -5,7 +5,6 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 use crate::dsp::{dbfs, loudness_lufs, true_peak};
 use rustfft::{FftPlanner, num_complex::Complex};
@@ -79,24 +78,10 @@ pub struct Analysis {
 const FFT_SIZE: usize = 1024;
 const HOP: usize = 256;
 
-/// Analyze samples: compute stats, write a spectrogram PNG to `png_path`, and a
-/// waveform PNG next to it at `<stem>_wave.png` (both paths are returned in the
-/// [`Analysis`]).
-pub fn analyze(samples: &[f32], sample_rate: u32, png_path: &Path) -> anyhow::Result<Analysis> {
-    write_spectrogram(&stft(samples), png_path)?;
-    let wave_path = waveform_path(png_path);
-    write_waveform(samples, &wave_path)?;
-
-    let mut a = stats(samples, sample_rate);
-    a.spectrogram_png_path = png_path.to_string_lossy().into_owned();
-    a.waveform_png_path = wave_path.to_string_lossy().into_owned();
-    Ok(a)
-}
-
-/// Compute every numeric descriptor with **no filesystem access** — the
-/// in-memory core of [`analyze`], used by the WASM playground (which pairs it
-/// with [`spectrogram_png`] / [`waveform_png`]) and anywhere a render only needs
-/// the numbers. The `*_png_path` fields are left empty.
+/// Compute every numeric descriptor with **no filesystem access** — pure
+/// compute. Pair it with [`spectrogram_png`] / [`waveform_png`] for the images;
+/// writing them to disk is the shell's job. The `*_png_path` fields are left
+/// empty for the caller to fill once it has written the files.
 pub fn stats(samples: &[f32], sample_rate: u32) -> Analysis {
     let srf = sample_rate as f32;
     let duration_secs = samples.len() as f32 / srf;
@@ -133,15 +118,6 @@ pub fn stats(samples: &[f32], sample_rate: u32) -> Analysis {
         spectrogram_png_path: String::new(),
         waveform_png_path: String::new(),
     }
-}
-
-/// Sibling path for the waveform PNG: `<stem>_wave.png` next to the spectrogram.
-fn waveform_path(png_path: &Path) -> std::path::PathBuf {
-    let stem = png_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("wave");
-    png_path.with_file_name(format!("{stem}_wave.png"))
 }
 
 /// Time-domain transient descriptors derived from a one-pole amplitude envelope.
@@ -247,15 +223,8 @@ fn transients(samples: &[f32], sr: u32) -> Transients {
     }
 }
 
-/// Render a waveform / amplitude image (time on X, amplitude on Y, centered) so
-/// the agent can read attack, decay, and double-triggers the spectrogram hides.
-fn write_waveform(samples: &[f32], path: &Path) -> anyhow::Result<()> {
-    waveform_image(samples).save(path)?;
-    Ok(())
-}
-
-/// The waveform / amplitude-envelope image (min/max per column on a dark field).
-/// Shared by the disk writer and the in-memory [`waveform_png`] encoder.
+/// The waveform / amplitude-envelope image (min/max per column on a dark field),
+/// encoded to bytes by [`waveform_png`].
 fn waveform_image(samples: &[f32]) -> image::RgbImage {
     use image::{ImageBuffer, Rgb, RgbImage};
     let w: u32 = 640;
@@ -455,17 +424,11 @@ fn inharmonicity(frames: &[Vec<f32>], sample_rate: f32) -> f32 {
     (1.0 - (harm / total).min(1.0)).clamp(0.0, 1.0) as f32
 }
 
-/// Render STFT magnitude frames to a PNG heatmap (time on X, LOG frequency on
-/// Y, low frequencies at the bottom). A log axis spreads the bass/low-mids —
-/// where pitched bodies, basslines and modal partials live — instead of
-/// crushing them into the bottom strip a linear axis gives.
-fn write_spectrogram(frames: &[Vec<f32>], path: &Path) -> anyhow::Result<()> {
-    spectrogram_image(frames).save(path)?;
-    Ok(())
-}
-
-/// The log-frequency spectrogram image. Shared by the disk writer and the
-/// in-memory [`spectrogram_png`] encoder.
+/// The log-frequency spectrogram image (time on X, LOG frequency on Y, low
+/// frequencies at the bottom), encoded to bytes by [`spectrogram_png`]. A log
+/// axis spreads the bass/low-mids — where pitched bodies, basslines and modal
+/// partials live — instead of crushing them into the bottom strip a linear axis
+/// gives.
 fn spectrogram_image(frames: &[Vec<f32>]) -> image::RgbImage {
     use image::{ImageBuffer, Rgb, RgbImage};
 
@@ -541,20 +504,17 @@ mod tests {
         let samples: Vec<f32> = (0..sr / 10)
             .map(|i| (std::f32::consts::TAU * 440.0 * i as f32 / sr as f32).sin() * 0.5)
             .collect();
-        let dir = std::env::temp_dir().join("tono_analysis_test");
-        std::fs::create_dir_all(&dir).unwrap();
-        let png = dir.join("sine.png");
-        let a = analyze(&samples, sr, &png).unwrap();
+        let a = stats(&samples, sr);
 
         assert!((a.duration_secs - 0.1).abs() < 0.01);
         assert!((a.peak_dbfs + 6.02).abs() < 0.2); // 0.5 amplitude ≈ −6 dBFS
         assert!((a.rms_dbfs + 9.03).abs() < 0.3); // sine RMS = peak − 3.01 dB
         assert!((a.spectral_centroid_hz - 440.0).abs() < 60.0);
         assert!(a.true_peak_dbfs >= a.peak_dbfs - 0.01);
-        // Both feedback images land on disk, waveform at the `_wave` sibling.
-        assert!(std::path::Path::new(&a.spectrogram_png_path).exists());
-        assert!(a.waveform_png_path.ends_with("sine_wave.png"));
-        assert!(std::path::Path::new(&a.waveform_png_path).exists());
+        // Both feedback images encode to non-empty PNG bytes (writing them to
+        // disk is the shell's job, not the pure core's).
+        assert!(spectrogram_png(&samples).unwrap().len() > 8);
+        assert!(waveform_png(&samples).unwrap().len() > 8);
     }
 
     #[test]
@@ -574,9 +534,7 @@ mod tests {
                 *sample = 0.8;
             }
         }
-        let dir = std::env::temp_dir().join("tono_analysis_test");
-        std::fs::create_dir_all(&dir).unwrap();
-        let a = analyze(&samples, sr as u32, &dir.join("bursts.png")).unwrap();
+        let a = stats(&samples, sr as u32);
         assert_eq!(a.onset_count, 2);
     }
 

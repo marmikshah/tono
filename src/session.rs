@@ -364,7 +364,8 @@ mod tests {
         .unwrap();
         let samples = crate::render::render(&graph);
         let analysis =
-            crate::analysis::analyze(&samples, graph.sample_rate, &store.png_path(id)).unwrap();
+            crate::imaging::analyze_to_disk(&samples, graph.sample_rate, &store.png_path(id))
+                .unwrap();
         Record {
             id: id.into(),
             name: id.into(),

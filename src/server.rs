@@ -25,7 +25,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::analysis::{self, Analysis};
+use crate::analysis::Analysis;
 use crate::audio;
 use crate::bank::{Bank, BankMember, ManifestEntry};
 use crate::dsl::{Adsr, Node, NoiseColor, Normalize, Playback, SoundDoc, Stereo, Track, Value};
@@ -2142,8 +2142,9 @@ impl Tono {
             .map_err(|e| format!("render write failed: {e}"))?;
 
         let png_path = self.store.png_path(&id);
-        let mut analysis = analysis::analyze(&product.mono, graph.sample_rate, &png_path)
-            .map_err(|e| format!("analysis failed: {e}"))?;
+        let mut analysis =
+            crate::imaging::analyze_to_disk(&product.mono, graph.sample_rate, &png_path)
+                .map_err(|e| format!("analysis failed: {e}"))?;
         analysis.layers = product.layers.clone();
 
         let rec = Record {
@@ -2350,7 +2351,8 @@ pub fn rehydrate(store: &Store) -> usize {
             continue;
         }
         let png_path = store.png_path(&id);
-        let Ok(mut analysis) = analysis::analyze(&product.mono, graph.sample_rate, &png_path)
+        let Ok(mut analysis) =
+            crate::imaging::analyze_to_disk(&product.mono, graph.sample_rate, &png_path)
         else {
             continue;
         };

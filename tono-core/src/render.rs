@@ -2543,15 +2543,9 @@ mod tests {
                      ] }} }}"#
             ))
         };
-        let dir = std::env::temp_dir().join("tono_adaa_inharm");
-        std::fs::create_dir_all(&dir).unwrap();
-        let inharm = |name: &str, d: &SoundDoc| {
-            crate::analysis::analyze(&render(d), 44_100, &dir.join(name))
-                .unwrap()
-                .inharmonicity
-        };
-        let legacy = inharm("legacy.png", &mk(0));
-        let aa = inharm("aa.png", &mk(1));
+        let inharm = |d: &SoundDoc| crate::analysis::stats(&render(d), 44_100).inharmonicity;
+        let legacy = inharm(&mk(0));
+        let aa = inharm(&mk(1));
         assert!(
             aa < legacy - 0.1,
             "ADAA should clearly lower off-harmonic energy: aa={aa} legacy={legacy}"
