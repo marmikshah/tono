@@ -1,8 +1,8 @@
 #!/bin/sh
 # tono installer — downloads the latest release binary for this machine.
 #
-#   curl -fsSL https://marmikshah.github.io/tono/install.sh | sh
-#   curl -fsSL https://marmikshah.github.io/tono/install.sh | sh -s -- uninstall
+#   curl -fsSL https://raw.githubusercontent.com/marmikshah/tono/master/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/marmikshah/tono/master/install.sh | sh -s -- uninstall
 #
 # Options (environment variables):
 #   TONO_VERSION      install a specific tag (e.g. v0.1.0); default: latest
