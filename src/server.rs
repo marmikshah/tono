@@ -29,7 +29,7 @@ use crate::analysis::{self, Analysis};
 use crate::audio;
 use crate::bank::{Bank, BankMember, ManifestEntry};
 use crate::dsl::{Adsr, Node, NoiseColor, Normalize, Playback, SoundDoc, Stereo, Track, Value};
-use crate::dsp::dbfs;
+use crate::dsp::{dbfs, loudness_lufs, true_peak};
 use crate::edit::{self, EditOp, NodeInfo};
 use crate::engines::{self, EngineTarget};
 use crate::journal::{self, Journal};
@@ -2083,9 +2083,9 @@ impl Tono {
                     as u32,
                 sample_rate: graph.sample_rate,
                 channels,
-                lufs: round2(analysis::loudness_lufs(&product.mono)),
+                lufs: round2(loudness_lufs(&product.mono)),
                 peak_dbfs: round2(dbfs(peak_abs(&product.mono))),
-                true_peak_dbfs: round2(dbfs(analysis::true_peak(&product.mono))),
+                true_peak_dbfs: round2(dbfs(true_peak(&product.mono))),
             });
         }
 

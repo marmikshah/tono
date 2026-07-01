@@ -4,12 +4,11 @@
 //! evaluated into a block of `f32` samples; combinators combine those blocks.
 //! Processors transform the signal flowing through a `chain`.
 
-use crate::analysis;
 use crate::dsl::{
     Adsr, AutoLane, AutoPoint, AutoTarget, Curve, DriveShape, Mode, Modulator, Node, NoiseColor,
     Normalize, Playback, SeqNote, SeqWave, Shape, SoundDoc, Stereo, SuperWave, Value,
 };
-use crate::dsp::{Rng, db_to_lin, peak_limit};
+use crate::dsp::{Rng, db_to_lin, loudness_lufs, peak_limit, true_peak};
 use std::f32::consts::{FRAC_PI_2, LN_2, TAU};
 
 /// A block of mono audio samples.
@@ -287,6 +286,7 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
 }
 
 /// A track whose node is directly a sampler seq renders in native stereo.
+#[cfg(feature = "sampler")]
 fn track_native_stereo(node: &Node, n: usize, sr: u32) -> Option<(Signal, Signal)> {
     if let Node::Seq {
         bpm,
@@ -323,6 +323,12 @@ fn track_native_stereo(node: &Node, n: usize, sr: u32) -> Option<(Signal, Signal
         let step_dur = sr as f32 * 60.0 / bpm / (*steps_per_beat).max(1) as f32;
         return sampler_seq_stereo(&voice, notes, step_dur, n, sr);
     }
+    None
+}
+
+/// Without the `sampler` feature there is no native-stereo SoundFont path.
+#[cfg(not(feature = "sampler"))]
+fn track_native_stereo(_node: &Node, _n: usize, _sr: u32) -> Option<(Signal, Signal)> {
     None
 }
 
@@ -443,7 +449,7 @@ fn normalize_output(samples: &mut [f32], nz: &Normalize) {
     let ceil = db_to_lin(nz.ceiling_dbtp);
     if let Some(target) = nz.target_lufs {
         for _ in 0..2 {
-            let cur = analysis::loudness_lufs(samples);
+            let cur = loudness_lufs(samples);
             if cur <= -120.0 {
                 break;
             }
@@ -477,7 +483,7 @@ fn soft_limit(samples: &mut [f32], ceil: f32) {
 /// attenuation (never boosts), so it composes after loudness matching.
 fn true_peak_limit(samples: &mut [f32], ceiling_dbtp: f32) {
     let ceil = db_to_lin(ceiling_dbtp);
-    let tp = analysis::true_peak(samples);
+    let tp = true_peak(samples);
     if tp > ceil && tp > 0.0 {
         let g = ceil / tp;
         for x in samples.iter_mut() {
@@ -1543,8 +1549,12 @@ struct SeqVoice<'a> {
     fm_index: f32,
     fm_strike: f32,
     pluck_decay: f32,
+    // Read only by the SoundFont sampler path (feature = "sampler").
+    #[cfg_attr(not(feature = "sampler"), allow(dead_code))]
     sf2: &'a str,
+    #[cfg_attr(not(feature = "sampler"), allow(dead_code))]
     sf2_preset: u32,
+    #[cfg_attr(not(feature = "sampler"), allow(dead_code))]
     sf2_bank: u32,
     swing: f32,
     humanize: f32,
@@ -1592,8 +1602,13 @@ fn render_seq(
     let step_dur = srf * 60.0 / bpm / steps_per_beat.max(1) as f32; // samples per step
     // The sampler plays all notes through one shared synthesizer (voices
     // interact via polyphony), so it renders the sequence as a whole.
+    #[cfg(feature = "sampler")]
     if voice.wave == SeqWave::Sampler {
         return sampler_seq(voice, notes, step_dur, n, sr);
+    }
+    #[cfg(not(feature = "sampler"))]
+    if voice.wave == SeqWave::Sampler {
+        return vec![0.0f32; n];
     }
     let mut out = vec![0.0f32; n];
     for note in notes {
@@ -1859,6 +1874,7 @@ fn cowbell_sample(f: f32, t: f32) -> f32 {
 /// stealing, and per-preset envelopes behave like a real MIDI instrument.
 /// Output is the stereo render downmixed to the graph's mono bus (doc-level
 /// `stereo` adds width back at the output stage).
+#[cfg(feature = "sampler")]
 fn sampler_seq(voice: &SeqVoice, notes: &[SeqNote], step_dur: f32, n: usize, sr: u32) -> Signal {
     match sampler_seq_stereo(voice, notes, step_dur, n, sr) {
         Some((l, r)) => l.iter().zip(r).map(|(a, b)| 0.5 * (a + b)).collect(),
@@ -1867,6 +1883,7 @@ fn sampler_seq(voice: &SeqVoice, notes: &[SeqNote], step_dur: f32, n: usize, sr:
 }
 
 /// The sampler's native stereo render (used directly by mixer tracks).
+#[cfg(feature = "sampler")]
 fn sampler_seq_stereo(
     voice: &SeqVoice,
     notes: &[SeqNote],
@@ -1936,6 +1953,7 @@ fn sampler_seq_stereo(
 }
 
 /// SoundFonts are large; load each file once per process and share it.
+#[cfg(feature = "sampler")]
 fn load_soundfont(path: &str) -> anyhow::Result<std::sync::Arc<rustysynth::SoundFont>> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, OnceLock};
@@ -2437,6 +2455,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "analysis")]
     #[test]
     fn adaa_lowers_off_harmonic_energy_for_a_folded_tone() {
         // A 2500 Hz sine folded hard: its true harmonics sit on the 2500 Hz
@@ -2606,10 +2625,10 @@ mod tests {
                  "root": { "type": "chain", "stages": [
                     { "type": "sine", "freq": 440 }, { "type": "gain", "amount": 0.05 } ] } }"#);
         let s = render(&d);
-        let lufs = analysis::loudness_lufs(&s);
+        let lufs = loudness_lufs(&s);
         assert!((lufs + 20.0).abs() < 1.5, "got {lufs} LUFS");
         // True peak respects the −1 dBTP ceiling (small estimation slack).
-        assert!(crate::dsp::dbfs(analysis::true_peak(&s)) <= -0.9);
+        assert!(crate::dsp::dbfs(true_peak(&s)) <= -0.9);
     }
 
     #[test]
