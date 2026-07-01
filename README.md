@@ -10,7 +10,7 @@
 <p align="center">
   <a href="https://github.com/marmikshah/tono/actions/workflows/ci.yml"><img src="https://github.com/marmikshah/tono/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/marmikshah/tono/releases/latest"><img src="https://img.shields.io/github/v/release/marmikshah/tono" alt="release"></a>
-  <img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-8c6ee6" alt="license">
+  <img src="https://img.shields.io/badge/license-MIT-8c6ee6" alt="license">
 </p>
 
 <p align="center">
@@ -228,5 +228,4 @@ engine-ready packs with manifests, and both record replayable recipes.
 
 ## License
 
-Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at
-your option.
+[MIT](LICENSE) — permissive, no warranty.
