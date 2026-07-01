@@ -29,10 +29,11 @@
 use std::f32::consts::TAU;
 
 use crate::dsl::{
-    Curve, DriveShape, Modulator, Node, NoiseColor, Shape, SoundDoc, SuperWave, Value, note_to_hz,
+    Curve, DriveShape, Modulator, Node, NoiseColor, SeqWave, Shape, SoundDoc, SuperWave, Value,
+    note_to_hz,
 };
 use crate::dsp::{Rng, node_path, node_seed};
-use crate::render::{drive_antideriv, drive_curve, osc, poly_blep, rand_seed};
+use crate::render::{drive_antideriv, drive_curve, osc, poly_blep, rand_seed, seq_to_signal};
 
 /// The ADSR envelope value at time `t` seconds — the exact body of the offline
 /// `adsr` (also used by `Modulator::EnvMod`). `rel_start` anchors the release to
@@ -321,6 +322,11 @@ enum Src {
         g: f32,
         y: f32,
     },
+    /// `engine >= 2`, non-sampler only: a seq pre-rendered (via the exact offline
+    /// synthesis, structurally seeded) and read back block-by-block.
+    Seq {
+        buf: Vec<f32>,
+    },
     Mix(Vec<Src>),
     Mul(Vec<Src>),
     Chain {
@@ -572,6 +578,7 @@ impl Src {
                 *y = imp + *g * *y;
                 *y
             }
+            Src::Seq { buf } => buf.get(t).copied().unwrap_or(0.0),
             Src::Mix(cs) => {
                 let mut acc = 0.0f32;
                 for c in cs.iter_mut() {
@@ -928,6 +935,12 @@ fn try_src(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Src
                 y: 0.0,
             }
         }
+        // Non-sampler seq (engine >= 2): pre-render with a structurally-seeded RNG
+        // (the exact offline synthesis) and read it back block-by-block. Sampler
+        // seq is external-synth-coupled and stays on the buffered fallback.
+        Node::Seq { wave, .. } if engine >= 2 && *wave != SeqWave::Sampler => Src::Seq {
+            buf: seq_to_signal(node, n, sr, &mut Rng::new(node_seed(path))),
+        },
         Node::Sine { freq } => Src::Sine {
             phase: 0.0,
             freq: v(freq),
@@ -1550,6 +1563,28 @@ mod tests {
         ] {
             assert_byte_identical(&parse(doc));
         }
+    }
+
+    #[test]
+    fn engine2_seq_streams_byte_identically() {
+        // A melodic square seq (no RNG voice).
+        assert_byte_identical(&parse(
+            r#"{ "name":"sq", "duration":0.4, "seed":11, "engine":2, "root": { "type":"seq",
+                "bpm":120, "steps_per_beat":4, "wave":"square",
+                "env": { "a":0.005, "d":0.05, "s":0.4, "r":0.08 },
+                "notes": [ { "step":0, "len":2, "pitch":"C4" }, { "step":2, "len":2, "pitch":"E4" },
+                           { "step":4, "len":2, "pitch":"G4" }, { "step":6, "len":2, "pitch":"C5" } ] } }"#,
+        ));
+        // A kit (noise-based drums) seq into reverb — the RNG-heavy path, streamed
+        // through a stateful effect.
+        assert_byte_identical(&parse(
+            r#"{ "name":"dr", "duration":0.5, "seed":3, "engine":2, "root": { "type":"chain", "stages": [
+                { "type":"seq", "bpm":140, "steps_per_beat":4, "wave":"kit",
+                  "env": { "a":0.001, "d":0.1, "s":0.0, "r":0.05 },
+                  "notes": [ { "step":0, "len":1, "pitch":"midi:36" }, { "step":2, "len":1, "pitch":"midi:38" },
+                             { "step":4, "len":1, "pitch":"midi:42" }, { "step":6, "len":1, "pitch":"midi:38" } ] },
+                { "type":"reverb", "room":0.5, "mix":0.3 } ] } }"#,
+        ));
     }
 
     #[test]

@@ -757,38 +757,16 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng, engine: u32, path:
             }
         }
         Node::Fm { freq, ratio, index } => fm_signal(freq, *ratio, index, n, sr),
-        Node::Seq {
-            bpm,
-            steps_per_beat,
-            wave,
-            duty,
-            fm_ratio,
-            fm_index,
-            fm_strike,
-            pluck_decay,
-            sf2,
-            sf2_preset,
-            sf2_bank,
-            swing,
-            humanize,
-            env,
-            notes,
-        } => {
-            let voice = SeqVoice {
-                wave: *wave,
-                duty,
-                fm_ratio: *fm_ratio,
-                fm_index: *fm_index,
-                fm_strike: *fm_strike,
-                pluck_decay: *pluck_decay,
-                sf2,
-                sf2_preset: *sf2_preset,
-                sf2_bank: *sf2_bank,
-                swing: *swing,
-                humanize: *humanize,
-                env,
-            };
-            render_seq(*bpm, *steps_per_beat, &voice, notes, n, sr, rng)
+        // Engine ≥ 2: the seq draws its voice randomness (noise/pluck/kit/thump)
+        // from a structurally-seeded stream, so it's order-independent and the
+        // streaming renderer reproduces it byte-identically.
+        Node::Seq { .. } => {
+            if engine >= 2 {
+                let mut local = Rng::new(node_seed(path));
+                seq_to_signal(node, n, sr, &mut local)
+            } else {
+                seq_to_signal(node, n, sr, rng)
+            }
         }
         Node::Impact { hardness, velocity } => impact_signal(*hardness, *velocity, n, sr),
         Node::Dust { density, decay } => {
@@ -1675,6 +1653,49 @@ fn render_seq(
         }
     }
     out
+}
+
+/// Render a `Node::Seq` to a mono buffer with the given RNG — the exact seq
+/// synthesis, shared by the offline renderer and the streaming renderer (which
+/// pre-renders the seq with a structurally-seeded RNG) so a streamed seq is
+/// byte-identical. Silence for a non-Seq node.
+pub(crate) fn seq_to_signal(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
+    if let Node::Seq {
+        bpm,
+        steps_per_beat,
+        wave,
+        duty,
+        fm_ratio,
+        fm_index,
+        fm_strike,
+        pluck_decay,
+        sf2,
+        sf2_preset,
+        sf2_bank,
+        swing,
+        humanize,
+        env,
+        notes,
+    } = node
+    {
+        let voice = SeqVoice {
+            wave: *wave,
+            duty,
+            fm_ratio: *fm_ratio,
+            fm_index: *fm_index,
+            fm_strike: *fm_strike,
+            pluck_decay: *pluck_decay,
+            sf2,
+            sf2_preset: *sf2_preset,
+            sf2_bank: *sf2_bank,
+            swing: *swing,
+            humanize: *humanize,
+            env,
+        };
+        render_seq(*bpm, *steps_per_beat, &voice, notes, n, sr, rng)
+    } else {
+        vec![0.0; n]
+    }
 }
 
 /// Render one note of a seq instrument: `f`/`d` are the per-sample pitch and
