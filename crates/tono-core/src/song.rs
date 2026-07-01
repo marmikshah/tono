@@ -22,6 +22,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::catalog::{Instrument, VoiceParams};
 use crate::dsl::{Adsr, ENGINE_VERSION, Node, SeqNote, SeqWave, SoundDoc, Track, Value};
 
 /// One instrument track: an instrument voice plus its mixer settings. Notes come
@@ -51,6 +52,13 @@ pub struct SongTrack {
     /// SoundFont bank when `wave` is `sampler` (128 = the GM drum map).
     #[serde(default)]
     pub sf2_bank: u32,
+    /// Notes written directly onto this track (via [`Song::add`]), in addition
+    /// to any arranged from patterns. `step` is absolute from the song start.
+    #[serde(default)]
+    pub notes: Vec<SeqNote>,
+    /// Voice-specific synthesis parameters (from the catalog instrument).
+    #[serde(default)]
+    pub voice: VoiceParams,
 }
 
 /// A reusable phrase: notes on the bar grid, `bars` long. Note `step`s are
@@ -143,8 +151,50 @@ impl Song {
             sf2: String::new(),
             sf2_preset: 0,
             sf2_bank: 0,
+            notes: Vec::new(),
+            voice: VoiceParams::default(),
         });
         self
+    }
+
+    /// Add a catalog [`Instrument`] and write its notes on the shared beat
+    /// timeline, in one fluent call — the ergonomic way to build a song.
+    ///
+    /// The closure gets a [`Phrase`]: place notes with `.at(beat).note(pitch,
+    /// beats)`, step a melody with `.play(..)` / `.rest(..)`, stack a `.chord(..)`,
+    /// or hit drums with `.kick()` / `.snare()` / `.hat()`. Consumes and returns
+    /// the song so calls chain: `Song::new(..).add(..).add(..).to_doc()`.
+    ///
+    /// Beats map to the grid at the song's `steps_per_beat`; a duplicate
+    /// instrument name is disambiguated automatically.
+    pub fn add(mut self, instrument: Instrument, write: impl FnOnce(&mut Phrase)) -> Self {
+        let mut phrase = Phrase::new(self.steps_per_beat);
+        write(&mut phrase);
+        let name = self.unique_name(&instrument.name);
+        self.tracks.push(SongTrack {
+            name,
+            wave: instrument.wave,
+            env: instrument.env,
+            gain: instrument.gain,
+            pan: instrument.pan,
+            sf2: String::new(),
+            sf2_preset: 0,
+            sf2_bank: 0,
+            notes: phrase.notes,
+            voice: instrument.voice,
+        });
+        self
+    }
+
+    /// A track name not already taken — appends " 2", " 3", … on collision.
+    fn unique_name(&self, base: &str) -> String {
+        if !self.tracks.iter().any(|t| t.name == base) {
+            return base.to_string();
+        }
+        (2..)
+            .map(|i| format!("{base} {i}"))
+            .find(|n| !self.tracks.iter().any(|t| &t.name == n))
+            .expect("an unused suffix always exists")
     }
 
     /// Define a reusable pattern.
@@ -236,7 +286,10 @@ impl Song {
         let mut doc_tracks = Vec::with_capacity(self.tracks.len());
 
         for t in &self.tracks {
-            let mut notes: Vec<SeqNote> = Vec::new();
+            let mut notes: Vec<SeqNote> = t.notes.clone();
+            for n in &notes {
+                end_step = end_step.max(n.step + n.len.max(1));
+            }
             for pl in self.arrangement.iter().filter(|p| p.track == t.name) {
                 let pat = self
                     .patterns
@@ -258,8 +311,9 @@ impl Song {
             notes.sort_by_key(|n| n.step);
 
             // Build the seq node via serde so the seq-only fields (duty, fm_*,
-            // pluck_decay) take the engine's own defaults — no drift.
-            let seq: Node = serde_json::from_value(serde_json::json!({
+            // pluck_decay) take the engine's own defaults — then override just
+            // the ones this instrument sets, so unset params never drift.
+            let mut seq_json = serde_json::json!({
                 "type": "seq",
                 "bpm": self.bpm,
                 "steps_per_beat": self.steps_per_beat,
@@ -271,8 +325,24 @@ impl Song {
                 "sf2_preset": t.sf2_preset,
                 "sf2_bank": t.sf2_bank,
                 "notes": serde_json::to_value(&notes).map_err(|e| e.to_string())?,
-            }))
-            .map_err(|e| format!("track '{}' seq build: {e}", t.name))?;
+            });
+            if let Some(v) = t.voice.duty {
+                seq_json["duty"] = serde_json::json!(v);
+            }
+            if let Some(v) = t.voice.fm_ratio {
+                seq_json["fm_ratio"] = serde_json::json!(v);
+            }
+            if let Some(v) = t.voice.fm_index {
+                seq_json["fm_index"] = serde_json::json!(v);
+            }
+            if let Some(v) = t.voice.fm_strike {
+                seq_json["fm_strike"] = serde_json::json!(v);
+            }
+            if let Some(v) = t.voice.pluck_decay {
+                seq_json["pluck_decay"] = serde_json::json!(v);
+            }
+            let seq: Node = serde_json::from_value(seq_json)
+                .map_err(|e| format!("track '{}' seq build: {e}", t.name))?;
 
             doc_tracks.push(Track {
                 id: Some(t.name.clone()),
@@ -298,6 +368,132 @@ impl Song {
         }))
         .map_err(|e| format!("song doc build: {e}"))?;
         Ok(doc)
+    }
+}
+
+/// A per-track note writer, handed to the closure of [`Song::add`]. A moving
+/// beat cursor plus placement helpers: absolute (`.at(beat)` then `.note(..)` /
+/// `.chord(..)`), sequential (`.play(..)` / `.rest(..)` advance the cursor), and
+/// drum hits (`.kick()` / `.snare()` / `.hat()` / `.hit(gm_note)`). Velocity for
+/// following notes is set with `.vel(..)`.
+pub struct Phrase {
+    steps_per_beat: u32,
+    cursor_beat: f32,
+    velocity: f32,
+    notes: Vec<SeqNote>,
+}
+
+impl Phrase {
+    fn new(steps_per_beat: u32) -> Self {
+        Phrase {
+            steps_per_beat: steps_per_beat.max(1),
+            cursor_beat: 0.0,
+            velocity: 1.0,
+            notes: Vec::new(),
+        }
+    }
+
+    fn step_of(&self, beat: f32) -> u32 {
+        (beat.max(0.0) * self.steps_per_beat as f32).round() as u32
+    }
+
+    fn len_of(&self, dur_beats: f32) -> u32 {
+        ((dur_beats.max(0.0) * self.steps_per_beat as f32).round() as u32).max(1)
+    }
+
+    /// Move the cursor to an absolute beat (0 = the song start).
+    pub fn at(&mut self, beat: f32) -> &mut Self {
+        self.cursor_beat = beat;
+        self
+    }
+
+    /// Set the velocity (0..1) applied to notes placed after this call.
+    pub fn vel(&mut self, velocity: f32) -> &mut Self {
+        self.velocity = velocity.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Place a note at the cursor, `dur_beats` long. Does not move the cursor —
+    /// pair with `.at(..)`.
+    pub fn note(&mut self, pitch: &str, dur_beats: f32) -> &mut Self {
+        self.push(pitch, dur_beats);
+        self
+    }
+
+    /// Place a chord at the cursor — all pitches at once, `dur_beats` long.
+    pub fn chord(&mut self, pitches: &[&str], dur_beats: f32) -> &mut Self {
+        for p in pitches {
+            self.push(p, dur_beats);
+        }
+        self
+    }
+
+    /// Play a note at the cursor and advance the cursor by `dur_beats` — write a
+    /// melody without repeating `.at(..)`.
+    pub fn play(&mut self, pitch: &str, dur_beats: f32) -> &mut Self {
+        self.push(pitch, dur_beats);
+        self.cursor_beat += dur_beats;
+        self
+    }
+
+    /// Advance the cursor by `dur_beats` without sounding anything (a rest).
+    pub fn rest(&mut self, dur_beats: f32) -> &mut Self {
+        self.cursor_beat += dur_beats;
+        self
+    }
+
+    fn push(&mut self, pitch: &str, dur_beats: f32) {
+        self.notes.push(SeqNote {
+            step: self.step_of(self.cursor_beat),
+            len: self.len_of(dur_beats),
+            pitch: Value::Note(pitch.to_string()),
+            gain: self.velocity,
+        });
+    }
+
+    /// Hit a drum at the cursor by its General MIDI note (a one-step hit). Only
+    /// meaningful on a `Kit` instrument, where the note picks the drum.
+    pub fn hit(&mut self, gm_note: u8) -> &mut Self {
+        self.notes.push(SeqNote {
+            step: self.step_of(self.cursor_beat),
+            len: 1,
+            pitch: Value::Note(format!("midi:{gm_note}")),
+            gain: self.velocity,
+        });
+        self
+    }
+
+    /// Kick drum (GM 36).
+    pub fn kick(&mut self) -> &mut Self {
+        self.hit(36)
+    }
+    /// Snare (GM 38).
+    pub fn snare(&mut self) -> &mut Self {
+        self.hit(38)
+    }
+    /// Closed hi-hat (GM 42).
+    pub fn hat(&mut self) -> &mut Self {
+        self.hit(42)
+    }
+    /// Open hi-hat (GM 46).
+    pub fn open_hat(&mut self) -> &mut Self {
+        self.hit(46)
+    }
+    /// Hand clap (GM 39).
+    pub fn clap(&mut self) -> &mut Self {
+        self.hit(39)
+    }
+    /// Crash cymbal (GM 49).
+    pub fn crash(&mut self) -> &mut Self {
+        self.hit(49)
+    }
+    /// Ride cymbal (GM 51).
+    pub fn ride(&mut self) -> &mut Self {
+        self.hit(51)
+    }
+    /// Mid tom (GM 45).
+    pub fn tom(&mut self) -> &mut Self {
+        self.hit(45)
     }
 }
 
@@ -396,5 +592,82 @@ mod tests {
         let json = serde_json::to_string(&song).unwrap();
         let back: Song = serde_json::from_str(&json).unwrap();
         assert!(back.to_doc().is_ok(), "a saved song reloads and compiles");
+    }
+
+    #[test]
+    fn fluent_add_places_notes_on_the_beat_grid() {
+        use crate::catalog::{Drums, GrandPiano};
+        // 4 steps/beat: beat 0 → step 0, beat 1 → step 4, beat 0.5 → step 2.
+        let song = Song::new("demo", 120.0)
+            .add(GrandPiano::grand(), |t| {
+                t.at(0.0).note("C4", 1.0).at(1.0).note("E4", 1.0);
+            })
+            .add(Drums::acoustic(), |t| {
+                t.at(0.0).kick().at(0.5).hat();
+            });
+        let doc = song.to_doc().unwrap();
+        let Node::Tracks { tracks, .. } = &doc.root else {
+            panic!("tracks root");
+        };
+        assert_eq!(tracks.len(), 2);
+        let Node::Seq { notes, .. } = &tracks[0].node else {
+            panic!("seq");
+        };
+        assert_eq!(notes.iter().map(|n| n.step).collect::<Vec<_>>(), vec![0, 4]);
+        let Node::Seq { notes: drums, .. } = &tracks[1].node else {
+            panic!("seq");
+        };
+        assert_eq!(drums.iter().map(|n| n.step).collect::<Vec<_>>(), vec![0, 2]);
+    }
+
+    #[test]
+    fn fluent_song_renders_deterministically() {
+        use crate::catalog::{Bass, GrandPiano};
+        let build = || {
+            Song::new("tune", 100.0)
+                .add(GrandPiano::grand(), |t| {
+                    t.play("C4", 1.0).play("E4", 1.0).play("G4", 1.0);
+                })
+                .add(Bass::finger(), |t| {
+                    t.at(0.0).note("C2", 3.0);
+                })
+                .to_doc()
+                .unwrap()
+        };
+        let a = render::render(&build());
+        assert!(peak(&a) > 0.0, "the fluent song makes sound");
+        assert_eq!(render::render(&build()), a, "byte-identical every render");
+    }
+
+    #[test]
+    fn guitar_voice_param_reaches_the_seq() {
+        use crate::catalog::Guitar;
+        let doc = Song::new("g", 120.0)
+            .add(Guitar::steel(), |t| {
+                t.at(0.0).note("E3", 2.0);
+            })
+            .to_doc()
+            .unwrap();
+        let Node::Tracks { tracks, .. } = &doc.root else {
+            panic!("tracks");
+        };
+        let Node::Seq { pluck_decay, .. } = &tracks[0].node else {
+            panic!("seq");
+        };
+        assert!((*pluck_decay - 0.965).abs() < 1e-6, "steel pluck_decay set");
+    }
+
+    #[test]
+    fn duplicate_instrument_names_are_disambiguated() {
+        use crate::catalog::GrandPiano;
+        let song = Song::new("two pianos", 120.0)
+            .add(GrandPiano::grand(), |t| {
+                t.at(0.0).note("C4", 1.0);
+            })
+            .add(GrandPiano::grand(), |t| {
+                t.at(0.0).note("E4", 1.0);
+            });
+        assert_eq!(song.tracks[0].name, "grand piano");
+        assert_eq!(song.tracks[1].name, "grand piano 2");
     }
 }
