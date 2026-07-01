@@ -46,9 +46,12 @@ use crate::streaming::StreamGraph;
 /// A block-serving audio source: fill `out` (interleaved stereo L,R,L,R…) and
 /// return the number of frames written. Runs indefinitely. This is the single
 /// seam host output adapters target, so a `cpal` callback, an AudioWorklet, or a
-/// Bevy source never depend on a concrete engine type. (The `Any` supertrait lets
-/// a [`Mixer`] hand back a typed `&mut` to a source it owns.)
-pub trait AudioSource: std::any::Any {
+/// Bevy source never depend on a concrete engine type.
+///
+/// Implementations overwrite the **whole** `out` buffer (silence where there is
+/// nothing to play), so a caller may mix several sources through one scratch
+/// buffer without re-zeroing.
+pub trait AudioSource {
     /// Fill `out` with the next block of interleaved-stereo audio.
     fn fill(&mut self, out: &mut [f32]) -> usize;
 }
@@ -645,9 +648,15 @@ impl AudioSource for StreamSource {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct SourceId(u64);
 
+/// Blanket-implemented for every source, so a [`Mixer`] can hand back a typed
+/// `&mut` to a source it owns without forcing `Any` onto the public
+/// [`AudioSource`] trait (every plain `fill`-only adapter stays unencumbered).
+trait AnySource: AudioSource + std::any::Any {}
+impl<T: AudioSource + 'static> AnySource for T {}
+
 struct MixedSource {
     id: u64,
-    source: Box<dyn AudioSource + Send>,
+    source: Box<dyn AnySource + Send>,
     gain: f32,
 }
 
@@ -655,17 +664,26 @@ struct MixedSource {
 /// [`Engine`], [`StreamSource`]s — each with its own gain. It is itself an
 /// [`AudioSource`], so it feeds one output callback (or nests). This is the
 /// top-level bus of an arrangement: one instrument per part, plus SFX.
-#[derive(Default)]
 pub struct Mixer {
     sources: Vec<MixedSource>,
     next_id: u64,
     scratch: Vec<f32>,
 }
 
+impl Default for Mixer {
+    fn default() -> Self {
+        Mixer::new()
+    }
+}
+
 impl Mixer {
     /// An empty mixer.
     pub fn new() -> Self {
-        Mixer::default()
+        Mixer {
+            sources: Vec::new(),
+            next_id: 1,
+            scratch: Vec::new(),
+        }
     }
 
     /// Add a source at unity gain; returns its handle.
@@ -689,7 +707,7 @@ impl Mixer {
 
     /// Mutable access to an added source, downcast to its concrete type — e.g. to
     /// call [`Instrument::note_on`](crate::instrument::Instrument::note_on).
-    pub fn get_mut<T: AudioSource>(&mut self, id: SourceId) -> Option<&mut T> {
+    pub fn get_mut<T: AudioSource + 'static>(&mut self, id: SourceId) -> Option<&mut T> {
         let s = self.sources.iter_mut().find(|s| s.id == id.0)?;
         let any: &mut dyn std::any::Any = s.source.as_mut();
         any.downcast_mut::<T>()
@@ -703,6 +721,11 @@ impl Mixer {
     /// Number of sources in the mix.
     pub fn source_count(&self) -> usize {
         self.sources.len()
+    }
+
+    /// Whether `id` still refers to a source in the mix.
+    pub fn contains(&self, id: SourceId) -> bool {
+        self.sources.iter().any(|s| s.id == id.0)
     }
 }
 
