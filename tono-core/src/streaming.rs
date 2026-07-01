@@ -449,11 +449,14 @@ enum Proc {
 
 impl Src {
     /// The next sample at absolute index `t`. Mirrors the offline per-sample math.
-    fn step(&mut self, t: usize) -> f32 {
+    /// `pitch` is a live multiplier applied to every oscillator frequency (1.0 =
+    /// as authored) — it drives pitch bend and glide without rebuilding the graph.
+    /// At `pitch == 1.0` the arithmetic is bit-identical to the offline render.
+    fn step(&mut self, t: usize, pitch: f32) -> f32 {
         match self {
             Src::Sine { phase, freq, srf } => {
                 let v = osc(Shape::Sine, *phase);
-                *phase += freq.eval(t).max(0.0) / *srf;
+                *phase += freq.eval(t).max(0.0) * pitch / *srf;
                 *phase -= phase.floor();
                 v
             }
@@ -463,7 +466,7 @@ impl Src {
                 duty,
                 srf,
             } => {
-                let dt = freq.eval(t).max(0.0) / *srf;
+                let dt = freq.eval(t).max(0.0) * pitch / *srf;
                 let du = duty.eval(t).clamp(0.01, 0.99);
                 let mut v = if *phase < du { 1.0 } else { -1.0 };
                 v += poly_blep(*phase, dt);
@@ -473,7 +476,7 @@ impl Src {
                 v
             }
             Src::Saw { phase, freq, srf } => {
-                let dt = freq.eval(t).max(0.0) / *srf;
+                let dt = freq.eval(t).max(0.0) * pitch / *srf;
                 let v = (2.0 * *phase - 1.0) - poly_blep(*phase, dt);
                 *phase += dt;
                 *phase -= phase.floor();
@@ -485,7 +488,7 @@ impl Src {
                 freq,
                 srf,
             } => {
-                let dt = freq.eval(t).max(0.0) / *srf;
+                let dt = freq.eval(t).max(0.0) * pitch / *srf;
                 let mut sq = if *phase < 0.5 { 1.0 } else { -1.0 };
                 sq += poly_blep(*phase, dt);
                 sq -= poly_blep((*phase + 0.5).fract(), dt);
@@ -505,7 +508,7 @@ impl Src {
             } => {
                 let m = index.eval(t) * (TAU * *mph).sin();
                 let y = (TAU * *cph + m).sin();
-                let fi = freq.eval(t).max(0.0);
+                let fi = freq.eval(t).max(0.0) * pitch;
                 *cph += fi / *srf;
                 *cph -= cph.floor();
                 *mph += (fi * *ratio) / *srf;
@@ -520,7 +523,7 @@ impl Src {
                 scale,
                 srf,
             } => {
-                let f = freq.eval(t).max(0.0);
+                let f = freq.eval(t).max(0.0) * pitch;
                 let mut acc = 0.0f32;
                 for k in 0..phases.len() {
                     let dt = f * ratios[k] / *srf;
@@ -584,21 +587,21 @@ impl Src {
             Src::Mix(cs) => {
                 let mut acc = 0.0f32;
                 for c in cs.iter_mut() {
-                    acc += c.step(t);
+                    acc += c.step(t, pitch);
                 }
                 acc
             }
             Src::Mul(cs) => {
                 let mut acc = 1.0f32;
                 for c in cs.iter_mut() {
-                    acc *= c.step(t);
+                    acc *= c.step(t, pitch);
                 }
                 acc
             }
             Src::Chain { src, procs } => {
-                let mut x = src.step(t);
+                let mut x = src.step(t, pitch);
                 for p in procs.iter_mut() {
-                    x = p.step(x, t);
+                    x = p.step(x, t, pitch);
                 }
                 x
             }
@@ -607,7 +610,10 @@ impl Src {
 }
 
 impl Proc {
-    fn step(&mut self, x0: f32, t: usize) -> f32 {
+    /// Process one sample. `pitch` is forwarded so pitch-tracking processors (the
+    /// ring-mod carrier, a `duck` sidechain source) bend with the note; every
+    /// other processor ignores it. Bit-identical to offline at `pitch == 1.0`.
+    fn step(&mut self, x0: f32, t: usize, pitch: f32) -> f32 {
         match self {
             Proc::Gain(a) => x0 * *a,
             Proc::Biquad {
@@ -711,7 +717,7 @@ impl Proc {
             }
             Proc::RingMod { phase, freq, srf } => {
                 let out = x0 * (TAU * *phase).sin();
-                *phase += freq.eval(t).max(0.0) / *srf;
+                *phase += freq.eval(t).max(0.0) * pitch / *srf;
                 *phase -= phase.floor();
                 out
             }
@@ -808,7 +814,7 @@ impl Proc {
                 rt,
                 amount,
             } => {
-                let trig = trigger.step(t);
+                let trig = trigger.step(t, pitch);
                 let rect = trig.abs().min(1.0);
                 let coeff = if rect > *env { *at } else { *rt };
                 *env = rect + coeff * (*env - rect);
@@ -1236,6 +1242,13 @@ fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Pr
 pub struct StreamGraph {
     root: Src,
     pos: usize,
+    /// Live pitch scale applied to every oscillator (1.0 = as authored). Smoothed
+    /// per-sample toward `pitch_target` so glide/bend never zipper or click.
+    pitch: f32,
+    /// Where `pitch` is gliding to.
+    pitch_target: f32,
+    /// Per-sample one-pole glide coefficient in `(0, 1]`; `1.0` snaps instantly.
+    glide: f32,
 }
 
 impl StreamGraph {
@@ -1256,15 +1269,42 @@ impl StreamGraph {
                 doc.seed,
             )?,
             pos: 0,
+            pitch: 1.0,
+            pitch_target: 1.0,
+            glide: 1.0,
         })
     }
 
     /// Fill `out` with the next block of mono samples, advancing graph state.
+    /// At the default pitch (1.0, no glide) this is bit-identical to the offline
+    /// render — the pitch multiplier only bites once a caller bends or glides.
     pub fn fill(&mut self, out: &mut [f32]) {
         for s in out.iter_mut() {
-            *s = self.root.step(self.pos);
+            self.pitch += (self.pitch_target - self.pitch) * self.glide;
+            *s = self.root.step(self.pos, self.pitch);
             self.pos += 1;
         }
+    }
+
+    /// Set the pitch scale instantly (1.0 = as built, 2.0 = an octave up).
+    /// Cancels any in-progress glide.
+    pub fn set_pitch(&mut self, scale: f32) {
+        self.pitch = scale.max(0.0);
+        self.pitch_target = self.pitch;
+        self.glide = 1.0;
+    }
+
+    /// Glide the pitch scale toward `scale` with a per-sample one-pole `coeff` in
+    /// `(0, 1]` (`1.0` = instant). The target moves immediately; the audible pitch
+    /// eases toward it, so a note change or pitch-wheel move never clicks.
+    pub fn glide_pitch(&mut self, scale: f32, coeff: f32) {
+        self.pitch_target = scale.max(0.0);
+        self.glide = coeff.clamp(f32::MIN_POSITIVE, 1.0);
+    }
+
+    /// The pitch scale currently sounding (mid-glide, this trails the target).
+    pub fn pitch(&self) -> f32 {
+        self.pitch
     }
 }
 
@@ -1298,12 +1338,13 @@ impl EffectChain {
         Some(EffectChain { procs, pos: 0 })
     }
 
-    /// Process a mono block in place.
+    /// Process a mono block in place. The master bus isn't pitched, so processors
+    /// run at the authored pitch (`1.0`).
     pub fn process(&mut self, block: &mut [f32]) {
         for x in block.iter_mut() {
             let mut v = *x;
             for p in self.procs.iter_mut() {
-                v = p.step(v, self.pos);
+                v = p.step(v, self.pos, 1.0);
             }
             *x = v;
             self.pos += 1;
@@ -1361,6 +1402,41 @@ mod tests {
                 { "type":"square", "freq":220 },
                 { "type":"lowpass", "cutoff":800, "q":0.7 } ] } }"#,
         ));
+    }
+
+    #[test]
+    fn set_pitch_transposes_byte_identically() {
+        // Live pitch is a true repitch: a 220 Hz oscillator at pitch ×2 is
+        // bit-for-bit a 660 Hz oscillator — same phase increment every sample.
+        let mut lo = StreamGraph::try_from_doc(&parse(
+            r#"{ "name":"a", "duration":0.05, "root": { "type":"sawtooth", "freq":220 } }"#,
+        ))
+        .unwrap();
+        lo.set_pitch(3.0);
+        let mut hi = StreamGraph::try_from_doc(&parse(
+            r#"{ "name":"a", "duration":0.05, "root": { "type":"sawtooth", "freq":660 } }"#,
+        ))
+        .unwrap();
+        let (mut a, mut b) = (vec![0.0f32; 1024], vec![0.0f32; 1024]);
+        lo.fill(&mut a);
+        hi.fill(&mut b);
+        assert_eq!(bits(&a), bits(&b), "pitch ×3 on 220 Hz == 660 Hz");
+    }
+
+    #[test]
+    fn glide_eases_pitch_toward_target_without_jumping() {
+        let mut g = StreamGraph::try_from_doc(&parse(
+            r#"{ "name":"a", "duration":1.0, "root": { "type":"sine", "freq":220 } }"#,
+        ))
+        .unwrap();
+        g.glide_pitch(2.0, 0.0005); // slow portamento up an octave
+        let mut one = vec![0.0f32; 1];
+        g.fill(&mut one);
+        assert!(g.pitch() < 1.05, "does not jump on the first sample");
+        let mut long = vec![0.0f32; 40_000];
+        g.fill(&mut long);
+        assert!(g.pitch() > 1.9, "eases most of the way to the target");
+        assert!(g.pitch() <= 2.0, "never overshoots the target");
     }
 
     #[test]
