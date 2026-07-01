@@ -21,6 +21,7 @@ pub mod dsp;
 pub mod edit;
 pub mod instrument;
 pub mod patch;
+pub mod presets;
 pub mod render;
 #[cfg(feature = "analysis")]
 pub mod review;
