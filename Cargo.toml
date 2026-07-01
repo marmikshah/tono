@@ -1,8 +1,8 @@
 [workspace]
-members = ["tono-core", "tono-wasm", "tono-desktop"]
-# tono-wasm (wasm32 cdylib) and tono-desktop (optional native GUI/audio,
-# heavy cpal/webview deps) are kept OUT of the default native build/test/clippy
-# and CI. Build them explicitly: `make wasm` / `make desktop`.
+members = ["tono-core", "tono-desktop"]
+# tono-desktop (native GUI + real-time audio + MIDI) carries heavy deps, so it
+# stays OUT of the default native build/test/clippy and CI. Build it explicitly:
+# `make desktop`.
 default-members = [".", "tono-core"]
 
 [workspace.package]

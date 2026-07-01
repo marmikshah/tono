@@ -1,7 +1,7 @@
 # In-engine runtime — parametric SFX
 
-The same deterministic engine that renders in the MCP server, the browser
-playground, and the desktop studio also runs **inside your game**. A game depends
+The same deterministic engine that renders in the MCP server and the desktop
+studio also runs **inside your game**. A game depends
 on the pure [`tono-core`](../tono-core) crate, ships a **patch** (a
 `SoundDoc` template + named parameters), and renders per-instance variations at
 runtime — an impact that scales with collision force, a footstep that varies by
@@ -74,6 +74,5 @@ patch. A worked example: [`docs/examples/parametric-impact.patch.json`](examples
 
 ## Where it runs
 
-`tono-core` is pure (no I/O, no MCP, no transport) and compiles to native,
-`wasm32`, and game targets — so one patch plays identically in the studio, the
-browser, and the shipped game.
+`tono-core` is pure (no I/O, no MCP, no transport) and compiles to native and
+game targets — so one patch plays identically in the studio and the shipped game.

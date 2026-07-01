@@ -14,12 +14,6 @@
 </p>
 
 <p align="center">
-  <a href="https://marmikshah.github.io/tono/listen.html"><strong>▶ Listen to everything in your browser</strong></a>
-  &nbsp;·&nbsp;
-  <a href="https://marmikshah.github.io/tono/playground/"><strong>✎ Design a sound live (WASM playground)</strong></a>
-</p>
-
-<p align="center">
   <img src="docs/river-flows-spectrogram.png" width="640" alt="spectrogram of River Flows in You, 800 notes on the sampled piano">
 </p>
 <p align="center">
@@ -67,22 +61,23 @@ The full tool surface (24 tools) is documented in [docs/TOOLS.md](docs/TOOLS.md)
 
 ## Design by hand, play it, ship it into a game
 
-Beyond the agent loop, the same deterministic engine drives three more faces —
-one `SoundDoc`, rendered byte-identically by all of them:
+Beyond the agent loop, the same deterministic engine drives more faces — one
+`SoundDoc`, rendered byte-identically by all of them:
 
-- **A browser playground** — a zero-install visual
-  [node patcher](https://marmikshah.github.io/tono/playground/): drop
-  oscillators / filters / envelopes, wire them by hand, draw melodies in a piano
-  roll, and balance multi-track mixes on a metered console — hearing it live
-  (`make wasm`).
-- **A native desktop studio** — the same patcher as a Tauri app with real-time
-  audio: edits play instantly, and you **play your patch like an instrument**
-  from the computer keyboard or a MIDI controller (`make desktop`). Optional —
-  never part of the default build, MCP server, or CI.
-- **An in-engine runtime** — ship a parametric
-  [patch](docs/runtime.md) and render endless per-instance SFX variations at
-  runtime (an impact that scales with collision force, a footstep by surface)
-  with **zero baked files**. The pure core compiles straight into your game.
+- **A real-time runtime** — a byte-identical **streaming renderer** and an
+  embeddable `Engine`/`Mixer`, so the same patch that was authored offline plays
+  live, block-by-block, driven by gameplay. Ship a parametric
+  [patch](docs/runtime.md) and render endless per-instance SFX variations (an
+  impact that scales with collision force, a footstep by surface) with **zero
+  baked files** — the pure core compiles straight into your game.
+- **Playable instruments** — turn any patch into a polyphonic, pitched, gated
+  **instrument** and play it with note-on/off, velocity, a sustain pedal, and a
+  shared master reverb.
+- **A native desktop studio** — a Tauri app with real-time audio: **play your
+  patch like an instrument** from the computer keyboard or a MIDI controller
+  (`make desktop`). Optional — never part of the default build, MCP server, or CI.
+- **A programmatic playground** — build a sound or instrument in a few lines of
+  Rust and hear it (`make play`).
 
 ## Quickstart
 
@@ -156,10 +151,8 @@ with playable renders in [docs/examples/audio/](docs/examples/audio/):
 | [deep-note](docs/examples/deep-note.json) | [▶ mp4](docs/examples/audio/deep-note.mp4) | 8 supersaw mixer tracks gliding from a scattered cluster onto a five-octave D chord |
 
 The ▶ links play right on GitHub (each mp4 is the sound's spectrogram with
-the audio as its track — click, press play). The
-[listen page](https://marmikshah.github.io/tono/listen.html) plays every
-showcase inline, including the full piano piece and the three BGM loops.
-OGGs sit next to the mp4s for direct use.
+the audio as its track — click, press play). OGGs sit next to the mp4s for
+direct use.
 
 ## Works with atelier
 
