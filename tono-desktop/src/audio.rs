@@ -107,6 +107,16 @@ impl AudioHandle {
         }
     }
 
+    /// Sweep the keyboard's filter brightness (`scale` multiplies the cutoff,
+    /// 1.0 = as designed).
+    pub fn set_brightness(&self, scale: f32) {
+        if let Ok(mut k) = self.keys.lock()
+            && let Some(inst) = k.instrument.as_mut()
+        {
+            inst.set_brightness(scale);
+        }
+    }
+
     /// Start the patch-preview play head.
     pub fn play(&self) {
         if let Ok(mut p) = self.player.lock() {
@@ -337,6 +347,11 @@ fn midi_message(msg: &[u8], handle: &AudioHandle) {
             {
                 inst.set_sustain(val >= 64);
             }
+        }
+        // CC74 (brightness): centered at 64 = as designed, exponential either way
+        // (a couple of octaves of cutoff range).
+        (0xB0, val) if msg[1] == 74 => {
+            handle.set_brightness(2f32.powf((val as f32 - 64.0) / 32.0));
         }
         // Pitch wheel: 14-bit little-endian, 8192 = centered.
         (0xE0, msb) => {

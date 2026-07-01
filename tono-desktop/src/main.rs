@@ -154,6 +154,17 @@ fn set_bend(semitones: f32, studio: State<Studio>) {
     }
 }
 
+/// Sweep the keyboard filter brightness (`scale` multiplies the cutoff, 1.0 = as
+/// designed).
+#[tauri::command]
+fn set_brightness(scale: f32, studio: State<Studio>) {
+    if let Ok(slot) = studio.engine.lock()
+        && let Some(engine) = slot.as_ref()
+    {
+        engine.set_brightness(scale);
+    }
+}
+
 /// A factory preset's metadata for the UI picker.
 #[derive(Serialize)]
 struct PresetInfo {
@@ -222,6 +233,7 @@ fn run_studio() {
             note_on,
             note_off,
             set_bend,
+            set_brightness,
             list_presets,
             load_preset
         ])
