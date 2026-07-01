@@ -3,3 +3,10 @@
 .DS_Store
 *.swp
 /tono-desktop/gen/
+
+# Python extension (tono-py) build artifacts
+__pycache__/
+*.so
+*.pyd
+/tono-py/.venv/
+/tono-py/dist/
