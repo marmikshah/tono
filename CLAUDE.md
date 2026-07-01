@@ -23,8 +23,6 @@ The root is the `tono` crate (the MCP server); the sub-crates live under `crates
 - **`crates/tono-play/`** — the programmatic playground: a `cpal` speaker so a Rust
   program can build a sound/instrument and hear it in a couple of lines. Excluded
   from `default-members`/CI; run via `make play`.
-- **`crates/tono-py/`** — pyo3 bindings (render/play a `SoundDoc` from Python).
-  Off the default build/CI; built via `make python`.
 
 ## The invariant that matters
 
