@@ -141,6 +141,37 @@ pub enum PlayMode {
     Mono { legato: bool },
 }
 
+/// Instrument-level modulation — LFOs that make a voice breathe. All off by
+/// default (an all-zero `Modulation` leaves the render byte-identical). Driven
+/// live at control rate, so it works on any instrument without re-authoring it.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct Modulation {
+    /// Vibrato (pitch LFO) rate in Hz.
+    #[serde(default)]
+    pub vibrato_rate: f32,
+    /// Vibrato depth in cents (0 = off).
+    #[serde(default)]
+    pub vibrato_cents: f32,
+    /// Tremolo (amplitude LFO) rate in Hz.
+    #[serde(default)]
+    pub tremolo_rate: f32,
+    /// Tremolo depth, 0..1 (0 = off).
+    #[serde(default)]
+    pub tremolo_depth: f32,
+    /// Filter-wobble (cutoff LFO) rate in Hz.
+    #[serde(default)]
+    pub filter_rate: f32,
+    /// Filter-wobble depth in octaves of cutoff sweep (0 = off).
+    #[serde(default)]
+    pub filter_octaves: f32,
+}
+
+impl Modulation {
+    fn is_active(&self) -> bool {
+        self.vibrato_cents > 0.0 || self.tremolo_depth > 0.0 || self.filter_octaves > 0.0
+    }
+}
+
 /// The recipe that makes a [`Patch`] playable. Serializable, so an instrument is
 /// a saveable/recallable preset (patch + envelope + pitch map + master).
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -176,6 +207,9 @@ pub struct InstrumentDesign {
     /// Stereo spread of the unison copies, 0 (mono) .. 1 (hard L↔R).
     #[serde(default)]
     pub unison_width: f32,
+    /// LFO modulation (vibrato / tremolo / filter wobble). Off by default.
+    #[serde(default)]
+    pub modulation: Modulation,
 }
 
 fn one() -> usize {
@@ -211,6 +245,7 @@ impl InstrumentDesign {
             unison: 1,
             detune_cents: 0.0,
             unison_width: 0.0,
+            modulation: Modulation::default(),
             patch,
         }
     }
@@ -268,6 +303,28 @@ impl InstrumentDesign {
         self.unison_width = width.clamp(0.0, 1.0);
         self
     }
+
+    /// Add vibrato — a pitch LFO at `rate` Hz, `cents` deep (builder style).
+    pub fn with_vibrato(mut self, rate: f32, cents: f32) -> Self {
+        self.modulation.vibrato_rate = rate;
+        self.modulation.vibrato_cents = cents.max(0.0);
+        self
+    }
+
+    /// Add tremolo — an amplitude LFO at `rate` Hz, `depth` 0..1 (builder style).
+    pub fn with_tremolo(mut self, rate: f32, depth: f32) -> Self {
+        self.modulation.tremolo_rate = rate;
+        self.modulation.tremolo_depth = depth.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Add filter wobble — a cutoff LFO at `rate` Hz sweeping `octaves` wide
+    /// (builder style). Needs a filter in the patch to hear.
+    pub fn with_wobble(mut self, rate: f32, octaves: f32) -> Self {
+        self.modulation.filter_rate = rate;
+        self.modulation.filter_octaves = octaves.max(0.0);
+        self
+    }
 }
 
 /// Handle to one sounding voice (a single note-on). Stable until the voice is
@@ -320,6 +377,10 @@ pub struct Instrument {
     /// Filter-cutoff (brightness) scale, 1.0 = as designed. Applied live to every
     /// voice's filters — a mod-wheel / CC74 brightness sweep without a rebuild.
     brightness: f32,
+    /// Sample clock for the modulation LFOs.
+    clock: u64,
+    /// Current tremolo gain (1.0 = no tremolo), updated at control rate.
+    trem: f32,
     /// Notes physically held, oldest→newest — mono note priority. On a note-off
     /// the voice falls back to the last still-held note. Unused in poly mode.
     held: Vec<Note>,
@@ -416,6 +477,8 @@ impl Instrument {
             sustain: false,
             bend: 1.0,
             brightness: 1.0,
+            clock: 0,
+            trem: 1.0,
             held: Vec::new(),
             master,
             scratch: Vec::new(),
@@ -756,12 +819,48 @@ impl Instrument {
     }
 }
 
-impl AudioSource for Instrument {
-    fn fill(&mut self, out: &mut [f32]) -> usize {
+impl Instrument {
+    /// Update the modulation LFOs at the current clock and apply them to every
+    /// voice: vibrato rides the bend channel, wobble the cutoff, tremolo the gain.
+    fn apply_modulation(&mut self) {
+        let m = self.design.modulation;
+        let t = self.clock as f32 / self.sample_rate as f32;
+        let tau = std::f32::consts::TAU;
+        let vib = if m.vibrato_cents > 0.0 {
+            2f32.powf((m.vibrato_cents / 1200.0) * (tau * m.vibrato_rate * t).sin())
+        } else {
+            1.0
+        };
+        let flt = if m.filter_octaves > 0.0 {
+            2f32.powf(m.filter_octaves * (tau * m.filter_rate * t).sin())
+        } else {
+            1.0
+        };
+        self.trem = if m.tremolo_depth > 0.0 {
+            1.0 - m.tremolo_depth * 0.5 * (1.0 - (tau * m.tremolo_rate * t).sin())
+        } else {
+            1.0
+        };
+        let (bend, cutoff) = (self.bend * vib, self.brightness * flt);
+        let wobble = m.filter_octaves > 0.0;
+        for v in self.voices.iter_mut() {
+            for c in v.copies.iter_mut() {
+                c.graph.set_bend(bend);
+                if wobble {
+                    c.graph.set_cutoff(cutoff);
+                }
+            }
+        }
+    }
+
+    /// Render one block at the current modulation state (the tremolo gain is
+    /// baked into the amp envelope). Split out so `fill` can drive it at control
+    /// rate when modulation is active.
+    fn render_block(&mut self, out: &mut [f32]) {
         let frames = out.len() / 2;
         out.fill(0.0);
         if frames == 0 {
-            return 0;
+            return;
         }
         for buf in [
             &mut self.scratch,
@@ -773,6 +872,7 @@ impl AudioSource for Instrument {
                 buf.resize(frames, 0.0);
             }
         }
+        let trem = self.trem;
         let copy = &mut self.scratch[..frames]; // per-copy render
         let env = &mut self.env_buf[..frames]; // per-voice envelope × gain
         let (mix_l, mix_r) = (&mut self.mix_l[..frames], &mut self.mix_r[..frames]);
@@ -782,7 +882,7 @@ impl AudioSource for Instrument {
             // The amp envelope advances once per sample and is shared across the
             // voice's unison copies (they differ only in detune and pan).
             for e in env.iter_mut() {
-                *e = v.env.tick() * v.gain;
+                *e = v.env.tick() * v.gain * trem;
             }
             for c in v.copies.iter_mut() {
                 c.graph.fill(copy);
@@ -806,6 +906,29 @@ impl AudioSource for Instrument {
         // Cull voices whose envelope has fully released — or a percussive voice
         // (sustain ≈ 0) that has decayed to silence but never got a note-off.
         self.voices.retain(|v| v.env.active() && !v.env.faded());
+    }
+}
+
+impl AudioSource for Instrument {
+    fn fill(&mut self, out: &mut [f32]) -> usize {
+        let frames = out.len() / 2;
+        // No modulation ⇒ render the whole block directly (byte-identical to a
+        // pre-modulation instrument: trem stays 1.0).
+        if !self.design.modulation.is_active() {
+            self.render_block(out);
+            return frames;
+        }
+        // Modulated ⇒ step the LFOs at control rate (64-frame sub-blocks) so
+        // vibrato/wobble/tremolo move smoothly without per-sample coefficient cost.
+        const CTRL: usize = 64;
+        let mut done = 0;
+        while done < frames {
+            let n = CTRL.min(frames - done);
+            self.apply_modulation();
+            self.render_block(&mut out[done * 2..(done + n) * 2]);
+            self.clock += n as u64;
+            done += n;
+        }
         frames
     }
 }
@@ -950,6 +1073,35 @@ mod tests {
             rms(&c) < rms(&a),
             "live brightness sweep darkens a held note"
         );
+    }
+
+    #[test]
+    fn vibrato_moves_the_sound_wobble_still_sounds() {
+        // Vibrato bends the pitch over the block, so it diverges from a dry note.
+        let mut dry = Instrument::new(InstrumentDesign::new(saw_patch()), 48_000).unwrap();
+        let mut vib = Instrument::new(
+            InstrumentDesign::new(saw_patch()).with_vibrato(6.0, 50.0),
+            48_000,
+        )
+        .unwrap();
+        dry.note_on(Note::A4, 1.0);
+        vib.note_on(Note::A4, 1.0);
+        let (mut a, mut b) = (vec![0.0f32; 4096 * 2], vec![0.0f32; 4096 * 2]);
+        dry.fill(&mut a);
+        vib.fill(&mut b);
+        assert!(bits(&a) != bits(&b), "vibrato changes the sound");
+        assert!(peak(&b) > 0.0);
+
+        // Filter wobble is live on a filtered voice — it makes sound.
+        let mut wob = Instrument::new(
+            InstrumentDesign::new(saw_patch()).with_wobble(4.0, 1.5),
+            48_000,
+        )
+        .unwrap();
+        wob.note_on(Note::C4, 0.9);
+        let mut w = vec![0.0f32; 4096 * 2];
+        wob.fill(&mut w);
+        assert!(peak(&w) > 0.0, "wobble instrument sounds");
     }
 
     #[test]
