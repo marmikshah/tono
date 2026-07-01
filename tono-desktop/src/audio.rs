@@ -1,12 +1,13 @@
-//! Native real-time audio host: drives a [`Player`] (patch preview) and a
-//! [`PolySynth`] (live keyboard/MIDI notes) from one `cpal` output stream.
+//! Native real-time audio host: a [`Player`] (patch preview) and an
+//! [`Instrument`] (the *currently designed* sound, played polyphonically from the
+//! computer keyboard or MIDI) summed through one `cpal` output stream.
 //!
 //! `cpal::Stream` is `!Send`, so it can't live in shared (Tauri) state. [`spawn`]
 //! builds the stream on a dedicated thread that owns it for the process's life,
 //! and hands back an [`AudioHandle`] — shared `Arc<Mutex<…>>` controls, which
 //! **are** `Send + Sync`. The audio callback only reads via `try_lock`, so a
-//! control-thread edit never blocks audio (it drops at most one block). Rendering
-//! happens at the device sample rate so playback/pitch are correct.
+//! control-thread edit never blocks audio (it drops at most one block). Everything
+//! renders at the device sample rate so playback/pitch are correct.
 
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -14,54 +15,65 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Result, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use midir::{MidiInput, MidiInputConnection};
-use tono_core::dsl::{Adsr, Shape, SoundDoc};
+use tono_core::dsl::{Adsr, SoundDoc};
+use tono_core::instrument::{Instrument, InstrumentDesign, Note};
+use tono_core::patch::Patch;
+use tono_core::runtime::AudioSource;
 use tono_core::stream::Player;
-use tono_core::voice::PolySynth;
 
-const MAX_VOICES: usize = 16;
 /// Headroom so a fistful of held notes doesn't clip against the patch preview.
-const SYNTH_GAIN: f32 = 0.28;
+const KEYS_GAIN: f32 = 0.6;
 
-/// The live instrument plus a cheap fingerprint, so we only rebuild voices (and
-/// cut held notes) when the instrument actually changes.
-struct SynthSlot {
-    synth: PolySynth,
-    spec: (Shape, [f32; 4], f32),
+fn default_amp() -> Adsr {
+    Adsr {
+        a: 0.01,
+        d: 0.12,
+        s: 0.6,
+        r: 0.2,
+        punch: 0.0,
+    }
 }
 
-fn default_instrument() -> (Shape, Adsr, f32) {
-    (
-        Shape::Sine,
-        Adsr {
-            a: 0.01,
-            d: 0.1,
-            s: 0.6,
-            r: 0.2,
-            punch: 0.0,
-        },
-        0.5,
-    )
+/// The keyboard voice — the currently-designed sound as a playable instrument —
+/// plus the amp envelope and the doc it was built from (so it rebuilds when the
+/// sound or envelope changes). `instrument` is `None` if the doc isn't streamable.
+struct Keyboard {
+    instrument: Option<Instrument>,
+    amp: Adsr,
+    doc: SoundDoc,
+    sr: u32,
 }
 
-fn spec_of(shape: Shape, env: &Adsr, duty: f32) -> (Shape, [f32; 4], f32) {
-    (shape, [env.a, env.d, env.s, env.r], duty)
+impl Keyboard {
+    fn rebuild(&mut self) {
+        let patch = Patch {
+            doc: self.doc.clone(),
+            params: Vec::new(),
+        };
+        let design = InstrumentDesign::new(patch).with_amp(self.amp);
+        self.instrument = Instrument::new(design, self.sr).ok();
+    }
 }
 
 /// A `Send + Sync` control handle to the running audio engine.
 #[derive(Clone)]
 pub struct AudioHandle {
     player: Arc<Mutex<Player>>,
-    synth: Arc<Mutex<SynthSlot>>,
+    keys: Arc<Mutex<Keyboard>>,
     device_sr: u32,
 }
 
 impl AudioHandle {
-    /// Swap in a new document for the patch preview (re-rendered at the device
-    /// rate) without stopping playback.
+    /// Swap in a new document: re-render the preview AND rebuild the keyboard
+    /// instrument, so the keys now play the sound you just designed.
     pub fn set_doc(&self, mut doc: SoundDoc) {
         doc.sample_rate = self.device_sr;
         if let Ok(mut p) = self.player.lock() {
-            p.set_doc(doc);
+            p.set_doc(doc.clone());
+        }
+        if let Ok(mut k) = self.keys.lock() {
+            k.doc = doc;
+            k.rebuild();
         }
     }
 
@@ -79,30 +91,29 @@ impl AudioHandle {
         }
     }
 
-    /// Configure the live instrument (rebuilds voices only if it changed).
-    pub fn set_instrument(&self, shape: Shape, env: Adsr, duty: f32) {
-        if let Ok(mut slot) = self.synth.lock() {
-            let spec = spec_of(shape, &env, duty);
-            if slot.spec != spec {
-                let mut synth = PolySynth::new(shape, &env, self.device_sr, MAX_VOICES);
-                synth.set_duty(duty);
-                slot.synth = synth;
-                slot.spec = spec;
-            }
+    /// Set the keyboard's amplitude envelope (rebuilds the instrument).
+    pub fn set_amp(&self, env: Adsr) {
+        if let Ok(mut k) = self.keys.lock() {
+            k.amp = env;
+            k.rebuild();
         }
     }
 
-    /// Strike a live note: `key` identifies it for `note_off`, `freq` is its Hz.
-    pub fn note_on(&self, key: u32, freq: f32) {
-        if let Ok(mut slot) = self.synth.lock() {
-            slot.synth.note_on(key, freq);
+    /// Strike a live note (MIDI note number + velocity in `[0, 1]`).
+    pub fn note_on(&self, note: u8, velocity: f32) {
+        if let Ok(mut k) = self.keys.lock()
+            && let Some(inst) = k.instrument.as_mut()
+        {
+            inst.note_on(Note(note), velocity);
         }
     }
 
     /// Release a live note.
-    pub fn note_off(&self, key: u32) {
-        if let Ok(mut slot) = self.synth.lock() {
-            slot.synth.note_off(key);
+    pub fn note_off(&self, note: u8) {
+        if let Ok(mut k) = self.keys.lock()
+            && let Some(inst) = k.instrument.as_mut()
+        {
+            inst.note_off(Note(note));
         }
     }
 
@@ -114,7 +125,7 @@ impl AudioHandle {
 
 /// Open the default output device and start a paused real-time stream loaded
 /// with `doc`. The `cpal::Stream` is owned by a dedicated thread for the
-/// process's life; the returned handle controls the shared player + synth.
+/// process's life; the returned handle controls the shared player + keyboard.
 pub fn spawn(doc: SoundDoc) -> Result<AudioHandle> {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
@@ -150,17 +161,20 @@ fn build_stream(mut doc: SoundDoc) -> Result<(cpal::Stream, AudioHandle)> {
     let config: cpal::StreamConfig = supported.into();
 
     doc.sample_rate = device_sr;
-    let player = Arc::new(Mutex::new(Player::new(doc)));
-    let (shape, env, duty) = default_instrument();
-    let synth = Arc::new(Mutex::new(SynthSlot {
-        synth: PolySynth::new(shape, &env, device_sr, MAX_VOICES),
-        spec: spec_of(shape, &env, duty),
-    }));
+    let player = Arc::new(Mutex::new(Player::new(doc.clone())));
+    let mut keyboard = Keyboard {
+        instrument: None,
+        amp: default_amp(),
+        doc,
+        sr: device_sr,
+    };
+    keyboard.rebuild();
+    let keys = Arc::new(Mutex::new(keyboard));
 
     let cb_player = player.clone();
-    let cb_synth = synth.clone();
-    let mut stereo = Vec::<f32>::new();
-    let mut mono = Vec::<f32>::new();
+    let cb_keys = keys.clone();
+    let mut preview = Vec::<f32>::new();
+    let mut voice = Vec::<f32>::new();
     let err_fn = |e| eprintln!("tono audio stream error: {e}");
 
     let stream = match sample_format {
@@ -169,11 +183,11 @@ fn build_stream(mut doc: SoundDoc) -> Result<(cpal::Stream, AudioHandle)> {
             move |data: &mut [f32], _| {
                 mix(
                     &cb_player,
-                    &cb_synth,
+                    &cb_keys,
                     data,
                     channels,
-                    &mut stereo,
-                    &mut mono,
+                    &mut preview,
+                    &mut voice,
                 )
             },
             err_fn,
@@ -181,7 +195,7 @@ fn build_stream(mut doc: SoundDoc) -> Result<(cpal::Stream, AudioHandle)> {
         )?,
         other => {
             return Err(anyhow!(
-                "device sample format {other:?} unsupported (v1 audition is f32)"
+                "device sample format {other:?} unsupported (audition is f32)"
             ));
         }
     };
@@ -190,40 +204,44 @@ fn build_stream(mut doc: SoundDoc) -> Result<(cpal::Stream, AudioHandle)> {
         stream,
         AudioHandle {
             player,
-            synth,
+            keys,
             device_sr,
         },
     ))
 }
 
-/// Audio-callback body: sum the patch preview (stereo) and the live synth (mono,
-/// spread to both channels) into `data`. Never blocks — a held control-thread
-/// lock yields silence for that source. `stereo`/`mono` are reused scratch.
+/// Audio-callback body: sum the patch preview and the live keyboard instrument
+/// (both interleaved stereo) into `data`. Never blocks — a held control-thread
+/// lock yields silence for that source. `preview`/`voice` are reused scratch.
 fn mix(
     player: &Arc<Mutex<Player>>,
-    synth: &Arc<Mutex<SynthSlot>>,
+    keys: &Arc<Mutex<Keyboard>>,
     data: &mut [f32],
     channels: usize,
-    stereo: &mut Vec<f32>,
-    mono: &mut Vec<f32>,
+    preview: &mut Vec<f32>,
+    voice: &mut Vec<f32>,
 ) {
     let frames = data.len() / channels.max(1);
-    stereo.resize(frames * 2, 0.0);
+    preview.resize(frames * 2, 0.0);
     match player.try_lock() {
         Ok(mut p) => {
-            p.fill(stereo);
+            p.fill(preview);
         }
-        Err(_) => stereo.iter_mut().for_each(|x| *x = 0.0),
+        Err(_) => preview.iter_mut().for_each(|x| *x = 0.0),
     }
-    mono.resize(frames, 0.0);
-    match synth.try_lock() {
-        Ok(mut s) => s.synth.process(mono),
-        Err(_) => mono.iter_mut().for_each(|x| *x = 0.0),
+    voice.resize(frames * 2, 0.0);
+    match keys.try_lock() {
+        Ok(mut k) => match k.instrument.as_mut() {
+            Some(inst) => {
+                inst.fill(voice);
+            }
+            None => voice.iter_mut().for_each(|x| *x = 0.0),
+        },
+        Err(_) => voice.iter_mut().for_each(|x| *x = 0.0),
     }
     for f in 0..frames {
-        let m = mono[f] * SYNTH_GAIN;
-        let l = (stereo[f * 2] + m).clamp(-1.0, 1.0);
-        let r = (stereo[f * 2 + 1] + m).clamp(-1.0, 1.0);
+        let l = (preview[f * 2] + voice[f * 2] * KEYS_GAIN).clamp(-1.0, 1.0);
+        let r = (preview[f * 2 + 1] + voice[f * 2 + 1] * KEYS_GAIN).clamp(-1.0, 1.0);
         let base = f * channels;
         if channels == 1 {
             data[base] = 0.5 * (l + r);
@@ -237,9 +255,9 @@ fn mix(
     }
 }
 
-/// Connect every MIDI input port present at startup to the live synth. Failures
-/// (no MIDI backend, no devices) degrade gracefully to "keyboard only". Devices
-/// plugged in later aren't hot-detected in v1.
+/// Connect every MIDI input port present at startup to the live keyboard.
+/// Failures (no MIDI backend, no devices) degrade gracefully to "keyboard only".
+/// Devices plugged in later aren't hot-detected.
 fn connect_midi(handle: AudioHandle) -> Vec<MidiInputConnection<()>> {
     let mut conns = Vec::new();
     let Ok(scan) = MidiInput::new("tono-scan") else {
@@ -267,17 +285,24 @@ fn connect_midi(handle: AudioHandle) -> Vec<MidiInputConnection<()>> {
     conns
 }
 
-/// Translate a raw MIDI channel message into synth note events. Note-on with
-/// zero velocity is treated as note-off (running-status convention).
+/// Translate a raw MIDI channel message into keyboard note events. Note-on with
+/// zero velocity is treated as note-off (running-status convention); CC64 drives
+/// the sustain pedal.
 fn midi_message(msg: &[u8], handle: &AudioHandle) {
     if msg.len() < 3 {
         return;
     }
-    let note = msg[1] as u32;
-    let freq = 440.0 * 2f32.powf((note as f32 - 69.0) / 12.0);
+    let note = msg[1];
     match (msg[0] & 0xF0, msg[2]) {
-        (0x90, vel) if vel > 0 => handle.note_on(note, freq),
+        (0x90, vel) if vel > 0 => handle.note_on(note, vel as f32 / 127.0),
         (0x80, _) | (0x90, 0) => handle.note_off(note),
+        (0xB0, val) if msg[1] == 64 => {
+            if let Ok(mut k) = handle.keys.lock()
+                && let Some(inst) = k.instrument.as_mut()
+            {
+                inst.set_sustain(val >= 64);
+            }
+        }
         _ => {}
     }
 }

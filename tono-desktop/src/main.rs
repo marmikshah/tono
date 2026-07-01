@@ -14,7 +14,7 @@ use audio::AudioHandle;
 use base64::Engine as _;
 use serde::Serialize;
 use tauri::State;
-use tono_core::dsl::{Adsr, Shape, SoundDoc};
+use tono_core::dsl::{Adsr, SoundDoc};
 use tono_core::{analysis, render};
 
 /// App state: the lazily-created audio engine handle (built on first render,
@@ -102,15 +102,9 @@ fn transport(action: String, studio: State<Studio>) {
     }
 }
 
-/// Set the live keyboard instrument (the patch's waveform + envelope).
+/// Set the keyboard amplitude envelope (the gated ADSR applied per note).
 #[tauri::command]
-fn set_instrument(wave: String, a: f32, d: f32, s: f32, r: f32, duty: f32, studio: State<Studio>) {
-    let shape = match wave.as_str() {
-        "square" => Shape::Square,
-        "triangle" => Shape::Triangle,
-        "sawtooth" => Shape::Saw,
-        _ => Shape::Sine,
-    };
+fn set_amp(a: f32, d: f32, s: f32, r: f32, studio: State<Studio>) {
     let env = Adsr {
         a,
         d,
@@ -121,17 +115,17 @@ fn set_instrument(wave: String, a: f32, d: f32, s: f32, r: f32, duty: f32, studi
     if let Ok(slot) = studio.engine.lock()
         && let Some(engine) = slot.as_ref()
     {
-        engine.set_instrument(shape, env, duty);
+        engine.set_amp(env);
     }
 }
 
-/// Strike a live note (`key` identifies it for `note_off`).
+/// Strike a live note (`key` is the MIDI note number; `velocity` in `[0, 1]`).
 #[tauri::command]
-fn note_on(key: u32, freq: f32, studio: State<Studio>) {
+fn note_on(key: u32, velocity: f32, studio: State<Studio>) {
     if let Ok(slot) = studio.engine.lock()
         && let Some(engine) = slot.as_ref()
     {
-        engine.note_on(key, freq);
+        engine.note_on(key as u8, velocity);
     }
 }
 
@@ -141,7 +135,7 @@ fn note_off(key: u32, studio: State<Studio>) {
     if let Ok(slot) = studio.engine.lock()
         && let Some(engine) = slot.as_ref()
     {
-        engine.note_off(key);
+        engine.note_off(key as u8);
     }
 }
 
@@ -172,7 +166,7 @@ fn run_studio() {
         .invoke_handler(tauri::generate_handler![
             render_graph,
             transport,
-            set_instrument,
+            set_amp,
             note_on,
             note_off
         ])
