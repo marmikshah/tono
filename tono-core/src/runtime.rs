@@ -46,8 +46,9 @@ use crate::streaming::StreamGraph;
 /// A block-serving audio source: fill `out` (interleaved stereo L,R,L,R…) and
 /// return the number of frames written. Runs indefinitely. This is the single
 /// seam host output adapters target, so a `cpal` callback, an AudioWorklet, or a
-/// Bevy source never depend on a concrete engine type.
-pub trait AudioSource {
+/// Bevy source never depend on a concrete engine type. (The `Any` supertrait lets
+/// a [`Mixer`] hand back a typed `&mut` to a source it owns.)
+pub trait AudioSource: std::any::Any {
     /// Fill `out` with the next block of interleaved-stereo audio.
     fn fill(&mut self, out: &mut [f32]) -> usize;
 }
@@ -640,6 +641,89 @@ impl AudioSource for StreamSource {
     }
 }
 
+/// Handle to a source added to a [`Mixer`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct SourceId(u64);
+
+struct MixedSource {
+    id: u64,
+    source: Box<dyn AudioSource + Send>,
+    gain: f32,
+}
+
+/// A simple additive stereo mixer of audio sources — instruments, the SFX
+/// [`Engine`], [`StreamSource`]s — each with its own gain. It is itself an
+/// [`AudioSource`], so it feeds one output callback (or nests). This is the
+/// top-level bus of an arrangement: one instrument per part, plus SFX.
+#[derive(Default)]
+pub struct Mixer {
+    sources: Vec<MixedSource>,
+    next_id: u64,
+    scratch: Vec<f32>,
+}
+
+impl Mixer {
+    /// An empty mixer.
+    pub fn new() -> Self {
+        Mixer::default()
+    }
+
+    /// Add a source at unity gain; returns its handle.
+    pub fn add(&mut self, source: impl AudioSource + Send + 'static) -> SourceId {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.sources.push(MixedSource {
+            id,
+            source: Box::new(source),
+            gain: 1.0,
+        });
+        SourceId(id)
+    }
+
+    /// Set a source's gain (no-op for an unknown handle).
+    pub fn set_gain(&mut self, id: SourceId, gain: f32) {
+        if let Some(s) = self.sources.iter_mut().find(|s| s.id == id.0) {
+            s.gain = gain.max(0.0);
+        }
+    }
+
+    /// Mutable access to an added source, downcast to its concrete type — e.g. to
+    /// call [`Instrument::note_on`](crate::instrument::Instrument::note_on).
+    pub fn get_mut<T: AudioSource>(&mut self, id: SourceId) -> Option<&mut T> {
+        let s = self.sources.iter_mut().find(|s| s.id == id.0)?;
+        let any: &mut dyn std::any::Any = s.source.as_mut();
+        any.downcast_mut::<T>()
+    }
+
+    /// Remove a source.
+    pub fn remove(&mut self, id: SourceId) {
+        self.sources.retain(|s| s.id != id.0);
+    }
+
+    /// Number of sources in the mix.
+    pub fn source_count(&self) -> usize {
+        self.sources.len()
+    }
+}
+
+impl AudioSource for Mixer {
+    fn fill(&mut self, out: &mut [f32]) -> usize {
+        let frames = out.len() / 2;
+        out.fill(0.0);
+        if self.scratch.len() < out.len() {
+            self.scratch.resize(out.len(), 0.0);
+        }
+        let scratch = &mut self.scratch[..out.len()];
+        for s in self.sources.iter_mut() {
+            s.source.fill(scratch);
+            for (o, &x) in out.iter_mut().zip(scratch.iter()) {
+                *o += x * s.gain;
+            }
+        }
+        frames
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -841,5 +925,24 @@ mod tests {
         )
         .unwrap();
         assert!(StreamSource::from_doc(&d).is_none());
+    }
+
+    #[test]
+    fn mixer_sums_and_reaches_in_by_type() {
+        let mut e = Engine::new(44_100);
+        let p = e.load(&doc(1.0));
+        e.play_looping(p);
+        let mut mixer = Mixer::new();
+        let id = mixer.add(e);
+        assert_eq!(mixer.source_count(), 1);
+        // Reach back into the owned Engine and spawn another instance.
+        mixer.get_mut::<Engine>(id).unwrap().play_looping(p);
+        assert_eq!(mixer.get_mut::<Engine>(id).unwrap().active(), 2);
+        mixer.set_gain(id, 0.5);
+        let mut out = vec![0.0f32; 256 * 2];
+        assert_eq!(mixer.fill(&mut out), 256);
+        assert!(peak(&out) > 0.0, "mixer sums its sources");
+        mixer.remove(id);
+        assert_eq!(mixer.source_count(), 0);
     }
 }
