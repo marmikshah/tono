@@ -18,7 +18,7 @@ use std::str::FromStr;
 use crate::dsl::{Adsr, Node, SoundDoc, Value, note_to_hz};
 use crate::patch::Patch;
 use crate::runtime::AudioSource;
-use crate::streaming::StreamGraph;
+use crate::streaming::{EffectChain, StreamGraph};
 use crate::voice::EnvGen;
 
 /// Why an [`Instrument`] could not be built.
@@ -138,6 +138,10 @@ pub struct InstrumentDesign {
     pub velocity_param: Option<String>,
     /// Maximum simultaneous voices before the oldest is stolen.
     pub max_voices: usize,
+    /// A shared master effect chain applied to the summed voices (one reverb/delay
+    /// for the whole instrument, not one per voice — so a tail outlives its note).
+    /// Must be streamable processor nodes.
+    pub master: Vec<Node>,
 }
 
 impl InstrumentDesign {
@@ -163,8 +167,16 @@ impl InstrumentDesign {
             },
             velocity_param: None,
             max_voices: 16,
+            master: Vec::new(),
             patch,
         }
+    }
+
+    /// Set the shared master effect chain (builder style) — e.g. one reverb for
+    /// the whole instrument instead of per voice.
+    pub fn with_master(mut self, master: Vec<Node>) -> Self {
+        self.master = master;
+        self
     }
 
     /// Set the amplitude envelope (builder style).
@@ -218,7 +230,12 @@ pub struct Instrument {
     values: BTreeMap<String, f32>,
     voices: Vec<Voice>,
     next_handle: u64,
+    /// The shared master effect chain (built from `design.master`).
+    master: Option<EffectChain>,
+    /// Per-voice render scratch (mono).
     scratch: Vec<f32>,
+    /// Summed-voices bus (mono), fed to the master chain.
+    mix: Vec<f32>,
 }
 
 /// Multiply every pitch-determining frequency (oscillator freqs, seq note
@@ -280,6 +297,15 @@ impl Instrument {
     /// or its graph is outside the streamable subset — so every note is
     /// guaranteed to play in real time.
     pub fn new(design: InstrumentDesign, sample_rate: u32) -> Result<Self, InstrumentError> {
+        let master = if design.master.is_empty() {
+            None
+        } else {
+            let engine = design.patch.doc.effective_engine();
+            Some(
+                EffectChain::try_new(&design.master, sample_rate, engine)
+                    .ok_or(InstrumentError::NotStreamable)?,
+            )
+        };
         let values = design.patch.defaults();
         let inst = Instrument {
             sample_rate,
@@ -287,7 +313,9 @@ impl Instrument {
             values,
             voices: Vec::new(),
             next_handle: 1,
+            master,
             scratch: Vec::new(),
+            mix: Vec::new(),
         };
         inst.build_result(Note::A4, 1.0)?; // validate the reference voice
         Ok(inst)
@@ -443,14 +471,25 @@ impl AudioSource for Instrument {
         if self.scratch.len() < frames {
             self.scratch.resize(frames, 0.0);
         }
-        let mono = &mut self.scratch[..frames];
+        if self.mix.len() < frames {
+            self.mix.resize(frames, 0.0);
+        }
+        let voice = &mut self.scratch[..frames]; // per-voice render
+        let mix = &mut self.mix[..frames]; // summed bus
+        mix.fill(0.0);
         for v in self.voices.iter_mut() {
-            v.graph.fill(mono);
-            for (f, &m) in mono.iter().enumerate() {
-                let s = m * v.env.tick() * v.gain;
-                out[f * 2] += s;
-                out[f * 2 + 1] += s;
+            v.graph.fill(voice);
+            for (m, &s) in mix.iter_mut().zip(voice.iter()) {
+                *m += s * v.env.tick() * v.gain;
             }
+        }
+        // One shared master chain (a reverb tail is not multiplied per voice).
+        if let Some(chain) = &mut self.master {
+            chain.process(mix);
+        }
+        for (f, &m) in mix.iter().enumerate() {
+            out[f * 2] = m;
+            out[f * 2 + 1] = m;
         }
         // Cull voices whose envelope has fully released — or a percussive voice
         // (sustain ≈ 0) that has decayed to silence but never got a note-off.
@@ -620,6 +659,29 @@ mod tests {
             inst.active_voices(),
             0,
             "percussive one-shot reclaims its voice"
+        );
+    }
+
+    #[test]
+    fn master_reverb_tail_outlives_the_voice() {
+        let reverb: Node =
+            serde_json::from_str(r#"{ "type":"reverb", "room":0.8, "mix":0.6 }"#).unwrap();
+        let design = InstrumentDesign::new(saw_patch()).with_master(vec![reverb]);
+        let mut inst = Instrument::new(design, 48_000).unwrap();
+        inst.note_on(Note::A4, 1.0);
+        let mut out = vec![0.0f32; 256 * 2];
+        inst.fill(&mut out);
+        inst.all_notes_off();
+        for _ in 0..40 {
+            inst.fill(&mut out); // let the ~120 ms release finish and cull the voice
+        }
+        assert_eq!(inst.active_voices(), 0);
+        // The one shared master reverb still rings after the voice is gone.
+        let mut tail = vec![0.0f32; 256 * 2];
+        inst.fill(&mut tail);
+        assert!(
+            peak(&tail) > 0.0,
+            "shared reverb tail continues past the note"
         );
     }
 }
