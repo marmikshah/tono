@@ -23,6 +23,7 @@ pub mod patch;
 pub mod render;
 #[cfg(feature = "analysis")]
 pub mod review;
+pub mod runtime;
 pub mod stream;
 pub mod vary;
 pub mod voice;
