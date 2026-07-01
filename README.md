@@ -5,7 +5,7 @@
   <img src="docs/logo-wordmark.png" width="384" alt="tono">
 </p>
 
-<p align="center"><strong>A headless sound studio for AI agents — GarageBand-as-API, over MCP.</strong></p>
+<p align="center"><strong>A deterministic sound engine — author a synthesis graph from code, an AI agent (MCP), or a live keyboard, and get byte-identical audio everywhere.</strong></p>
 
 <p align="center">
   <a href="https://github.com/marmikshah/tono/actions/workflows/ci.yml"><img src="https://github.com/marmikshah/tono/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -79,7 +79,60 @@ Beyond the agent loop, the same deterministic engine drives more faces — one
 - **A programmatic playground** — build a sound or instrument in a few lines of
   Rust and hear it (`make play`).
 
-## Quickstart
+## Use it from code
+
+`tono-core` is the published engine crate — a pure, deterministic library. Add
+it and render a graph to samples (no audio device, no I/O):
+
+```rust
+use tono_core::dsl::SoundDoc;
+use tono_core::render;
+
+let doc: SoundDoc = serde_json::from_str(r#"{
+    "name": "blip", "duration": 0.3, "engine": 2,
+    "root": { "type": "mul", "inputs": [
+        { "type": "sine", "freq": 880 },
+        { "type": "env", "a": 0.002, "d": 0.08, "s": 0.0, "r": 0.05 } ] }
+}"#)?;
+
+let samples: Vec<f32> = render::render(&doc); // byte-identical every run
+```
+
+To *hear* it while prototyping, `tono-play` opens the default speaker:
+
+```rust
+tono_play::play_doc(&doc, 0.4)?; // blocking, plays for 0.4 s
+```
+
+Play a **factory instrument** live — pitched, polyphonic, with bend / glide /
+unison / a brightness sweep:
+
+```rust
+use tono_core::instrument::{Instrument, Note};
+use tono_core::presets;
+use tono_play::{device_sample_rate, Speaker};
+
+let design = presets::preset("warm_lead").unwrap(); // 8 presets built in
+let inst = Instrument::new(design, device_sample_rate()?)?;
+let speaker = Speaker::open(inst)?;                 // plays until dropped
+speaker.control(|i| i.note_on(Note::C4, 0.9));      // drive it live
+```
+
+From **Python** (`pip install maturin && make python`):
+
+```python
+import json, tono
+
+doc = json.dumps({"name": "blip", "duration": 0.3, "engine": 2,
+    "root": {"type": "mul", "inputs": [
+        {"type": "sine", "freq": 880},
+        {"type": "env", "a": 0.002, "d": 0.08, "s": 0.0, "r": 0.05}]}})
+
+samples = tono.render(doc) # list[float], deterministic
+tono.play(doc, 0.4)        # hear it
+```
+
+## Quickstart: the MCP server
 
 ```sh
 curl -fsSL https://marmikshah.github.io/tono/install.sh | sh
@@ -170,7 +223,8 @@ engine-ready packs with manifests, and both record replayable recipes.
   worked recipes (also served to agents as the `tono://cookbook` resource;
   every example in it is validated by the test suite).
 - [ROADMAP.md](ROADMAP.md) — the backlog.
-- `make help` — build/serve/test targets; `make check` is the pre-commit gate.
+- `make help` lists every target — `make verify` mirrors CI (fmt + clippy +
+  test); `make desktop` / `make play` / `make python` build the native faces.
 
 ## License
 
