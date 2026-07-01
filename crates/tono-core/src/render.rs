@@ -328,6 +328,7 @@ fn track_native_stereo(node: &Node, n: usize, sr: u32) -> Option<(Signal, Signal
             swing: *swing,
             humanize: *humanize,
             env,
+            engine: 0, // unused by the sampler (external synth, engine-independent)
         };
         let step_dur = sr as f32 * 60.0 / bpm / (*steps_per_beat).max(1) as f32;
         return sampler_seq_stereo(&voice, notes, step_dur, n, sr);
@@ -763,9 +764,9 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng, engine: u32, path:
         Node::Seq { .. } => {
             if engine >= 2 {
                 let mut local = Rng::new(node_seed(path));
-                seq_to_signal(node, n, sr, &mut local)
+                seq_to_signal(node, n, sr, &mut local, engine)
             } else {
-                seq_to_signal(node, n, sr, rng)
+                seq_to_signal(node, n, sr, rng, engine)
             }
         }
         Node::Impact { hardness, velocity } => impact_signal(*hardness, *velocity, n, sr),
@@ -1582,6 +1583,9 @@ struct SeqVoice<'a> {
     swing: f32,
     humanize: f32,
     env: &'a Adsr,
+    /// The document's engine revision — gates byte-changing voice upgrades
+    /// (e.g. the engine-3 inharmonic `piano`).
+    engine: u32,
 }
 
 /// Groove placement for one note: its start sample (swing + humanize timing)
@@ -1659,7 +1663,7 @@ fn render_seq(
 /// synthesis, shared by the offline renderer and the streaming renderer (which
 /// pre-renders the seq with a structurally-seeded RNG) so a streamed seq is
 /// byte-identical. Silence for a non-Seq node.
-pub(crate) fn seq_to_signal(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Signal {
+pub(crate) fn seq_to_signal(node: &Node, n: usize, sr: u32, rng: &mut Rng, engine: u32) -> Signal {
     if let Node::Seq {
         bpm,
         steps_per_beat,
@@ -1691,6 +1695,7 @@ pub(crate) fn seq_to_signal(node: &Node, n: usize, sr: u32, rng: &mut Rng) -> Si
             swing: *swing,
             humanize: *humanize,
             env,
+            engine,
         };
         render_seq(*bpm, *steps_per_beat, &voice, notes, n, sr, rng)
     } else {
@@ -1790,6 +1795,78 @@ fn seq_note_signal(
                 string[spos] = voice.pluck_decay * 0.5 * (y + next);
                 spos = (spos + 1) % string.len();
                 out.push(y);
+            }
+        }
+        SeqWave::Piano if voice.engine >= 3 => {
+            // Inharmonic additive grand (engine 3). A real piano string is stiff,
+            // so its partials stretch sharp: fₖ = k·f₀·√(1 + B·k²). Each partial
+            // owns its decay (highs die first — the bright attack mellowing to a
+            // warm sustain), a hammer-strike spectrum (a 1/k tilt with a notch at
+            // the ~1/8 strike point, opened by velocity), over a detuned unison
+            // pair whose slow beating is the shimmer. Bass rings for seconds,
+            // treble dies fast.
+            struct Partial {
+                step: f32, // inharmonic frequency ratio to the fundamental
+                amp: f32,  // hammer-spectrum amplitude
+                env: f32,  // current decay level
+                dmul: f32, // per-sample decay multiplier
+                phase: [f32; 2],
+            }
+            let f0 = f[0].max(20.0);
+            let b_inharm = (7.0e-5 * (f0 / 55.0)).clamp(5.0e-5, 1.2e-3);
+            let base_decay = (10.0 / (1.0 + f0 / 110.0)).clamp(0.45, 9.0);
+            let strike = 1.0 / 8.0; // hammer strikes ~1/8 along the string
+            let bright = 0.45 + 0.55 * note.gain; // velocity opens the high partials
+            let detune = 1.000_6_f32; // ~1 cent unison spread
+            let string_det = [1.0 / detune, detune];
+
+            let mut partials: Vec<Partial> = Vec::new();
+            let mut k = 1usize;
+            while k <= 18 {
+                let kf = k as f32;
+                let ratio = kf * (1.0 + b_inharm * kf * kf).sqrt();
+                if ratio * f0 > 0.45 * srf {
+                    break; // keep every partial below Nyquist
+                }
+                let notch = (std::f32::consts::PI * kf * strike).sin().abs();
+                let amp = notch / kf * bright.powf((kf - 1.0) * 0.18);
+                let decay = (base_decay / (1.0 + 0.55 * (kf - 1.0))).max(0.05);
+                partials.push(Partial {
+                    step: ratio,
+                    amp,
+                    env: 1.0,
+                    dmul: (-1.0 / (srf * decay)).exp(),
+                    // Spread start phases (golden ratio) so the onset isn't a
+                    // hard in-phase transient — deterministic, no RNG draw.
+                    phase: [(kf * 0.618_034).fract(), (kf * 0.381_966).fract()],
+                });
+                k += 1;
+            }
+            // Target a per-note peak near 0.5 (as the FM model had): two strings
+            // over the summed partial amplitude.
+            let norm = 0.5 / (2.0 * partials.iter().map(|p| p.amp).sum::<f32>().max(1e-6));
+
+            for (i, &fi) in f.iter().enumerate() {
+                let dt = fi.max(0.0) / srf;
+                let t = i as f32 / srf;
+                let mut s = 0.0;
+                for p in partials.iter_mut() {
+                    let inc = dt * p.step;
+                    let a = p.amp * p.env;
+                    for (ph, &det) in p.phase.iter_mut().zip(string_det.iter()) {
+                        s += a * (TAU * *ph).sin();
+                        *ph += inc * det;
+                        *ph -= ph.floor();
+                    }
+                    p.env *= p.dmul;
+                }
+                // Felt-hammer thump: a few ms of soft noise on the attack.
+                let thump = if t < 0.006 {
+                    rng.bi() * 0.3 * (1.0 - t / 0.006)
+                } else {
+                    0.0
+                };
+                out.push(s * norm + thump);
             }
         }
         SeqWave::Piano => {
@@ -2776,6 +2853,38 @@ mod tests {
             "bass sustains, treble dies: {} vs {}",
             tail_ratio(&bass),
             tail_ratio(&treble)
+        );
+    }
+
+    #[test]
+    fn engine3_piano_is_a_distinct_richer_voice() {
+        let seq = |engine: u32, pitch: &str| {
+            doc(&format!(
+                r#"{{ "name": "n", "duration": 2.0, "engine": {engine}, "root": {{ "type": "seq",
+                     "bpm": 60, "steps_per_beat": 1, "wave": "piano",
+                     "env": {{ "a": 0.002, "s": 1.0, "r": 0.1 }},
+                     "notes": [ {{ "step": 0, "len": 2, "pitch": "{pitch}" }} ] }} }}"#
+            ))
+        };
+        let peak = |s: &[f32]| s.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+        let legacy = render(&seq(2, "C4"));
+        let v3 = render(&seq(3, "C4"));
+        // The engine-3 model is a genuinely different (and non-clipping) waveform;
+        // the legacy engine-2 voice is untouched by the upgrade.
+        assert!(peak(&v3) > 0.05 && peak(&v3) < 1.1, "audible, not clipping");
+        assert_ne!(legacy, v3, "engine 3 upgrades the piano voice");
+        // The pitch-dependent ring survives: bass sustains, treble dies fast.
+        let tail = |s: &[f32]| {
+            let q = s.len() / 4;
+            rms(&s[2 * q..3 * q]) / rms(&s[..q]).max(1e-9)
+        };
+        let bass = render(&seq(3, "A1"));
+        let treble = render(&seq(3, "A5"));
+        assert!(
+            tail(&bass) > tail(&treble) * 1.5,
+            "engine-3 bass rings longer than treble: {} vs {}",
+            tail(&bass),
+            tail(&treble)
         );
     }
 

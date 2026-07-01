@@ -1007,7 +1007,7 @@ fn try_src(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Src
         // (the exact offline synthesis) and read it back block-by-block. Sampler
         // seq is external-synth-coupled and stays on the buffered fallback.
         Node::Seq { wave, .. } if engine >= 2 && *wave != SeqWave::Sampler => Src::Seq {
-            buf: seq_to_signal(node, n, sr, &mut Rng::new(node_seed(path))),
+            buf: seq_to_signal(node, n, sr, &mut Rng::new(node_seed(path)), engine),
         },
         Node::Sine { freq } => Src::Sine {
             phase: 0.0,
@@ -1811,6 +1811,19 @@ mod tests {
                   "notes": [ { "step":0, "len":1, "pitch":"midi:36" }, { "step":2, "len":1, "pitch":"midi:38" },
                              { "step":4, "len":1, "pitch":"midi:42" }, { "step":6, "len":1, "pitch":"midi:38" } ] },
                 { "type":"reverb", "room":0.5, "mix":0.3 } ] } }"#,
+        ));
+    }
+
+    #[test]
+    fn engine3_piano_streams_byte_identically() {
+        // The engine-3 inharmonic piano (RNG only for the hammer thump) must
+        // pre-render and stream bit-for-bit, across the register.
+        assert_byte_identical(&parse(
+            r#"{ "name":"pno", "duration":1.2, "seed":8, "engine":3, "root": { "type":"seq",
+                "bpm":90, "steps_per_beat":4, "wave":"piano",
+                "env": { "a":0.002, "s":1.0, "r":0.2 },
+                "notes": [ { "step":0, "len":4, "pitch":"A1" }, { "step":2, "len":4, "pitch":"C4" },
+                           { "step":4, "len":4, "pitch":"E4", "gain":0.6 }, { "step":6, "len":4, "pitch":"A5" } ] } }"#,
         ));
     }
 

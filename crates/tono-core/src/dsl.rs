@@ -27,7 +27,11 @@ pub const SCHEMA_VERSION: u32 = 2;
 /// its position in the graph) instead of drawing from one shared, traversal-order
 /// stream — decorrelating sibling noise and, crucially, letting the real-time
 /// streaming renderer produce byte-identical randomness block-by-block.
-pub const ENGINE_VERSION: u32 = 2;
+/// Revision 3 upgrades the `piano` seq voice to an inharmonic additive model
+/// (stretched partials, per-partial decay, a hammer-strike spectrum, and a
+/// detuned unison pair) — a far richer grand than the two-operator FM of
+/// engine ≤ 2, which stays bit-exact for older documents.
+pub const ENGINE_VERSION: u32 = 3;
 
 // Serde `default = "..."` requires free functions. Values with non-obvious
 // origins: q 0.707 is Butterworth (maximally flat), haas 12 ms sits in the

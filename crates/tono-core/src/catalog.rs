@@ -117,10 +117,11 @@ fn piano_env(release: f32) -> Adsr {
     }
 }
 
-/// The acoustic **grand piano** — two detuned FM strings per note with a hammer
-/// thump, velocity brightness, and a natural pitch-dependent decay (bass rings
-/// for seconds, treble dies fast). The flagship voice; play it like a piano and
-/// let `len` (note length) hold the key.
+/// The acoustic **grand piano** — an inharmonic additive model (engine 3):
+/// stretched partials, each with its own decay (the bright attack mellowing to a
+/// warm sustain), a hammer-strike spectrum opened by velocity, over a detuned
+/// unison pair. Bass rings for seconds, treble dies fast. The flagship voice;
+/// play it like a piano and let `len` (note length) hold the key.
 pub struct GrandPiano;
 
 impl GrandPiano {
