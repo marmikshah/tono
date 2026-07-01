@@ -51,7 +51,7 @@ verify: pre-commit-checks test ## Exactly what CI runs (fmt --check + clippy + t
 release: ## Cut a release: guard clean master, tag vX.Y.Z from Cargo.toml, push (CI publishes to crates.io)
 	@[ "$$(git branch --show-current)" = "$(RELEASE_BRANCH)" ] || { echo "Release only from $(RELEASE_BRANCH)."; exit 1; }
 	@git diff --quiet && git diff --cached --quiet || { echo "Working tree dirty — commit before releasing."; exit 1; }
-	@V=$$(grep -m1 '^version = ' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/'); \
+	@V=$$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)".*/\1/p' Cargo.toml); \
 		echo "→ Releasing v$$V"; \
 		if git rev-parse "v$$V" >/dev/null 2>&1; then echo "tag v$$V exists — bump version in Cargo.toml first."; exit 1; fi; \
 		git tag -a "v$$V" -m "v$$V" && git push origin "v$$V"; \
