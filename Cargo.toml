@@ -45,6 +45,17 @@ repository.workspace = true
 readme = "README.md"
 keywords = ["audio", "synthesis", "dsp", "chiptune", "gamedev"]
 categories = ["multimedia::audio", "game-development"]
+# The CLI crate ships src + README + LICENSE only. Keep the showcase assets
+# (docs/, esp. the ~14 MB of example audio) and dev tooling out of the package —
+# they'd blow past crates.io's 10 MiB upload limit and don't belong in the crate.
+exclude = [
+    "/docs",
+    "/.github",
+    "/.githooks",
+    "/.editorconfig",
+    "/CLAUDE.md",
+    "/Makefile",
+]
 
 [dependencies]
 tono-core = { workspace = true }
