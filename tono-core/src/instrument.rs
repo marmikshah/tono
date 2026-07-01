@@ -127,6 +127,20 @@ pub enum PitchMap {
     Transpose { reference: Note },
 }
 
+/// How notes share voices.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlayMode {
+    /// Every note is its own voice — chords, the default.
+    #[default]
+    Poly,
+    /// One voice at a time (leads, bass). A new note steals the voice and glides
+    /// to it (see [`InstrumentDesign::glide_secs`]); releasing a note falls back
+    /// to the most-recent one still held (last-note priority). `legato` keeps the
+    /// amp envelope running when a note arrives while another is held — a smooth,
+    /// connected line rather than a re-struck one.
+    Mono { legato: bool },
+}
+
 /// The recipe that makes a [`Patch`] playable. Serializable, so an instrument is
 /// a saveable/recallable preset (patch + envelope + pitch map + master).
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -145,6 +159,14 @@ pub struct InstrumentDesign {
     /// for the whole instrument, not one per voice — so a tail outlives its note).
     /// Must be streamable processor nodes.
     pub master: Vec<Node>,
+    /// Poly (default) or mono/legato.
+    #[serde(default)]
+    pub mode: PlayMode,
+    /// Portamento time in seconds: how long a note glides to the next in mono
+    /// mode (0 = instant, no glide). Approximate — a one-pole ease, so the pitch
+    /// arrives asymptotically.
+    #[serde(default)]
+    pub glide_secs: f32,
 }
 
 impl InstrumentDesign {
@@ -171,6 +193,8 @@ impl InstrumentDesign {
             velocity_param: None,
             max_voices: 16,
             master: Vec::new(),
+            mode: PlayMode::Poly,
+            glide_secs: 0.0,
             patch,
         }
     }
@@ -206,6 +230,18 @@ impl InstrumentDesign {
         self.max_voices = max.max(1);
         self
     }
+
+    /// Set the play mode — poly, or mono/legato (builder style).
+    pub fn with_mode(mut self, mode: PlayMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Set the portamento glide time in seconds for mono mode (builder style).
+    pub fn with_glide(mut self, secs: f32) -> Self {
+        self.glide_secs = secs.max(0.0);
+        self
+    }
 }
 
 /// Handle to one sounding voice (a single note-on). Stable until the voice is
@@ -217,6 +253,10 @@ struct Voice {
     handle: u64,
     note: Note,
     graph: StreamGraph,
+    /// The frequency the graph was baked at (the note it was built for). A live
+    /// pitch scale of `target.freq() / built_hz` retunes it to any other note
+    /// without a rebuild — how mono glide moves between notes.
+    built_hz: f32,
     env: EnvGen,
     gain: f32,
     /// Set once `note_off` has gated the envelope into release.
@@ -240,6 +280,9 @@ pub struct Instrument {
     /// Pitch-wheel bend as a frequency ratio (1.0 = centered), applied live to
     /// every sounding voice and any new one.
     bend: f32,
+    /// Notes physically held, oldest→newest — mono note priority. On a note-off
+    /// the voice falls back to the last still-held note. Unused in poly mode.
+    held: Vec<Note>,
     /// The shared master effect chain (built from `design.master`).
     master: Option<EffectChain>,
     /// Per-voice render scratch (mono).
@@ -325,6 +368,7 @@ impl Instrument {
             next_handle: 1,
             sustain: false,
             bend: 1.0,
+            held: Vec::new(),
             master,
             scratch: Vec::new(),
             mix: Vec::new(),
@@ -360,35 +404,115 @@ impl Instrument {
     }
 
     /// Start a note; `velocity` in `[0, 1]` shapes its level. Returns the voice's
-    /// handle. If the pool is full the **quietest** voice is stolen (the least
-    /// audible cut). A patch made un-buildable by a bad param yields a silent
-    /// voice rather than panicking — a control event never crashes the audio thread.
+    /// handle. In poly mode each note is its own voice; if the pool is full the
+    /// **quietest** voice is stolen (the least audible cut). In mono mode the one
+    /// voice is retuned (gliding) to the new note. A patch made un-buildable by a
+    /// bad param yields a silent voice rather than panicking — a control event
+    /// never crashes the audio thread.
     pub fn note_on(&mut self, note: Note, velocity: f32) -> VoiceHandle {
+        let velocity = velocity.clamp(0.0, 1.0);
+        if let PlayMode::Mono { legato } = self.design.mode {
+            return self.mono_note_on(note, velocity, legato);
+        }
         let handle = self.next_handle;
         self.next_handle += 1;
-        let velocity = velocity.clamp(0.0, 1.0);
-        if let Ok(mut graph) = self.build_result(note, velocity) {
-            if self.bend != 1.0 {
-                graph.set_bend(self.bend); // catch a newly struck note up to the wheel
-            }
-            let mut env = EnvGen::new(&self.design.amp, self.sample_rate);
-            env.gate_on();
-            if self.voices.len() >= self.design.max_voices
-                && let Some(victim) = self.quietest()
-            {
-                self.voices.remove(victim);
-            }
-            self.voices.push(Voice {
-                handle,
-                note,
-                graph,
-                env,
-                gain: velocity,
-                releasing: false,
-                sustained: false,
-            });
-        }
+        self.spawn_voice(handle, note, velocity);
         VoiceHandle(handle)
+    }
+
+    /// Build a fresh voice at `note` and add it to the pool, stealing the quietest
+    /// if full. A no-op on an un-buildable patch (a bad param) — the caller still
+    /// gets a handle, just a silent voice.
+    fn spawn_voice(&mut self, handle: u64, note: Note, velocity: f32) {
+        let Ok(mut graph) = self.build_result(note, velocity) else {
+            return;
+        };
+        if self.bend != 1.0 {
+            graph.set_bend(self.bend); // catch a newly struck note up to the wheel
+        }
+        let mut env = EnvGen::new(&self.design.amp, self.sample_rate);
+        env.gate_on();
+        if self.voices.len() >= self.design.max_voices
+            && let Some(victim) = self.quietest()
+        {
+            self.voices.remove(victim);
+        }
+        self.voices.push(Voice {
+            handle,
+            note,
+            built_hz: note.freq(),
+            graph,
+            env,
+            gain: velocity,
+            releasing: false,
+            sustained: false,
+        });
+    }
+
+    /// The per-sample one-pole coefficient for the configured glide time (`1.0` =
+    /// instant when glide is off).
+    fn glide_coeff(&self) -> f32 {
+        let secs = self.design.glide_secs;
+        if secs <= 0.0 {
+            1.0
+        } else {
+            1.0 - (-1.0 / (secs * self.sample_rate as f32)).exp()
+        }
+    }
+
+    /// Mono note-on: retune the live voice (gliding) to `note`, or strike a fresh
+    /// one if none is sounding. `legato` keeps the amp envelope running.
+    fn mono_note_on(&mut self, note: Note, velocity: f32, legato: bool) -> VoiceHandle {
+        self.held.retain(|&n| n != note);
+        self.held.push(note);
+        let coeff = self.glide_coeff();
+        if let Some(v) = self.voices.iter_mut().find(|v| !v.releasing) {
+            v.note = note;
+            v.sustained = false;
+            v.graph.glide_pitch(note.freq() / v.built_hz, coeff);
+            if !legato {
+                v.env.gate_on(); // re-strike unless we're playing legato
+                v.gain = velocity;
+            }
+            VoiceHandle(v.handle)
+        } else {
+            let handle = self.next_handle;
+            self.next_handle += 1;
+            self.spawn_voice(handle, note, velocity); // fresh attack — no glide
+            VoiceHandle(handle)
+        }
+    }
+
+    /// Mono note-off: fall back to the most-recent still-held note (gliding), or
+    /// release the voice (deferred by the sustain pedal) when nothing is held.
+    fn mono_note_off(&mut self, note: Note) -> usize {
+        let before = self.held.len();
+        self.held.retain(|&n| n != note);
+        if self.held.len() == before {
+            return 0; // that note wasn't held
+        }
+        match self.held.last().copied() {
+            Some(prev) => {
+                let coeff = self.glide_coeff();
+                if let Some(v) = self.voices.iter_mut().find(|v| !v.releasing) {
+                    v.note = prev;
+                    v.graph.glide_pitch(prev.freq() / v.built_hz, coeff);
+                }
+                1
+            }
+            None => {
+                let sustain = self.sustain;
+                for v in self.voices.iter_mut().filter(|v| !v.releasing) {
+                    if sustain {
+                        v.sustained = true;
+                    } else {
+                        v.env.gate_off();
+                        v.releasing = true;
+                    }
+                }
+                1
+            }
+        }
     }
 
     fn quietest(&self) -> Option<usize> {
@@ -403,6 +527,9 @@ impl Instrument {
     /// pedal is down); returns how many were released/deferred (0 or 1). MIDI
     /// note-off arrives by pitch, so this is the common path.
     pub fn note_off(&mut self, note: Note) -> usize {
+        if matches!(self.design.mode, PlayMode::Mono { .. }) {
+            return self.mono_note_off(note);
+        }
         let sustain = self.sustain;
         match self
             .voices
@@ -463,6 +590,7 @@ impl Instrument {
 
     /// Release every held voice.
     pub fn all_notes_off(&mut self) {
+        self.held.clear();
         for v in self.voices.iter_mut() {
             v.env.gate_off();
             v.releasing = true;
@@ -480,6 +608,16 @@ impl Instrument {
             .iter()
             .find(|v| v.handle == handle.0)
             .map(|v| v.note)
+    }
+
+    /// The pitch scale a voice is currently sounding at (1.0 = its built note),
+    /// following an in-progress glide, excluding the pitch wheel. Useful for a
+    /// live pitch readout.
+    pub fn voice_pitch_scale(&self, handle: VoiceHandle) -> Option<f32> {
+        self.voices
+            .iter()
+            .find(|v| v.handle == handle.0)
+            .map(|v| v.graph.pitch())
     }
 
     /// Set a named parameter for future notes. Returns whether it was accepted —
@@ -789,6 +927,54 @@ mod tests {
             inst.fill(&mut out);
         }
         assert_eq!(inst.active_voices(), 0, "released on pedal-up");
+    }
+
+    #[test]
+    fn mono_mode_reuses_one_voice_with_last_note_priority() {
+        let design = InstrumentDesign::new(saw_patch()).with_mode(PlayMode::Mono { legato: true });
+        let mut inst = Instrument::new(design, 48_000).unwrap();
+        let h = inst.note_on(Note::C4, 0.9);
+        inst.note_on(Note(64), 0.9); // E4 — retunes the one voice
+        assert_eq!(inst.active_voices(), 1, "mono holds a single voice");
+        assert_eq!(
+            inst.voice_note(h),
+            Some(Note(64)),
+            "voice follows the new note"
+        );
+        assert_eq!(inst.note_off(Note(64)), 1);
+        assert_eq!(
+            inst.voice_note(h),
+            Some(Note::C4),
+            "last-note priority: falls back to still-held C4"
+        );
+        assert_eq!(inst.active_voices(), 1);
+        assert_eq!(inst.note_off(Note::C4), 1);
+        for _ in 0..4 {
+            inst.fill(&mut vec![0.0f32; 4096 * 2]); // past the release
+        }
+        assert_eq!(inst.active_voices(), 0, "released once nothing is held");
+    }
+
+    #[test]
+    fn mono_glide_eases_between_notes() {
+        let design = InstrumentDesign::new(saw_patch())
+            .with_mode(PlayMode::Mono { legato: true })
+            .with_glide(0.1);
+        let mut inst = Instrument::new(design, 48_000).unwrap();
+        let h = inst.note_on(Note::C4, 0.9); // built at C4, scale 1.0
+        assert_eq!(inst.voice_pitch_scale(h), Some(1.0));
+        inst.note_on(Note(72), 0.9); // C5, an octave up ⇒ target scale 2.0
+        let mut blk = vec![0.0f32; 64 * 2];
+        inst.fill(&mut blk);
+        let p = inst.voice_pitch_scale(h).unwrap();
+        assert!(p > 1.0 && p < 1.5, "eases up rather than jumping: {p}");
+        for _ in 0..6 {
+            inst.fill(&mut vec![0.0f32; 4096 * 2]);
+        }
+        assert!(
+            inst.voice_pitch_scale(h).unwrap() > 1.9,
+            "arrives near the octave"
+        );
     }
 
     #[test]
