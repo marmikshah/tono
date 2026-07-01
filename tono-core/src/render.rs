@@ -1112,7 +1112,7 @@ fn reverb(input: &[f32], room: f32, mix: f32, sr: u32, spread: usize) -> Signal 
 }
 
 /// Apply a waveshaper curve to a single sample.
-fn drive_curve(x: f32, shape: DriveShape) -> f32 {
+pub(crate) fn drive_curve(x: f32, shape: DriveShape) -> f32 {
     match shape {
         DriveShape::Tanh => x.tanh(),
         DriveShape::Hard => x.clamp(-1.0, 1.0),
@@ -1134,7 +1134,7 @@ fn drive_curve(x: f32, shape: DriveShape) -> f32 {
 /// Antiderivative F(x) of each waveshaper, used by [`drive_adaa`]. F'(x) =
 /// `drive_curve(x, shape)`. The additive constant is irrelevant — ADAA only
 /// ever uses differences `F(x1) − F(x0)`.
-fn drive_antideriv(x: f32, shape: DriveShape) -> f32 {
+pub(crate) fn drive_antideriv(x: f32, shape: DriveShape) -> f32 {
     match shape {
         // ∫ tanh = ln(cosh x). Computed as |x| + ln(1+e^{−2|x|}) − ln 2 so it
         // never overflows for large |x| (cosh would).
