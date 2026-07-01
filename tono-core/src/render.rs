@@ -43,7 +43,7 @@ fn track_stream_seed(seed: u64, i: u64) -> u64 {
 /// The master bus's stream key (validate rejects a layer id hashing to it).
 const MASTER_STREAM: u64 = u64::MAX;
 
-use crate::dsp::layer_stream_key;
+use crate::dsp::{layer_stream_key, node_path, node_seed};
 
 /// True when a track renders in native stereo (a sampler seq) — a cheap shape
 /// test; the actual rendering happens in [`track_native_stereo`].
@@ -162,7 +162,14 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
             // layer would change every later layer's noise. (Cheap shape test:
             // native-stereo sampler tracks never touch the shared stream.)
             if !per_track_streams && !is_native_stereo(&t.node) {
-                let _ = render_node(&t.node, n, sr, &mut rng, engine);
+                let _ = render_node(
+                    &t.node,
+                    n,
+                    sr,
+                    &mut rng,
+                    engine,
+                    track_stream_seed(doc.seed, stream),
+                );
             }
             layers.push(LayerStats {
                 id: layer_id,
@@ -215,11 +222,12 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
                 tsum += (la * la + ra * ra) as f64;
             }
         } else {
+            let base = track_stream_seed(doc.seed, stream);
             let mono = if per_track_streams {
-                let mut trng = Rng::new(track_stream_seed(doc.seed, stream));
-                render_node(&t.node, n, sr, &mut trng, engine)
+                let mut trng = Rng::new(base);
+                render_node(&t.node, n, sr, &mut trng, engine, base)
             } else {
-                render_node(&t.node, n, sr, &mut rng, engine)
+                render_node(&t.node, n, sr, &mut rng, engine, base)
             };
             for (i, x) in mono.into_iter().take(n - off).enumerate() {
                 let (gl, gr) = gl_gr(i + off);
@@ -259,9 +267,10 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
             left = reverb(&left, *room, *mix, sr, 0);
             right = reverb(&right, *room, *mix, sr, 23);
         } else {
+            let mpath = track_stream_seed(doc.seed, MASTER_STREAM);
             let mut rl = rng.clone();
-            left = apply_processor(m, &left, sr, &mut rl, engine);
-            right = apply_processor(m, &right, sr, &mut rng, engine);
+            left = apply_processor(m, &left, sr, &mut rl, engine, mpath);
+            right = apply_processor(m, &right, sr, &mut rng, engine, mpath);
         }
     }
     if let Playback::Loop {
@@ -370,7 +379,7 @@ pub(crate) fn render_graph(doc: &SoundDoc) -> Signal {
     let sr = doc.sample_rate;
     let n = ((doc.duration * sr as f32).ceil() as usize).max(1);
     let mut rng = Rng::new(doc.seed);
-    render_node(&doc.root, n, sr, &mut rng, doc.effective_engine())
+    render_node(&doc.root, n, sr, &mut rng, doc.effective_engine(), doc.seed)
 }
 
 /// The non-mixer render path: one graph, one mono buffer.
@@ -379,7 +388,7 @@ fn render_plain(doc: &SoundDoc) -> Signal {
     let n = ((doc.duration * sr as f32).ceil() as usize).max(1);
     let mut rng = Rng::new(doc.seed);
     let engine = doc.effective_engine();
-    let mut out = render_node(&doc.root, n, sr, &mut rng, engine);
+    let mut out = render_node(&doc.root, n, sr, &mut rng, engine, doc.seed);
     // A loop is rendered as its seamless body (tail crossfaded onto the head).
     if let Playback::Loop {
         start_secs,
@@ -724,7 +733,7 @@ pub(crate) fn osc(shape: Shape, phase: f32) -> f32 {
 /// DSP-kernel revision (see [`crate::dsl::ENGINE_VERSION`]); kernels that
 /// changed output across revisions branch on it so older documents stay
 /// byte-identical.
-fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng, engine: u32) -> Signal {
+fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng, engine: u32, path: u64) -> Signal {
     match node {
         Node::Square { freq, duty } => square_signal(freq, duty, n, sr),
         Node::Triangle { freq } => tri_signal(freq, n, sr),
@@ -736,7 +745,17 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng, engine: u32) -> Si
             detune_cents,
         } => super_signal(*wave, freq, *voices, *detune_cents, n, sr),
         Node::Sine { freq } => osc_signal(freq, n, sr, |p| osc(Shape::Sine, p)),
-        Node::Noise { color } => noise_signal(*color, n, rng),
+        Node::Noise { color } => {
+            // Engine ≥ 2: each noise leaf owns a structurally-seeded stream (from
+            // its graph position), so its randomness is independent of traversal
+            // order and reproduces byte-identically in the streaming renderer.
+            if engine >= 2 {
+                let mut local = Rng::new(node_seed(path));
+                noise_signal(*color, n, &mut local)
+            } else {
+                noise_signal(*color, n, rng)
+            }
+        }
         Node::Fm { freq, ratio, index } => fm_signal(freq, *ratio, index, n, sr),
         Node::Seq {
             bpm,
@@ -772,13 +791,20 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng, engine: u32) -> Si
             render_seq(*bpm, *steps_per_beat, &voice, notes, n, sr, rng)
         }
         Node::Impact { hardness, velocity } => impact_signal(*hardness, *velocity, n, sr),
-        Node::Dust { density, decay } => dust_signal(*density, *decay, n, sr, rng),
+        Node::Dust { density, decay } => {
+            if engine >= 2 {
+                let mut local = Rng::new(node_seed(path));
+                dust_signal(*density, *decay, n, sr, &mut local)
+            } else {
+                dust_signal(*density, *decay, n, sr, rng)
+            }
+        }
         Node::Env { adsr: env } => adsr(env, n, sr),
         // Validation rejects nested mixers; render defensively as a plain sum.
         Node::Tracks { tracks, .. } => {
             let mut acc = vec![0.0f32; n];
-            for t in tracks {
-                let sig = render_node(&t.node, n, sr, rng, engine);
+            for (i, t) in tracks.iter().enumerate() {
+                let sig = render_node(&t.node, n, sr, rng, engine, node_path(path, i));
                 for (o, v) in acc.iter_mut().zip(sig) {
                     *o += v * t.gain;
                 }
@@ -787,8 +813,8 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng, engine: u32) -> Si
         }
         Node::Mix { inputs } => {
             let mut acc = vec![0.0f32; n];
-            for input in inputs {
-                let s = render_node(input, n, sr, rng, engine);
+            for (i, input) in inputs.iter().enumerate() {
+                let s = render_node(input, n, sr, rng, engine, node_path(path, i));
                 for (o, v) in acc.iter_mut().zip(s) {
                     *o += v;
                 }
@@ -797,8 +823,8 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng, engine: u32) -> Si
         }
         Node::Mul { inputs } => {
             let mut acc = vec![1.0f32; n];
-            for input in inputs {
-                let s = render_node(input, n, sr, rng, engine);
+            for (i, input) in inputs.iter().enumerate() {
+                let s = render_node(input, n, sr, rng, engine, node_path(path, i));
                 for (o, v) in acc.iter_mut().zip(s) {
                     *o *= v;
                 }
@@ -807,12 +833,13 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng, engine: u32) -> Si
         }
         Node::Chain { stages } => {
             let mut buf: Option<Signal> = None;
-            for stage in stages {
+            for (i, stage) in stages.iter().enumerate() {
+                let cp = node_path(path, i);
                 buf = Some(match (&buf, stage.is_processor()) {
                     // A processor transforms the running signal.
-                    (Some(input), true) => apply_processor(stage, input, sr, rng, engine),
+                    (Some(input), true) => apply_processor(stage, input, sr, rng, engine, cp),
                     // A source/combinator as a later stage replaces the signal.
-                    (_, _) => render_node(stage, n, sr, rng, engine),
+                    (_, _) => render_node(stage, n, sr, rng, engine, cp),
                 });
             }
             buf.unwrap_or_else(|| vec![0.0; n])
@@ -829,7 +856,14 @@ fn render_node(node: &Node, n: usize, sr: u32, rng: &mut Rng, engine: u32) -> Si
 /// render an internal side signal, e.g. `duck`'s trigger.) `engine` is the
 /// document's DSP-kernel revision; quality-changing processors branch on it so
 /// older documents stay byte-identical.
-fn apply_processor(node: &Node, input: &[f32], sr: u32, rng: &mut Rng, engine: u32) -> Signal {
+fn apply_processor(
+    node: &Node,
+    input: &[f32],
+    sr: u32,
+    rng: &mut Rng,
+    engine: u32,
+    path: u64,
+) -> Signal {
     match node {
         Node::Duck {
             trigger,
@@ -839,7 +873,7 @@ fn apply_processor(node: &Node, input: &[f32], sr: u32, rng: &mut Rng, engine: u
         } => {
             // Render the trigger silently; its loudness envelope steers a
             // gain dip on the chained signal — the sidechain pump.
-            let trig = render_node(trigger, input.len(), sr, rng, engine);
+            let trig = render_node(trigger, input.len(), sr, rng, engine, node_path(path, 0));
             let srf = sr as f32;
             let at = (-1.0 / (attack.max(1e-4) * srf)).exp();
             let rt = (-1.0 / (release.max(1e-4) * srf)).exp();
@@ -2436,6 +2470,7 @@ mod tests {
                 n,
                 44_100,
                 &mut rng,
+                0,
                 0,
             );
             let amt = eval_value(&Value::Const(6.0), n, 44_100);

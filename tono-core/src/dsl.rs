@@ -22,8 +22,12 @@ pub const SCHEMA_VERSION: u32 = 2;
 /// `engine` is `0` when omitted — the original kernels every shipped sound was
 /// rendered under, byte-identical forever. New documents are stamped with this
 /// value, opting them into the current kernels (e.g. anti-aliased `drive`).
-/// Revision 1 adds antiderivative anti-aliasing to [`Node::Drive`].
-pub const ENGINE_VERSION: u32 = 1;
+/// Revision 1 adds antiderivative anti-aliasing to [`Node::Drive`]. Revision 2
+/// gives each `noise`/`dust` node its own structurally-seeded RNG (derived from
+/// its position in the graph) instead of drawing from one shared, traversal-order
+/// stream — decorrelating sibling noise and, crucially, letting the real-time
+/// streaming renderer produce byte-identical randomness block-by-block.
+pub const ENGINE_VERSION: u32 = 2;
 
 // Serde `default = "..."` requires free functions. Values with non-obvious
 // origins: q 0.707 is Butterworth (maximally flat), haas 12 ms sits in the

@@ -51,6 +51,23 @@ pub fn layer_stream_key(id: &str) -> u64 {
     h
 }
 
+/// Descend a structural node-path key by one child index (FNV-1a step). The path
+/// makes each RNG leaf's identity a deterministic function of its POSITION in the
+/// graph (not of evaluation order), so under `engine >= 2` a per-sample streaming
+/// render draws the same randomness as the offline whole-buffer render.
+pub(crate) fn node_path(parent: u64, child: usize) -> u64 {
+    (parent ^ (child as u64).wrapping_add(1)).wrapping_mul(0x0000_0100_0000_01B3)
+}
+
+/// Finalize a structural path (seeded from `doc.seed` at the root) into a per-node
+/// RNG seed (SplitMix64 mix).
+pub(crate) fn node_seed(path: u64) -> u64 {
+    let mut z = path.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 /// Linear amplitude → dBFS (floored at −180 dB so silence stays finite).
 pub fn dbfs(x: f32) -> f32 {
     20.0 * x.max(1e-9).log10()

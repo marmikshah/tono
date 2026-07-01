@@ -29,9 +29,9 @@
 use std::f32::consts::TAU;
 
 use crate::dsl::{
-    Curve, DriveShape, Modulator, Node, Shape, SoundDoc, SuperWave, Value, note_to_hz,
+    Curve, DriveShape, Modulator, Node, NoiseColor, Shape, SoundDoc, SuperWave, Value, note_to_hz,
 };
-use crate::dsp::Rng;
+use crate::dsp::{Rng, node_path, node_seed};
 use crate::render::{drive_antideriv, drive_curve, osc, poly_blep, rand_seed};
 
 /// The ADSR envelope value at time `t` seconds — the exact body of the offline
@@ -249,6 +249,13 @@ impl Val {
     }
 }
 
+/// Per-color filter state for a streaming noise node.
+enum NoiseKind {
+    White,
+    Pink { b: [f32; 7] },
+    Brown { last: f32 },
+}
+
 /// A streamable source / combinator node, holding its per-sample state.
 enum Src {
     Sine {
@@ -301,6 +308,18 @@ enum Src {
         punch: f32,
         srf: f32,
         rel_start: f32,
+    },
+    /// `engine >= 2` only: a structurally-seeded noise leaf (own RNG).
+    Noise {
+        rng: Rng,
+        kind: NoiseKind,
+    },
+    /// `engine >= 2` only: a structurally-seeded dust leaf.
+    Dust {
+        rng: Rng,
+        p: f32,
+        g: f32,
+        y: f32,
     },
     Mix(Vec<Src>),
     Mul(Vec<Src>),
@@ -529,6 +548,30 @@ impl Src {
                 srf,
                 rel_start,
             } => adsr_env(t as f32 / *srf, *a, *d, *s, *r, *punch, *rel_start),
+            Src::Noise { rng, kind } => match kind {
+                NoiseKind::White => rng.bi(),
+                NoiseKind::Pink { b } => {
+                    let w = rng.bi();
+                    b[0] = 0.99886 * b[0] + w * 0.0555179;
+                    b[1] = 0.99332 * b[1] + w * 0.0750759;
+                    b[2] = 0.96900 * b[2] + w * 0.153_852;
+                    b[3] = 0.86650 * b[3] + w * 0.3104856;
+                    b[4] = 0.55000 * b[4] + w * 0.5329522;
+                    b[5] = -0.7616 * b[5] - w * 0.0168980;
+                    let out = b[0] + b[1] + b[2] + b[3] + b[4] + b[5] + b[6] + w * 0.5362;
+                    b[6] = w * 0.115926;
+                    out * 0.11
+                }
+                NoiseKind::Brown { last } => {
+                    *last = (*last + 0.02 * rng.bi()) * 0.998;
+                    (*last * 8.0).clamp(-1.0, 1.0)
+                }
+            },
+            Src::Dust { rng, p, g, y } => {
+                let imp = if rng.unit() < *p { rng.bi() } else { 0.0 };
+                *y = imp + *g * *y;
+                *y
+            }
             Src::Mix(cs) => {
                 let mut acc = 0.0f32;
                 for c in cs.iter_mut() {
@@ -856,10 +899,35 @@ fn biquad(kind: Filt, fc: f32, q: f32, sr: u32) -> Proc {
     }
 }
 
-fn try_src(node: &Node, sr: u32, n: usize, engine: u32) -> Option<Src> {
+fn try_src(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Src> {
     let srf = sr as f32;
     let v = |val: &Value| Val::build(val, sr, n);
     Some(match node {
+        // Engine >= 2: noise/dust own a structurally-seeded RNG (from `path`),
+        // exactly as the offline render_node does under engine >= 2, so the
+        // streamed randomness is byte-identical.
+        Node::Noise { color } if engine >= 2 => Src::Noise {
+            rng: Rng::new(node_seed(path)),
+            kind: match color {
+                NoiseColor::White => NoiseKind::White,
+                NoiseColor::Pink => NoiseKind::Pink { b: [0.0; 7] },
+                NoiseColor::Brown => NoiseKind::Brown { last: 0.0 },
+            },
+        },
+        Node::Dust { density, decay } if engine >= 2 => {
+            let p = (density / srf).clamp(0.0, 1.0);
+            let g = if *decay > 0.0 {
+                (-1.0 / (decay * srf)).exp()
+            } else {
+                0.0
+            };
+            Src::Dust {
+                rng: Rng::new(node_seed(path)),
+                p,
+                g,
+                y: 0.0,
+            }
+        }
         Node::Sine { freq } => Src::Sine {
             phase: 0.0,
             freq: v(freq),
@@ -939,21 +1007,24 @@ fn try_src(node: &Node, sr: u32, n: usize, engine: u32) -> Option<Src> {
         Node::Mix { inputs } => Src::Mix(
             inputs
                 .iter()
-                .map(|i| try_src(i, sr, n, engine))
+                .enumerate()
+                .map(|(i, c)| try_src(c, sr, n, engine, node_path(path, i)))
                 .collect::<Option<_>>()?,
         ),
         Node::Mul { inputs } => Src::Mul(
             inputs
                 .iter()
-                .map(|i| try_src(i, sr, n, engine))
+                .enumerate()
+                .map(|(i, c)| try_src(c, sr, n, engine, node_path(path, i)))
                 .collect::<Option<_>>()?,
         ),
         Node::Chain { stages } => {
             let (first, rest) = stages.split_first()?;
-            let src = Box::new(try_src(first, sr, n, engine)?);
+            let src = Box::new(try_src(first, sr, n, engine, node_path(path, 0))?);
             let procs = rest
                 .iter()
-                .map(|p| try_proc(p, sr, n, engine))
+                .enumerate()
+                .map(|(i, p)| try_proc(p, sr, n, engine, node_path(path, i + 1)))
                 .collect::<Option<_>>()?;
             Src::Chain { src, procs }
         }
@@ -961,7 +1032,7 @@ fn try_src(node: &Node, sr: u32, n: usize, engine: u32) -> Option<Src> {
     })
 }
 
-fn try_proc(node: &Node, sr: u32, n: usize, engine: u32) -> Option<Proc> {
+fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Proc> {
     let srf = sr as f32;
     // Filters/EQ only stream with a constant cutoff.
     let cst = |val: &Value| match val {
@@ -1136,7 +1207,7 @@ fn try_proc(node: &Node, sr: u32, n: usize, engine: u32) -> Option<Proc> {
             attack,
             release,
         } => Proc::Duck {
-            trigger: Box::new(try_src(trigger, sr, n, engine)?),
+            trigger: Box::new(try_src(trigger, sr, n, engine, node_path(path, 0))?),
             env: 0.0,
             at: (-1.0 / (attack.max(1e-4) * srf)).exp(),
             rt: (-1.0 / (release.max(1e-4) * srf)).exp(),
@@ -1162,7 +1233,13 @@ impl StreamGraph {
         }
         let n = ((doc.duration * doc.sample_rate as f32).ceil() as usize).max(1);
         Some(StreamGraph {
-            root: try_src(&doc.root, doc.sample_rate, n, doc.effective_engine())?,
+            root: try_src(
+                &doc.root,
+                doc.sample_rate,
+                n,
+                doc.effective_engine(),
+                doc.seed,
+            )?,
             pos: 0,
         })
     }
@@ -1456,6 +1533,37 @@ mod tests {
             checked > 120,
             "fuzz should exercise many graphs, got {checked}"
         );
+    }
+
+    #[test]
+    fn engine2_rng_leaves_stream_byte_identically() {
+        for doc in [
+            r#"{ "name":"nz", "duration":0.05, "seed":7, "engine":2, "root": { "type":"noise", "color":"pink" } }"#,
+            r#"{ "name":"dz", "duration":0.08, "seed":9, "engine":2, "root": { "type":"dust", "density":800, "decay":0.02 } }"#,
+            r#"{ "name":"wn", "duration":0.06, "seed":3, "engine":2, "root": { "type":"chain", "stages": [
+                { "type":"noise", "color":"white" }, { "type":"lowpass", "cutoff":1200, "q":0.7 } ] } }"#,
+            // Two noise siblings under a mix — proves order-independence (the whole
+            // point of structural seeding): offline draws them contiguously, the
+            // streamer per-sample-interleaved, yet the bytes match.
+            r#"{ "name":"mn", "duration":0.05, "seed":5, "engine":2, "root": { "type":"mix", "inputs": [
+                { "type":"noise", "color":"brown" }, { "type":"noise", "color":"white" } ] } }"#,
+        ] {
+            assert_byte_identical(&parse(doc));
+        }
+    }
+
+    #[test]
+    fn engine1_noise_falls_back_but_engine2_streams() {
+        // engine < 2 keeps the shared stream ⇒ not streamable (buffer fallback).
+        assert!(
+            StreamGraph::try_from_doc(&parse(
+                r#"{ "name":"n1", "duration":0.05, "engine":1, "root": { "type":"noise", "color":"white" } }"#
+            ))
+            .is_none()
+        );
+        assert!(is_streamable(&parse(
+            r#"{ "name":"n2", "duration":0.05, "engine":2, "root": { "type":"noise", "color":"white" } }"#
+        )));
     }
 
     #[test]
