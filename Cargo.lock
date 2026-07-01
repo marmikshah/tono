@@ -4269,6 +4269,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tono-play"
+version = "1.2.0"
+dependencies = [
+ "anyhow",
+ "cpal",
+ "serde_json",
+ "tono-core",
+]
+
+[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
