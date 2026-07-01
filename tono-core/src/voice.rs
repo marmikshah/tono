@@ -119,6 +119,19 @@ impl EnvGen {
         self.stage != Stage::Idle
     }
 
+    /// The current envelope level in `[0, 1]` (for picking the quietest voice).
+    pub fn level(&self) -> f32 {
+        self.level
+    }
+
+    /// True once a held note has decayed to silence and will stay silent until
+    /// released — a percussive envelope (`sustain ≈ 0`) that reached its sustain
+    /// stage. Lets a polyphonic host reclaim one-shot voices that never get a
+    /// matching note-off.
+    pub fn faded(&self) -> bool {
+        self.stage == Stage::Sustain && self.s <= 1e-4
+    }
+
     /// Advance one sample and return the envelope level in `[0, 1]`.
     pub fn tick(&mut self) -> f32 {
         match self.stage {

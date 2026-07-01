@@ -12,12 +12,41 @@
 //! AudioWorklet callback, or into a [`Mixer`](crate::runtime::Mixer) alongside SFX.
 
 use std::collections::BTreeMap;
+use std::fmt;
+use std::str::FromStr;
 
 use crate::dsl::{Adsr, Node, SoundDoc, Value, note_to_hz};
 use crate::patch::Patch;
 use crate::runtime::AudioSource;
 use crate::streaming::StreamGraph;
 use crate::voice::EnvGen;
+
+/// Why an [`Instrument`] could not be built.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InstrumentError {
+    /// The patch's graph is outside the streaming subset, so it can't play in
+    /// real time (e.g. a `tracks` root, a `normalize` stage, or a sampler seq).
+    NotStreamable,
+    /// The patch failed to instantiate at its defaults (a bad param path/value).
+    BadPatch(String),
+}
+
+impl fmt::Display for InstrumentError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InstrumentError::NotStreamable => {
+                write!(
+                    f,
+                    "instrument patch is not streamable (can't play in real time)"
+                )
+            }
+            InstrumentError::BadPatch(e) => write!(f, "instrument patch is invalid: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for InstrumentError {}
 
 /// A musical pitch as a MIDI note number (0–127). `A4` = 69 = 440 Hz.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
@@ -54,6 +83,33 @@ impl Note {
     /// Shift by `semitones` (clamped to the MIDI range).
     pub fn transpose(self, semitones: i32) -> Note {
         Note((self.0 as i32 + semitones).clamp(0, 127) as u8)
+    }
+}
+
+impl fmt::Display for Note {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const NAMES: [&str; 12] = [
+            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+        ];
+        write!(
+            f,
+            "{}{}",
+            NAMES[(self.0 % 12) as usize],
+            self.0 as i32 / 12 - 1
+        )
+    }
+}
+
+impl FromStr for Note {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Note, ()> {
+        Note::parse(s).ok_or(())
+    }
+}
+
+impl From<u8> for Note {
+    fn from(midi: u8) -> Note {
+        Note(midi)
     }
 }
 
@@ -122,6 +178,19 @@ impl InstrumentDesign {
         self.pitch = pitch;
         self
     }
+
+    /// Drive a named param from note velocity, mapped across the param's declared
+    /// `[min, max]` (e.g. a filter cutoff for velocity → brightness).
+    pub fn with_velocity_param(mut self, name: impl Into<String>) -> Self {
+        self.velocity_param = Some(name.into());
+        self
+    }
+
+    /// Set the maximum simultaneous voices (at least 1).
+    pub fn with_max_voices(mut self, max: usize) -> Self {
+        self.max_voices = max.max(1);
+        self
+    }
 }
 
 /// Handle to one sounding voice (a single note-on). Stable until the voice is
@@ -170,6 +239,15 @@ fn transpose(node: &mut Node, ratio: f32) {
         | Node::Super { freq, .. } => scale(freq, ratio),
         Node::Square { freq, .. } => scale(freq, ratio),
         Node::Fm { freq, .. } => scale(freq, ratio),
+        // Pitch-determining processors: the ring-mod carrier and the modal
+        // body's resonant partials must track the note, or a bell/metallic patch
+        // plays the same pitch for every key.
+        Node::RingMod { freq } => scale(freq, ratio),
+        Node::Modal { modes, .. } => {
+            for m in modes.iter_mut() {
+                m.freq *= ratio;
+            }
+        }
         Node::Seq { notes, .. } => {
             for note in notes.iter_mut() {
                 scale(&mut note.pitch, ratio);
@@ -198,10 +276,10 @@ fn transpose(node: &mut Node, ratio: f32) {
 }
 
 impl Instrument {
-    /// Build an instrument from a design, validating that the patch renders and
-    /// is streamable (so every note can play in real time). Errors on a bad patch
-    /// or a graph outside the streamable subset.
-    pub fn new(design: InstrumentDesign, sample_rate: u32) -> Result<Self, String> {
+    /// Build an instrument from a design. Errors if the patch can't instantiate
+    /// or its graph is outside the streamable subset — so every note is
+    /// guaranteed to play in real time.
+    pub fn new(design: InstrumentDesign, sample_rate: u32) -> Result<Self, InstrumentError> {
         let values = design.patch.defaults();
         let inst = Instrument {
             sample_rate,
@@ -211,77 +289,100 @@ impl Instrument {
             next_handle: 1,
             scratch: Vec::new(),
         };
-        // Validate by building the reference voice's graph.
-        inst.build_graph(Note::A4, 1.0)
-            .ok_or_else(|| "instrument patch is not streamable at this sample rate".to_string())?;
+        inst.build_result(Note::A4, 1.0)?; // validate the reference voice
         Ok(inst)
     }
 
     /// Build the streamable graph for one note at the current parameter values.
-    fn build_graph(&self, note: Note, velocity: f32) -> Option<StreamGraph> {
+    fn build_result(&self, note: Note, velocity: f32) -> Result<StreamGraph, InstrumentError> {
         let mut values = self.values.clone();
         if let PitchMap::Param(name) = &self.design.pitch {
             values.insert(name.clone(), note.freq());
         }
         if let Some(vp) = &self.design.velocity_param {
-            values.insert(vp.clone(), velocity);
+            // Map velocity across the param's declared [min, max] (a musical
+            // range), not the raw 0..1 — which would clamp to the minimum.
+            if let Some(spec) = self.design.patch.params.iter().find(|p| &p.name == vp) {
+                let (lo, hi) = (spec.min.min(spec.max), spec.min.max(spec.max));
+                values.insert(vp.clone(), lo + velocity.clamp(0.0, 1.0) * (hi - lo));
+            }
         }
-        let mut doc: SoundDoc = self.design.patch.instantiate(&values).ok()?;
+        let mut doc: SoundDoc = self
+            .design
+            .patch
+            .instantiate(&values)
+            .map_err(InstrumentError::BadPatch)?;
         doc.sample_rate = self.sample_rate;
         if let PitchMap::Transpose { reference } = &self.design.pitch {
             transpose(&mut doc.root, note.freq() / reference.freq());
         }
-        StreamGraph::try_from_doc(&doc)
+        StreamGraph::try_from_doc(&doc).ok_or(InstrumentError::NotStreamable)
     }
 
-    /// Start a note. `velocity` in `[0, 1]` scales its level. Returns a handle to
-    /// the new voice; the oldest voice is stolen if the pool is full.
+    /// Start a note; `velocity` in `[0, 1]` shapes its level. Returns the voice's
+    /// handle. If the pool is full the **quietest** voice is stolen (the least
+    /// audible cut). A patch made un-buildable by a bad param yields a silent
+    /// voice rather than panicking — a control event never crashes the audio thread.
     pub fn note_on(&mut self, note: Note, velocity: f32) -> VoiceHandle {
         let handle = self.next_handle;
         self.next_handle += 1;
-        // The graph always builds (validated in `new`); if a param made it
-        // un-streamable, fall back to the reference build so a note still sounds.
-        let graph = self
-            .build_graph(note, velocity)
-            .or_else(|| self.build_graph(Note::A4, velocity))
-            .expect("validated streamable in Instrument::new");
-        let mut env = EnvGen::new(&self.design.amp, self.sample_rate);
-        env.gate_on();
-        if self.voices.len() >= self.design.max_voices.max(1) {
-            // Steal the voice nearest the end of its life: a releasing one first,
-            // else the oldest.
-            let victim = self.voices.iter().position(|v| v.releasing).unwrap_or(0);
-            self.voices.remove(victim);
+        let velocity = velocity.clamp(0.0, 1.0);
+        if let Ok(graph) = self.build_result(note, velocity) {
+            let mut env = EnvGen::new(&self.design.amp, self.sample_rate);
+            env.gate_on();
+            if self.voices.len() >= self.design.max_voices
+                && let Some(victim) = self.quietest()
+            {
+                self.voices.remove(victim);
+            }
+            self.voices.push(Voice {
+                handle,
+                note,
+                graph,
+                env,
+                gain: velocity,
+                releasing: false,
+            });
         }
-        self.voices.push(Voice {
-            handle,
-            note,
-            graph,
-            env,
-            gain: velocity.clamp(0.0, 1.0),
-            releasing: false,
-        });
         VoiceHandle(handle)
     }
 
-    /// Release the newest still-held voice of `note` (into its envelope's release).
-    pub fn note_off(&mut self, note: Note) {
-        if let Some(v) = self
+    fn quietest(&self) -> Option<usize> {
+        self.voices
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| a.env.level().total_cmp(&b.env.level()))
+            .map(|(i, _)| i)
+    }
+
+    /// Release the newest still-held voice of `note`; returns how many were
+    /// released (0 or 1). MIDI note-off arrives by pitch, so this is the common
+    /// path.
+    pub fn note_off(&mut self, note: Note) -> usize {
+        match self
             .voices
             .iter_mut()
             .rev()
             .find(|v| v.note == note && !v.releasing)
         {
-            v.env.gate_off();
-            v.releasing = true;
+            Some(v) => {
+                v.env.gate_off();
+                v.releasing = true;
+                1
+            }
+            None => 0,
         }
     }
 
-    /// Release a specific voice by handle.
-    pub fn release(&mut self, handle: VoiceHandle) {
-        if let Some(v) = self.voices.iter_mut().find(|v| v.handle == handle.0) {
-            v.env.gate_off();
-            v.releasing = true;
+    /// Release a specific voice by handle; returns whether it was found.
+    pub fn release(&mut self, handle: VoiceHandle) -> bool {
+        match self.voices.iter_mut().find(|v| v.handle == handle.0) {
+            Some(v) => {
+                v.env.gate_off();
+                v.releasing = true;
+                true
+            }
+            None => false,
         }
     }
 
@@ -293,11 +394,36 @@ impl Instrument {
         }
     }
 
-    /// Set a named parameter for **future** notes (existing voices keep the value
-    /// they were struck with). Unknown names are ignored.
-    pub fn set_param(&mut self, name: &str, value: f32) {
-        if self.design.patch.params.iter().any(|p| p.name == name) {
-            self.values.insert(name.to_string(), value);
+    /// Whether a handle still refers to a sounding voice.
+    pub fn is_active(&self, handle: VoiceHandle) -> bool {
+        self.voices.iter().any(|v| v.handle == handle.0)
+    }
+
+    /// The note a live voice is playing.
+    pub fn voice_note(&self, handle: VoiceHandle) -> Option<Note> {
+        self.voices
+            .iter()
+            .find(|v| v.handle == handle.0)
+            .map(|v| v.note)
+    }
+
+    /// Set a named parameter for future notes. Returns whether it was accepted —
+    /// rejected (and the previous value kept) if the name is unknown or the value
+    /// would make the patch invalid, so the instrument can never reach an
+    /// un-buildable state.
+    pub fn set_param(&mut self, name: &str, value: f32) -> bool {
+        if !self.design.patch.params.iter().any(|p| p.name == name) {
+            return false;
+        }
+        let prev = self.values.insert(name.to_string(), value);
+        if self.design.patch.instantiate(&self.values).is_ok() {
+            true
+        } else {
+            match prev {
+                Some(p) => self.values.insert(name.to_string(), p),
+                None => self.values.remove(name),
+            };
+            false
         }
     }
 
@@ -326,8 +452,9 @@ impl AudioSource for Instrument {
                 out[f * 2 + 1] += s;
             }
         }
-        // Cull voices whose envelope has fully released.
-        self.voices.retain(|v| v.env.active());
+        // Cull voices whose envelope has fully released — or a percussive voice
+        // (sustain ≈ 0) that has decayed to silence but never got a note-off.
+        self.voices.retain(|v| v.env.active() && !v.env.faded());
         frames
     }
 }
@@ -418,14 +545,81 @@ mod tests {
 
     #[test]
     fn voice_stealing_caps_polyphony() {
-        let design = InstrumentDesign {
-            max_voices: 4,
-            ..InstrumentDesign::new(saw_patch())
-        };
+        let design = InstrumentDesign::new(saw_patch()).with_max_voices(4);
         let mut inst = Instrument::new(design, 48_000).unwrap();
         for n in 60..70 {
             inst.note_on(Note(n), 0.8);
         }
         assert_eq!(inst.active_voices(), 4, "capped at max_voices");
+    }
+
+    #[test]
+    fn note_names_round_trip_and_convert() {
+        assert_eq!(Note::A4.to_string(), "A4");
+        assert_eq!(Note::C4.to_string(), "C4");
+        assert_eq!("F#3".parse::<Note>().unwrap().to_string(), "F#3");
+        assert_eq!(Note::from(60u8), Note::C4);
+        assert!("nonsense".parse::<Note>().is_err());
+    }
+
+    #[test]
+    fn transpose_scales_all_pitched_nodes() {
+        // Regression: modal mode freqs and the ring-mod carrier must transpose too.
+        let mut doc: SoundDoc = serde_json::from_str(
+            r#"{ "name":"b", "duration":0.1, "root": { "type":"chain", "stages": [
+                { "type":"sawtooth", "freq":100 },
+                { "type":"ringmod", "freq":200 },
+                { "type":"modal", "modes":[{ "freq":300, "decay":0.3, "gain":1.0 }], "mix":0.5 } ] } }"#,
+        )
+        .unwrap();
+        transpose(&mut doc.root, 2.0);
+        let v = serde_json::to_value(&doc).unwrap();
+        let stages = &v["root"]["stages"];
+        assert_eq!(stages[0]["freq"], 200.0);
+        assert_eq!(stages[1]["freq"], 400.0);
+        assert_eq!(stages[2]["modes"][0]["freq"], 600.0);
+    }
+
+    #[test]
+    fn handles_and_note_off_count() {
+        let mut inst = Instrument::new(InstrumentDesign::new(saw_patch()), 48_000).unwrap();
+        let h = inst.note_on(Note::C4, 0.9);
+        assert!(inst.is_active(h));
+        assert_eq!(inst.voice_note(h), Some(Note::C4));
+        assert_eq!(inst.note_off(Note::C4), 1);
+        assert_eq!(inst.note_off(Note::C4), 0, "already releasing");
+        assert_eq!(inst.note_off(Note(80)), 0, "no such note");
+    }
+
+    #[test]
+    fn set_param_validates_and_note_on_never_panics() {
+        let mut inst = Instrument::new(InstrumentDesign::new(saw_patch()), 48_000).unwrap();
+        assert!(!inst.set_param("nope", 1.0), "unknown param rejected");
+        assert!(inst.set_param("pitch", 300.0), "valid value accepted");
+        // note_on must never panic on a control event.
+        inst.note_on(Note::A4, 1.0);
+        assert_eq!(inst.active_voices(), 1);
+    }
+
+    #[test]
+    fn percussive_voice_culls_without_note_off() {
+        // sustain = 0 ⇒ a one-shot fired via note_on only must not leak voices.
+        let amp = Adsr {
+            a: 0.001,
+            d: 0.02,
+            s: 0.0,
+            r: 0.05,
+            punch: 0.0,
+        };
+        let design = InstrumentDesign::new(saw_patch()).with_amp(amp);
+        let mut inst = Instrument::new(design, 48_000).unwrap();
+        inst.note_on(Note::C4, 1.0);
+        let mut out = vec![0.0f32; 2048 * 2];
+        inst.fill(&mut out); // past the ~20 ms decay to silence
+        assert_eq!(
+            inst.active_voices(),
+            0,
+            "percussive one-shot reclaims its voice"
+        );
     }
 }
