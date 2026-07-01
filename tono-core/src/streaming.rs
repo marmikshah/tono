@@ -10,21 +10,23 @@
 //! Slide/Lfo/Arp/EnvMod are closed-form functions of the absolute sample index,
 //! and Rand carries its own self-seeded walk.
 //!
-//! The streamable subset covers **every deterministic node**: all oscillator
-//! sources (sine/square/triangle/sawtooth/fm/super), impact and env, all
-//! modulators, all filters + EQ, and all 12 effects (delay/reverb/modal/chorus/
-//! flanger/phaser/drive/ringmod/bitcrush/downsample/compress/duck), nested through
-//! mix/mul/chain.
+//! Coverage is **every node type**:
+//! - **Deterministic nodes** — oscillator sources (sine/square/triangle/sawtooth/
+//!   fm/super), impact, env, all modulators, all filters + EQ, and all 12 effects
+//!   (delay/reverb/modal/chorus/flanger/phaser/drive/ringmod/bitcrush/downsample/
+//!   compress/duck), nested through mix/mul/chain — byte-identical *by construction*.
+//! - **RNG nodes** (noise/dust/seq) under `engine >= 2`: each draws from its own
+//!   structurally-seeded RNG (derived from its graph position), so the randomness
+//!   is evaluation-order-independent and streams byte-identically. seq is
+//!   pre-rendered with that seed via the exact offline synthesis and read back
+//!   block-by-block.
 //!
-//! Graphs outside the subset are rejected by [`StreamGraph::try_from_doc`] and the
-//! caller falls back to the byte-identical buffer-backed [`crate::stream::Player`]:
-//! **RNG leaves** (noise/dust/seq) draw from the shared, evaluation-order-dependent
-//! render stream, so byte-identical streaming needs per-node *structural* seeding
-//! gated behind an `engine >= 2` revision bump (a deliberate determinism-contract
-//! change, not done here); a **`tracks` root** uses the stereo mixer + master path
-//! (the runtime's instance-per-layer model covers layering instead); and a
-//! **`normalize`** output stage is a whole-buffer op. Hybrid renderer: stream
-//! what's provably causal, buffer the rest.
+//! Only three things fall back to the byte-identical buffer-backed
+//! [`crate::stream::Player`]: RNG nodes under `engine < 2` (they keep the old
+//! shared, order-dependent stream); the **sampler** seq (an external stateful
+//! rustysynth voice); a **`tracks` root** (the stereo mixer + master path — the
+//! runtime's instance-per-layer model covers layering); and a **`normalize`**
+//! output stage (a whole-buffer op).
 
 use std::f32::consts::TAU;
 
