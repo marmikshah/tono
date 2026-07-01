@@ -435,7 +435,6 @@ impl AudioSource for Engine {
             // Player::fill writes the whole block (silence past a one-shot's end)
             // and flips `playing` off when a non-looping instance is exhausted.
             inst.player.fill(a);
-            let has_fade = inst.fading_in.is_some();
             if let Some((out_player, _)) = inst.fading_in.as_mut() {
                 out_player.fill(b);
             }
@@ -443,8 +442,7 @@ impl AudioSource for Engine {
                 let g = inst.gain.tick();
                 let (lg, rg) = balance(inst.pan.tick());
                 let (mut l, mut r) = (a[f * 2], a[f * 2 + 1]);
-                if has_fade {
-                    let (_, mix) = inst.fading_in.as_mut().unwrap();
+                if let Some((_, mix)) = inst.fading_in.as_mut() {
                     let w = mix.tick();
                     l = l * w + b[f * 2] * (1.0 - w);
                     r = r * w + b[f * 2 + 1] * (1.0 - w);

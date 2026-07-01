@@ -11,5 +11,6 @@ __pycache__/
 /tono-py/.venv/
 /tono-py/dist/
 
-# Local-only notes kept out of the repo
+# Local-only helpers/notes kept out of the repo
 /docs/architecture.html
+/resume.sh
