@@ -16,6 +16,7 @@
 
 #[cfg(feature = "analysis")]
 pub mod analysis;
+pub mod drumkit;
 pub mod dsl;
 pub mod dsp;
 pub mod edit;

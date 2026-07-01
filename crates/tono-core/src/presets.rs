@@ -104,6 +104,12 @@ pub static PRESETS: &[Preset] = &[
         description: "Short bright pluck — percussive, lightly detuned.",
         build: pluck,
     },
+    Preset {
+        name: "nylon",
+        category: Category::Pluck,
+        description: "Warm nylon-string pluck — a soft, rounded playable guitar.",
+        build: nylon,
+    },
 ];
 
 /// Parse a factory patch. The JSON is a compile-time constant validated by the
@@ -239,6 +245,19 @@ fn pluck() -> InstrumentDesign {
     .with_velocity_param("cutoff")
 }
 
+fn nylon() -> InstrumentDesign {
+    InstrumentDesign::new(patch(
+        r#"{ "doc": { "name":"nylon", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+                { "type":"mix", "inputs": [ { "type":"sawtooth", "freq":220 }, { "type":"triangle", "freq":220 } ] },
+                { "type":"lowpass", "cutoff":2200, "q":0.7 } ] } },
+             "params": [
+                { "name":"pitch", "paths":["root.stages[0].inputs[0].freq","root.stages[0].inputs[1].freq"],
+                  "min":20, "max":6000, "default":220 } ] }"#,
+    ))
+    .with_amp(adsr(0.003, 0.5, 0.0, 0.25))
+    .with_unison(2, 5.0, 0.2)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,7 +284,7 @@ mod tests {
     fn preset_lookup_by_name() {
         assert!(preset("warm_lead").is_some());
         assert!(preset("nope").is_none());
-        assert_eq!(PRESETS.len(), 8);
+        assert_eq!(PRESETS.len(), 9);
     }
 
     #[test]
