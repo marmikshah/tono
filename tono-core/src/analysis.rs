@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::dsp::dbfs;
+use crate::dsp::{dbfs, loudness_lufs, true_peak};
 use rustfft::{FftPlanner, num_complex::Complex};
 
 /// Numeric + visual summary of a rendered sound.
@@ -309,63 +309,6 @@ pub fn waveform_png(samples: &[f32]) -> anyhow::Result<Vec<u8>> {
 /// Render a sound's log-frequency spectrogram straight to PNG bytes.
 pub fn spectrogram_png(samples: &[f32]) -> anyhow::Result<Vec<u8>> {
     png_bytes(&spectrogram_image(&stft(samples)))
-}
-
-/// Estimate the inter-sample (true) peak by 4× linear-interpolation oversampling.
-/// Returns linear amplitude (use [`crate::dsp::dbfs`] for dBTP). Exposed so the
-/// renderer's output stage can limit to a true-peak ceiling.
-pub fn true_peak(samples: &[f32]) -> f32 {
-    if samples.len() < 2 {
-        return samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
-    }
-    let mut peak = 0.0f32;
-    for w in samples.windows(2) {
-        for k in 0..4 {
-            let t = k as f32 / 4.0;
-            let v = (w[0] * (1.0 - t) + w[1] * t).abs();
-            if v > peak {
-                peak = v;
-            }
-        }
-    }
-    peak
-}
-
-/// Approximate ITU-R BS.1770 K-weighted integrated loudness (ungated). The
-/// K-weighting biquads use the standard 48 kHz coefficients, so this is an
-/// approximation at other sample rates — fine for relative level matching.
-/// Exposed so the renderer's output stage can gain-match to a LUFS target.
-/// Returns −120 for silence.
-pub fn loudness_lufs(samples: &[f32]) -> f32 {
-    if samples.is_empty() {
-        return -120.0;
-    }
-    // Stage 1: high-shelf. Stage 2: high-pass.
-    let shelf = biquad_df1(
-        samples,
-        [1.535_124_9, -2.691_696_2, 1.198_392_8],
-        [-1.690_659_3, 0.732_480_8],
-    );
-    let weighted = biquad_df1(&shelf, [1.0, -2.0, 1.0], [-1.990_047_5, 0.990_072_3]);
-    let ms = weighted.iter().map(|x| x * x).sum::<f32>() / weighted.len() as f32;
-    -0.691 + 10.0 * ms.max(1e-12).log10()
-}
-
-/// Direct-Form I biquad over a buffer. `b` = feed-forward, `a` = the two
-/// feedback coefficients (a0 assumed 1).
-fn biquad_df1(input: &[f32], b: [f32; 3], a: [f32; 2]) -> Vec<f32> {
-    let (mut x1, mut x2, mut y1, mut y2) = (0.0f32, 0.0, 0.0, 0.0);
-    input
-        .iter()
-        .map(|&x0| {
-            let y0 = b[0] * x0 + b[1] * x1 + b[2] * x2 - a[0] * y1 - a[1] * y2;
-            x2 = x1;
-            x1 = x0;
-            y2 = y1;
-            y1 = y0;
-            y0
-        })
-        .collect()
 }
 
 /// Short-time Fourier transform → a Vec of magnitude frames, each of length
