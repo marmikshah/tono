@@ -19,9 +19,11 @@
 
 use std::f32::consts::TAU;
 
-use crate::dsl::{Curve, Modulator, Node, Shape, SoundDoc, SuperWave, Value, note_to_hz};
+use crate::dsl::{
+    Curve, DriveShape, Modulator, Node, Shape, SoundDoc, SuperWave, Value, note_to_hz,
+};
 use crate::dsp::Rng;
-use crate::render::{osc, poly_blep, rand_seed};
+use crate::render::{drive_antideriv, drive_curve, osc, poly_blep, rand_seed};
 
 /// The ADSR envelope value at time `t` seconds — the exact body of the offline
 /// `adsr` (also used by `Modulator::EnvMod`). `rel_start` anchors the release to
@@ -299,6 +301,15 @@ enum Src {
     },
 }
 
+/// One resonator of a [`Proc::Modal`] bank: constant LTI coeffs + 2-pole state.
+struct ModalMode {
+    a1: f32,
+    a2: f32,
+    b0: f32,
+    y1: f32,
+    y2: f32,
+}
+
 /// A streamable processor, holding its per-sample state.
 enum Proc {
     Gain(f32),
@@ -312,6 +323,91 @@ enum Proc {
         x2: f32,
         y1: f32,
         y2: f32,
+    },
+    Bitcrush {
+        half: f32,
+    },
+    Downsample {
+        f: usize,
+        held: f32,
+    },
+    Delay {
+        buf: Vec<f32>,
+        w: usize,
+        feedback: f32,
+    },
+    Reverb {
+        combs: Vec<(Vec<f32>, usize, f32)>,
+        allpasses: Vec<(Vec<f32>, usize)>,
+        feedback: f32,
+        damp: f32,
+        g: f32,
+        comb_norm: f32,
+        mix: f32,
+    },
+    Modal {
+        modes: Vec<ModalMode>,
+        mix: f32,
+    },
+    Drive {
+        amount: Val,
+        shape: DriveShape,
+        adaa: bool,
+        x_prev: f32,
+        f_prev: f32,
+        dc_x: f32,
+        dc_y: f32,
+    },
+    RingMod {
+        phase: f32,
+        freq: Val,
+        srf: f32,
+    },
+    Chorus {
+        buf: Vec<f32>,
+        w: usize,
+        base: f32,
+        swing: f32,
+        max_delay: usize,
+        mix: f32,
+        rate: f32,
+        srf: f32,
+    },
+    Flanger {
+        buf: Vec<f32>,
+        w: usize,
+        base: f32,
+        swing: f32,
+        max_delay: usize,
+        fb: f32,
+        mix: f32,
+        rate: f32,
+        srf: f32,
+    },
+    Phaser {
+        x1: [f32; 4],
+        y1: [f32; 4],
+        last_wet: f32,
+        rate: f32,
+        depth: f32,
+        fb: f32,
+        mix: f32,
+        srf: f32,
+    },
+    Compress {
+        env: f32,
+        at: f32,
+        rt: f32,
+        threshold: f32,
+        ratio: f32,
+        makeup: f32,
+    },
+    Duck {
+        trigger: Box<Src>,
+        env: f32,
+        at: f32,
+        rt: f32,
+        amount: f32,
     },
 }
 
@@ -441,7 +537,7 @@ impl Src {
             Src::Chain { src, procs } => {
                 let mut x = src.step(t);
                 for p in procs.iter_mut() {
-                    x = p.step(x);
+                    x = p.step(x, t);
                 }
                 x
             }
@@ -450,7 +546,7 @@ impl Src {
 }
 
 impl Proc {
-    fn step(&mut self, x0: f32) -> f32 {
+    fn step(&mut self, x0: f32, t: usize) -> f32 {
         match self {
             Proc::Gain(a) => x0 * *a,
             Proc::Biquad {
@@ -470,6 +566,192 @@ impl Proc {
                 *y2 = *y1;
                 *y1 = y0;
                 y0
+            }
+            Proc::Bitcrush { half } => (x0.clamp(-1.0, 1.0) * *half).round() / *half,
+            Proc::Downsample { f, held } => {
+                if t.is_multiple_of(*f) {
+                    *held = x0;
+                }
+                *held
+            }
+            Proc::Delay { buf, w, feedback } => {
+                let delayed = buf[*w];
+                let y = x0 + *feedback * delayed;
+                buf[*w] = y;
+                *w = (*w + 1) % buf.len();
+                y
+            }
+            Proc::Reverb {
+                combs,
+                allpasses,
+                feedback,
+                damp,
+                g,
+                comb_norm,
+                mix,
+            } => {
+                let mut wet = 0.0f32;
+                for (buf, idx, fs) in combs.iter_mut() {
+                    let y = buf[*idx];
+                    *fs = y * (1.0 - *damp) + *fs * *damp;
+                    buf[*idx] = x0 + *fs * *feedback;
+                    *idx = (*idx + 1) % buf.len();
+                    wet += y;
+                }
+                for (buf, idx) in allpasses.iter_mut() {
+                    let buffered = buf[*idx];
+                    let y = -wet + buffered;
+                    buf[*idx] = wet + buffered * *g;
+                    *idx = (*idx + 1) % buf.len();
+                    wet = y;
+                }
+                x0 * (1.0 - *mix) + (wet * *comb_norm) * *mix
+            }
+            Proc::Modal { modes, mix } => {
+                let mut wet = 0.0f32;
+                for m in modes.iter_mut() {
+                    let y = m.b0 * x0 + m.a1 * m.y1 + m.a2 * m.y2;
+                    m.y2 = m.y1;
+                    m.y1 = y;
+                    wet += y;
+                }
+                x0 * (1.0 - *mix) + wet * *mix
+            }
+            Proc::Drive {
+                amount,
+                shape,
+                adaa,
+                x_prev,
+                f_prev,
+                dc_x,
+                dc_y,
+            } => {
+                let amt = amount.eval(t).max(0.0);
+                if !*adaa {
+                    drive_curve(amt * x0, *shape)
+                } else {
+                    const EPS: f32 = 1e-5;
+                    const R: f32 = 0.9995;
+                    let xn = amt * x0;
+                    let f = drive_antideriv(xn, *shape);
+                    let d = xn - *x_prev;
+                    let y = if d.abs() > EPS {
+                        (f - *f_prev) / d
+                    } else {
+                        drive_curve(0.5 * (xn + *x_prev), *shape)
+                    };
+                    *x_prev = xn;
+                    *f_prev = f;
+                    let yb = y - *dc_x + R * *dc_y;
+                    *dc_x = y;
+                    *dc_y = yb;
+                    yb
+                }
+            }
+            Proc::RingMod { phase, freq, srf } => {
+                let out = x0 * (TAU * *phase).sin();
+                *phase += freq.eval(t).max(0.0) / *srf;
+                *phase -= phase.floor();
+                out
+            }
+            Proc::Chorus {
+                buf,
+                w,
+                base,
+                swing,
+                max_delay,
+                mix,
+                rate,
+                srf,
+            } => {
+                buf[*w] = x0;
+                let lfo = (TAU * *rate * t as f32 / *srf).sin();
+                let delay = *base + *swing * lfo;
+                let read = (*w as f32 - delay).rem_euclid(*max_delay as f32);
+                let i0 = read.floor() as usize % *max_delay;
+                let i1 = (i0 + 1) % *max_delay;
+                let frac = read - read.floor();
+                let wet = buf[i0] * (1.0 - frac) + buf[i1] * frac;
+                let out = x0 * (1.0 - *mix) + wet * *mix;
+                *w = (*w + 1) % *max_delay;
+                out
+            }
+            Proc::Flanger {
+                buf,
+                w,
+                base,
+                swing,
+                max_delay,
+                fb,
+                mix,
+                rate,
+                srf,
+            } => {
+                let lfo = (TAU * *rate * t as f32 / *srf).sin();
+                let delay = *base + *swing * lfo;
+                let read = (*w as f32 - delay).rem_euclid(*max_delay as f32);
+                let i0 = read.floor() as usize % *max_delay;
+                let i1 = (i0 + 1) % *max_delay;
+                let frac = read - read.floor();
+                let wet = buf[i0] * (1.0 - frac) + buf[i1] * frac;
+                buf[*w] = x0 + wet * *fb;
+                *w = (*w + 1) % *max_delay;
+                x0 * (1.0 - *mix) + wet * *mix
+            }
+            Proc::Phaser {
+                x1,
+                y1,
+                last_wet,
+                rate,
+                depth,
+                fb,
+                mix,
+                srf,
+            } => {
+                let lfo = 0.5 + 0.5 * (TAU * *rate * t as f32 / *srf).sin();
+                let g = 0.15 + 0.7 * *depth * lfo;
+                let mut s = x0 + *last_wet * *fb;
+                for k in 0..4 {
+                    let y = -g * s + x1[k] + g * y1[k];
+                    x1[k] = s;
+                    y1[k] = y;
+                    s = y;
+                }
+                *last_wet = s;
+                x0 * (1.0 - *mix) + s * *mix
+            }
+            Proc::Compress {
+                env,
+                at,
+                rt,
+                threshold,
+                ratio,
+                makeup,
+            } => {
+                let rect = x0.abs();
+                let coeff = if rect > *env { *at } else { *rt };
+                *env = rect + coeff * (*env - rect);
+                let env_db = 20.0 * env.max(1e-9).log10();
+                let gain_db = if env_db > *threshold {
+                    -(env_db - *threshold) * (1.0 - 1.0 / *ratio)
+                } else {
+                    0.0
+                };
+                let g = 10f32.powf(gain_db / 20.0);
+                x0 * g * *makeup
+            }
+            Proc::Duck {
+                trigger,
+                env,
+                at,
+                rt,
+                amount,
+            } => {
+                let trig = trigger.step(t);
+                let rect = trig.abs().min(1.0);
+                let coeff = if rect > *env { *at } else { *rt };
+                *env = rect + coeff * (*env - rect);
+                x0 * (1.0 - *amount * *env)
             }
         }
     }
@@ -565,7 +847,7 @@ fn biquad(kind: Filt, fc: f32, q: f32, sr: u32) -> Proc {
     }
 }
 
-fn try_src(node: &Node, sr: u32, n: usize) -> Option<Src> {
+fn try_src(node: &Node, sr: u32, n: usize, engine: u32) -> Option<Src> {
     let srf = sr as f32;
     let v = |val: &Value| Val::build(val, sr, n);
     Some(match node {
@@ -648,21 +930,21 @@ fn try_src(node: &Node, sr: u32, n: usize) -> Option<Src> {
         Node::Mix { inputs } => Src::Mix(
             inputs
                 .iter()
-                .map(|i| try_src(i, sr, n))
+                .map(|i| try_src(i, sr, n, engine))
                 .collect::<Option<_>>()?,
         ),
         Node::Mul { inputs } => Src::Mul(
             inputs
                 .iter()
-                .map(|i| try_src(i, sr, n))
+                .map(|i| try_src(i, sr, n, engine))
                 .collect::<Option<_>>()?,
         ),
         Node::Chain { stages } => {
             let (first, rest) = stages.split_first()?;
-            let src = Box::new(try_src(first, sr, n)?);
+            let src = Box::new(try_src(first, sr, n, engine)?);
             let procs = rest
                 .iter()
-                .map(|p| try_proc(p, sr))
+                .map(|p| try_proc(p, sr, n, engine))
                 .collect::<Option<_>>()?;
             Src::Chain { src, procs }
         }
@@ -670,13 +952,15 @@ fn try_src(node: &Node, sr: u32, n: usize) -> Option<Src> {
     })
 }
 
-fn try_proc(node: &Node, sr: u32) -> Option<Proc> {
+fn try_proc(node: &Node, sr: u32, n: usize, engine: u32) -> Option<Proc> {
+    let srf = sr as f32;
     // Filters/EQ only stream with a constant cutoff.
     let cst = |val: &Value| match val {
         Value::Const(c) => Some(*c),
         Value::Note(s) => Some(note_to_hz(s).unwrap_or(440.0)),
         Value::Modulated(_) => None,
     };
+    let v = |val: &Value| Val::build(val, sr, n);
     Some(match node {
         Node::Gain { amount } => Proc::Gain(cst(amount)?),
         Node::Lowpass { cutoff, q } => biquad(Filt::Low, cst(cutoff)?, *q, sr),
@@ -690,6 +974,165 @@ fn try_proc(node: &Node, sr: u32) -> Option<Proc> {
         Node::Highshelf { cutoff, gain_db } => {
             biquad(Filt::HighShelf(*gain_db), cst(cutoff)?, 0.707, sr)
         }
+        Node::Bitcrush { bits } => {
+            let levels = (1u32 << *bits as u32) as f32;
+            Proc::Bitcrush { half: levels / 2.0 }
+        }
+        Node::Downsample { factor } => Proc::Downsample {
+            f: (*factor).max(1) as usize,
+            held: 0.0,
+        },
+        Node::Delay { secs, feedback } => {
+            let dn = ((*secs * srf) as usize).max(1);
+            Proc::Delay {
+                buf: vec![0.0; dn],
+                w: 0,
+                feedback: *feedback,
+            }
+        }
+        Node::Reverb { room, mix } => {
+            let scale = srf / 44_100.0;
+            let comb_tunings = [1116usize, 1188, 1277, 1356, 1422, 1491];
+            let allpass_tunings = [556usize, 441, 341, 225];
+            let combs = comb_tunings
+                .iter()
+                .map(|&tn| {
+                    (
+                        vec![0.0f32; ((tn as f32 * scale) as usize).max(1)],
+                        0usize,
+                        0.0f32,
+                    )
+                })
+                .collect();
+            let allpasses = allpass_tunings
+                .iter()
+                .map(|&tn| (vec![0.0f32; ((tn as f32 * scale) as usize).max(1)], 0usize))
+                .collect();
+            Proc::Reverb {
+                combs,
+                allpasses,
+                feedback: 0.7 + 0.28 * room.clamp(0.0, 1.0),
+                damp: 0.2,
+                g: 0.5,
+                comb_norm: 1.0 / 6.0,
+                mix: mix.clamp(0.0, 1.0),
+            }
+        }
+        Node::Modal { modes, mix } => {
+            let nyq = srf * 0.5;
+            let modes = modes
+                .iter()
+                .map(|m| {
+                    let f0 = m.freq.clamp(1.0, nyq - 1.0);
+                    let decay = m.decay.max(1e-3);
+                    let w0 = TAU * f0 / srf;
+                    let (sin0, cos0) = (w0.sin(), w0.cos());
+                    let r = (-6.907_755 / (decay * srf)).exp();
+                    ModalMode {
+                        a1: 2.0 * r * cos0,
+                        a2: -r * r,
+                        b0: m.gain * sin0,
+                        y1: 0.0,
+                        y2: 0.0,
+                    }
+                })
+                .collect();
+            Proc::Modal {
+                modes,
+                mix: mix.clamp(0.0, 1.0),
+            }
+        }
+        Node::Drive { amount, shape, aa } => Proc::Drive {
+            amount: v(amount),
+            shape: *shape,
+            adaa: engine >= 1 && aa.unwrap_or(true),
+            x_prev: 0.0,
+            f_prev: drive_antideriv(0.0, *shape),
+            dc_x: 0.0,
+            dc_y: 0.0,
+        },
+        Node::RingMod { freq } => Proc::RingMod {
+            phase: 0.0,
+            freq: v(freq),
+            srf,
+        },
+        Node::Chorus { rate, depth, mix } => {
+            let base = 0.015 * srf;
+            let swing = depth.clamp(0.0, 1.0) * 0.010 * srf;
+            let max_delay = (base + swing) as usize + 2;
+            Proc::Chorus {
+                buf: vec![0.0; max_delay],
+                w: 0,
+                base,
+                swing,
+                max_delay,
+                mix: mix.clamp(0.0, 1.0),
+                rate: *rate,
+                srf,
+            }
+        }
+        Node::Flanger {
+            rate,
+            depth,
+            feedback,
+            mix,
+        } => {
+            let base = 0.0025 * srf;
+            let swing = depth.clamp(0.0, 1.0) * 0.002 * srf;
+            let max_delay = (base + swing) as usize + 2;
+            Proc::Flanger {
+                buf: vec![0.0; max_delay],
+                w: 0,
+                base,
+                swing,
+                max_delay,
+                fb: feedback.clamp(0.0, 0.95),
+                mix: mix.clamp(0.0, 1.0),
+                rate: *rate,
+                srf,
+            }
+        }
+        Node::Phaser {
+            rate,
+            depth,
+            feedback,
+            mix,
+        } => Proc::Phaser {
+            x1: [0.0; 4],
+            y1: [0.0; 4],
+            last_wet: 0.0,
+            rate: *rate,
+            depth: depth.clamp(0.0, 1.0),
+            fb: feedback.clamp(0.0, 0.95),
+            mix: mix.clamp(0.0, 1.0),
+            srf,
+        },
+        Node::Compress {
+            threshold,
+            ratio,
+            attack,
+            release,
+            makeup,
+        } => Proc::Compress {
+            env: 0.0,
+            at: (-1.0 / (attack.max(1e-4) * srf)).exp(),
+            rt: (-1.0 / (release.max(1e-4) * srf)).exp(),
+            threshold: *threshold,
+            ratio: ratio.max(1.0),
+            makeup: 10f32.powf(makeup / 20.0),
+        },
+        Node::Duck {
+            trigger,
+            amount,
+            attack,
+            release,
+        } => Proc::Duck {
+            trigger: Box::new(try_src(trigger, sr, n, engine)?),
+            env: 0.0,
+            at: (-1.0 / (attack.max(1e-4) * srf)).exp(),
+            rt: (-1.0 / (release.max(1e-4) * srf)).exp(),
+            amount: *amount,
+        },
         _ => return None,
     })
 }
@@ -710,7 +1153,7 @@ impl StreamGraph {
         }
         let n = ((doc.duration * doc.sample_rate as f32).ceil() as usize).max(1);
         Some(StreamGraph {
-            root: try_src(&doc.root, doc.sample_rate, n)?,
+            root: try_src(&doc.root, doc.sample_rate, n, doc.effective_engine())?,
             pos: 0,
         })
     }
@@ -845,6 +1288,72 @@ mod tests {
                 { "type":"peak", "cutoff":1200, "q":1.5, "gain_db":6 },
                 { "type":"lowshelf", "cutoff":200, "gain_db":-4 },
                 { "type":"highshelf", "cutoff":4000, "gain_db":3 } ] } }"#,
+        ));
+    }
+
+    #[test]
+    fn delay_reverb_and_modal_effects() {
+        assert_byte_identical(&parse(
+            r#"{ "name":"dl", "duration":0.15, "root": { "type":"chain", "stages": [
+                { "type":"sawtooth", "freq":110 },
+                { "type":"delay", "secs":0.03, "feedback":0.4 } ] } }"#,
+        ));
+        assert_byte_identical(&parse(
+            r#"{ "name":"rv", "duration":0.1, "root": { "type":"chain", "stages": [
+                { "type":"impact", "hardness":0.7, "velocity":0.9 },
+                { "type":"reverb", "room":0.8, "mix":0.5 } ] } }"#,
+        ));
+        assert_byte_identical(&parse(
+            r#"{ "name":"md", "duration":0.1, "root": { "type":"chain", "stages": [
+                { "type":"impact", "hardness":0.9, "velocity":1.0 },
+                { "type":"modal", "modes": [
+                    { "freq":300, "decay":0.4, "gain":1.0 },
+                    { "freq":740, "decay":0.25, "gain":0.6 } ], "mix":0.8 } ] } }"#,
+        ));
+    }
+
+    #[test]
+    fn modulation_effects_chorus_flanger_phaser() {
+        for eff in [
+            r#"{ "type":"chorus", "rate":1.5, "depth":0.6, "mix":0.5 }"#,
+            r#"{ "type":"flanger", "rate":0.8, "depth":0.7, "feedback":0.5, "mix":0.6 }"#,
+            r#"{ "type":"phaser", "rate":0.5, "depth":0.8, "feedback":0.4, "mix":0.7 }"#,
+        ] {
+            assert_byte_identical(&parse(&format!(
+                r#"{{ "name":"fx", "duration":0.12, "root": {{ "type":"chain", "stages": [
+                    {{ "type":"sawtooth", "freq":220 }}, {eff} ] }} }}"#
+            )));
+        }
+    }
+
+    #[test]
+    fn dynamics_and_waveshaping() {
+        assert_byte_identical(&parse(
+            r#"{ "name":"cp", "duration":0.1, "root": { "type":"chain", "stages": [
+                { "type":"square", "freq":150 },
+                { "type":"compress", "threshold":-18, "ratio":4, "attack":0.005, "release":0.08, "makeup":3 } ] } }"#,
+        ));
+        assert_byte_identical(&parse(
+            r#"{ "name":"dv", "duration":0.06, "engine":1, "root": { "type":"chain", "stages": [
+                { "type":"sine", "freq":200 },
+                { "type":"drive", "amount":6, "shape":"tanh" } ] } }"#,
+        ));
+        assert_byte_identical(&parse(
+            r#"{ "name":"bc", "duration":0.06, "root": { "type":"chain", "stages": [
+                { "type":"sawtooth", "freq":180 },
+                { "type":"bitcrush", "bits":5 },
+                { "type":"downsample", "factor":4 },
+                { "type":"ringmod", "freq":300 } ] } }"#,
+        ));
+    }
+
+    #[test]
+    fn duck_with_streamable_trigger() {
+        assert_byte_identical(&parse(
+            r#"{ "name":"dk", "duration":0.12, "root": { "type":"chain", "stages": [
+                { "type":"sawtooth", "freq":110 },
+                { "type":"duck", "amount":0.8, "attack":0.005, "release":0.05,
+                  "trigger": { "type":"square", "freq":4 } } ] } }"#,
         ));
     }
 
