@@ -22,7 +22,7 @@ jobs:
       - name: Verify tag matches Cargo.toml version
         if: env.HAS_TOKEN == 'true'
         run: |
-          CRATE_VERSION="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          CRATE_VERSION="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)".*/\1/p' Cargo.toml)"
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           if [ "$CRATE_VERSION" != "$TAG_VERSION" ]; then
             echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $CRATE_VERSION"; exit 1
