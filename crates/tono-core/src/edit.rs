@@ -182,7 +182,7 @@ pub fn apply_ops(doc: &SoundDoc, ops: &[EditOp]) -> Result<SoundDoc, String> {
 }
 
 /// A flattened description of one node in the graph: its path, type, and the
-/// immediate (non-child) parameters the agent can address with `set_param`.
+/// immediate (non-child) parameters addressable by path.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct NodeInfo {
     /// Path to this node (e.g. `root`, `root.inputs[0]`, `root.stages[1]`).
@@ -247,7 +247,7 @@ fn walk(json: &Json, path: &str, out: &mut Vec<NodeInfo>) {
         }
         if k == "modes" {
             // Modal partials have no `type` tag (like seq notes); give each its
-            // own addressable row so `set_param modes[i].freq` is discoverable.
+            // own addressable row so `modes[i].freq` is discoverable.
             if let Some(arr) = v.as_array() {
                 for (i, mode) in arr.iter().enumerate() {
                     out.push(NodeInfo {
@@ -284,13 +284,12 @@ fn walk(json: &Json, path: &str, out: &mut Vec<NodeInfo>) {
     }
 }
 
-/// One mixer layer's addressing map: its mixer fields (set with `set_layer`)
-/// plus the node rows of its graph. Node paths are LAYER-RELATIVE: pass them
-/// to `set_param`/`edit_sound` together with `layer`; the layer's own node is
-/// path `""`.
+/// One mixer layer's addressing map: its mixer fields plus the node rows of its
+/// graph. Node paths are LAYER-RELATIVE — combined with the layer id when
+/// editing; the layer's own node is path `""`.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct LayerInfo {
-    /// The stable layer id (`set_param { layer: <this>, path: ... }`).
+    /// The stable layer id (edits address a layer by this id plus a path).
     pub id: String,
     /// Stereo position −1..1.
     pub pan: f32,
@@ -316,8 +315,8 @@ pub struct DescribeMap {
     pub master: Vec<NodeInfo>,
 }
 
-/// Produce the addressing map for a graph so the agent can see exactly what
-/// it can edit before calling `set_param` / `edit_sound` / `set_layer`.
+/// Produce the addressing map for a graph — exactly what can be edited, and the
+/// path (and layer id) to reach each field.
 pub fn describe(doc: &SoundDoc) -> DescribeMap {
     let mut map = DescribeMap {
         nodes: Vec::new(),

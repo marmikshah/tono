@@ -1,22 +1,24 @@
 # tono — repo guide
 
-A headless sound studio driven over MCP: a deterministic synthesis-graph engine
-that renders audio and feeds back analysis, so an AI agent can author sound by
-tool calls. The same engine also powers a real-time streaming renderer, a
-playable-instrument layer, a native desktop studio, and a programmatic playground.
+A deterministic synthesis-graph engine that renders audio and feeds back
+analysis (a spectrogram + waveform + numeric stats), so a sound can be authored
+by inspection — from Rust, the `tono render` CLI, or a live keyboard. The same
+engine powers a real-time streaming renderer, a playable-instrument layer, a
+song/arrangement layer, adaptive game music, a native desktop studio, and a
+programmatic playground.
 
 ## Workspace layout (one core, several faces)
 
-The root is the `tono` crate (the MCP server); the sub-crates live under `crates/`.
+The root is the `tono` crate (the CLI); the sub-crates live under `crates/`.
 
 - **`crates/tono-core/`** — the pure engine: the `SoundDoc` graph DSL, DSP,
   deterministic renderer, analysis/critique, graph transforms, the byte-identical
   **streaming** real-time renderer, the **runtime** (`Engine`/`Mixer`/`AudioSource`),
-  the **instrument** layer (polyphonic, pitched, playable), and the **song**
-  arrangement layer. No I/O, no MCP, no transport; pure compute.
-- **`tono` (root crate, `src/`)** — the MCP server binary + a thin shell
-  (file encoders, bank/session persistence, engine emitters, image I/O, daemon).
-  Depends on and re-exports `tono-core`.
+  the **instrument** / **drum-kit** / **adaptive-music** layers, and the **song**
+  arrangement layer. No I/O, no transport; pure compute.
+- **`tono` (root crate, `src/`)** — a thin CLI shell: the `tono render` command,
+  audio-file encoders, the analysis image writer, and MIDI export. Depends on and
+  re-exports `tono-core`.
 - **`crates/tono-desktop/`** — the native desktop studio (Tauri window + `cpal`
   real-time audio + MIDI keyboard input). Excluded from `default-members` and CI;
   built via `make desktop`. Heavy deps (webview/cpal/midir) never touch the default build.
@@ -44,6 +46,6 @@ real-time audition path must stay byte-identical to an offline bounce.
 
 - Clippy clean at `-D warnings`; `cargo fmt` before committing. No dead code.
 - Small, focused commits; commit and push as work lands (one concern per commit).
-- `tono-core` stays decoupled — no MCP/transport/file-IO leaks into it.
-- New tools / capabilities should be expressible across the faces (MCP + UI)
+- `tono-core` stays decoupled — no transport/file-IO leaks into it.
+- New capabilities should be expressible across the faces (CLI + code + UI)
   over the same `SoundDoc`, not bolted onto one.

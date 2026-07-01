@@ -1,6 +1,6 @@
 [package]
 name = "tono-core"
-description = "The pure, headless audio engine behind tono: synthesis-graph DSL, DSP, deterministic renderer, and analysis — no I/O, no MCP."
+description = "The pure, headless audio engine behind tono: synthesis-graph DSL, DSP, deterministic renderer, instruments, songs, and analysis — no I/O, no transport."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

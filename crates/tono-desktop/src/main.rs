@@ -1,6 +1,6 @@
 //! tono-desktop — the optional native studio.
 //!
-//! Not part of the default build, the MCP server, or CI; built only via
+//! Not part of the default build or CI; built only via
 //! `make desktop`. Two entry points on one engine:
 //! - `tono-desktop` (no args) launches the Tauri window (the node-patcher
 //!   frontend) with native real-time audio.

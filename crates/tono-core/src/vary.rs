@@ -1,9 +1,9 @@
-//! Variation tools: derive new takes from a sound the agent already designed.
+//! Variation tools: derive new takes from an existing sound.
 //!
 //! These never invent content — they perturb (`mutate`) or coherently shift
 //! (`humanize`) an existing graph, deterministically from a seed. Together with
 //! `edit::morph` they power round-robin sets and "nudge until it's right"
-//! exploration while the agent stays the designer.
+//! exploration.
 
 use crate::dsl::{Modulator, Node, SoundDoc, Value};
 use crate::dsp::Rng;

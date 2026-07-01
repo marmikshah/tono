@@ -2,8 +2,8 @@
 //!
 //! A [`SoundDoc`] is the canonical, declarative source of a sound. The AI agent
 //! authors one of these; the renderer turns it into samples. Everything here is
-//! `serde`-deserializable (the MCP wire format is JSON) and `JsonSchema`-
-//! describable so the agent can self-correct against the schema.
+//! `serde`-deserializable (the on-disk / wire format is JSON) and `JsonSchema`-
+//! describable so a tool can self-correct against the schema.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -949,8 +949,8 @@ pub struct Adsr {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Track {
     /// Stable layer id — a short slug like `"kick"` or `"tail"`, unique within
-    /// the document. This is how `add_layer` / `set_layer` / `set_param`
-    /// address the track, so it never shifts when sibling layers are added or
+    /// the document. This is how edits address the track by id, so it never
+    /// shifts when sibling layers are added or
     /// removed (unlike an array index). Omitted ids are backfilled
     /// deterministically (`layer_<position>`) on the next build.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -7,13 +7,11 @@
 # Options (environment variables):
 #   TONO_VERSION      install a specific tag (e.g. v0.1.0); default: latest
 #   TONO_INSTALL_DIR  where the binary goes; default: ~/.local/bin
-#   TONO_MODE         "stdio" (default) or "http" (background daemon)
 set -eu
 
 REPO="marmikshah/tono"
 INSTALL_DIR="${TONO_INSTALL_DIR:-$HOME/.local/bin}"
 BIN="$INSTALL_DIR/tono"
-MCP_URL="http://127.0.0.1:8787/mcp"
 
 say()  { printf '%s\n' "$*"; }
 fail() { printf 'install: %s\n' "$*" >&2; exit 1; }
@@ -30,11 +28,8 @@ ask() { # ask <question> -> stdout: the answer ("" when no terminal)
 # -- uninstall ------------------------------------------------------------------
 do_uninstall() {
   [ -x "$BIN" ] || fail "nothing to uninstall at $BIN"
-  "$BIN" service uninstall >/dev/null 2>&1 || true # stop the daemon if present
   rm -f "$BIN"
-  say "Removed $BIN (and stopped the background daemon, if one was installed)."
-  say "Sounds in ~/.tono are untouched. If registered with an MCP client,"
-  say "deregister manually, e.g.: claude mcp remove tono"
+  say "Removed $BIN."
   exit 0
 }
 [ "${1:-}" = "uninstall" ] && do_uninstall
@@ -101,38 +96,10 @@ case ":$PATH:" in
      say "  export PATH=\"$INSTALL_DIR:\$PATH\"" ;;
 esac
 
-# -- choose how tono runs ------------------------------------------------------
-# stdio: each MCP client spawns its own tono (zero setup).
-# http:  one shared background daemon (launchd / systemd --user) at $MCP_URL —
-#        all clients and sessions share a sound library; survives reboot.
-MODE="${TONO_MODE:-}"
-if [ -z "$MODE" ]; then
-  say ""
-  case "$(ask "Run mode — [S]tdio (client spawns it) or [h]ttp (shared background daemon)?")" in
-    h|H) MODE=http ;;
-    *)   MODE=stdio ;;
-  esac
-fi
-
-if [ "$MODE" = "http" ]; then
-  if "$BIN" service install; then
-    say "Daemon running at $MCP_URL"
-  else
-    say "Daemon install failed — register over stdio instead."
-    MODE=stdio
-  fi
-fi
-
-# -- next step ---------------------------------------------------------------------
+# -- next step --------------------------------------------------------------------
 say ""
-say "Register with your MCP client (then restart its session):"
-if [ "$MODE" = "http" ]; then
-  say "  claude mcp add --scope user --transport http tono $MCP_URL   # Claude Code / Kimi Code"
-  say "  Cursor: ~/.cursor/mcp.json -> \"tono\": { \"url\": \"$MCP_URL\" }"
-else
-  say "  claude mcp add --scope user tono -- $BIN     # Claude Code / Kimi Code: same shape"
-  say "  Cursor: ~/.cursor/mcp.json -> \"tono\": { \"command\": \"$BIN\" }"
-fi
+say "Render a sound:  tono render your-sound.json -o out/"
+say "See the format:  tono --help  (and docs/cookbook.md)"
 say ""
 say "Optional, for real recorded instruments (the 'sampler' voice): download any"
 say "free General MIDI SoundFont (FluidR3 GM, GeneralUser GS) and point the seq's"
