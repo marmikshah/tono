@@ -14,6 +14,24 @@
 //! instance and **crossfade** for a click-free swap — control-rate today, and
 //! sample-accurate once the stateful streaming renderer lands behind this same
 //! seam. Multi-threaded real-time use goes through [`Engine::split`].
+//!
+//! # Adapters
+//!
+//! A host output is a thin shim over [`AudioSource`] + [`Engine::split`]. cpal:
+//!
+//! ```ignore
+//! let (mut control, mut audio) = Engine::new(sr).split(2048);
+//! let stream = device.build_output_stream(
+//!     &config,
+//!     move |out: &mut [f32], _| { audio.fill(out); }, // audio thread drains the ring
+//!     err_fn, None,
+//! )?;
+//! stream.play()?;
+//! // On a control thread: loop { control.pump(1024); std::thread::sleep(dt); }
+//! ```
+//!
+//! A Bevy `Decodable` / rodio `Source` wraps the same [`Renderer`]; an
+//! AudioWorklet calls [`AudioSource::fill`] on each 128-frame quantum.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
