@@ -1,10 +1,10 @@
 [workspace]
-members = ["tono-core", "tono-desktop", "tono-play", "tono-py"]
+members = ["crates/tono-core", "crates/tono-desktop", "crates/tono-play", "crates/tono-py"]
 # tono-desktop (native GUI + real-time audio + MIDI), tono-play (cpal speaker for
 # the programmatic playground), and tono-py (pyo3 Python extension) carry heavy /
 # platform deps, so they stay OUT of the default native build/test/clippy and CI.
 # Build them explicitly: `make desktop` / `make play` / `make python`.
-default-members = [".", "tono-core"]
+default-members = [".", "crates/tono-core"]
 
 [workspace.dependencies.cpal]
 version = "0.15.3"
@@ -17,7 +17,7 @@ license = "MIT"
 repository = "https://github.com/marmikshah/tono"
 
 [workspace.dependencies]
-tono-core = { path = "tono-core" }
+tono-core = { path = "crates/tono-core" }
 anyhow = "1.0.102"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
 base64 = "0.22.1"

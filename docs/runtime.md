@@ -2,7 +2,7 @@
 
 The same deterministic engine that renders in the MCP server and the desktop
 studio also runs **inside your game**. A game depends
-on the pure [`tono-core`](../tono-core) crate, ships a **patch** (a
+on the pure [`tono-core`](../crates/tono-core) crate, ships a **patch** (a
 `SoundDoc` template + named parameters), and renders per-instance variations at
 runtime — an impact that scales with collision force, a footstep that varies by
 surface — with **zero baked WAV files**. No DAW can do this; it's the payoff of
