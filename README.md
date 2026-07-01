@@ -135,7 +135,7 @@ tono.play(doc, 0.4)        # hear it
 ## Quickstart: the MCP server
 
 ```sh
-curl -fsSL https://marmikshah.github.io/tono/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/marmikshah/tono/master/install.sh | sh
 ```
 
 The installer sets tono up as stdio (your MCP client spawns it) or as a
@@ -222,7 +222,6 @@ engine-ready packs with manifests, and both record replayable recipes.
 - [docs/cookbook.md](docs/cookbook.md) — the DSL, the instrument table, and
   worked recipes (also served to agents as the `tono://cookbook` resource;
   every example in it is validated by the test suite).
-- [ROADMAP.md](ROADMAP.md) — the backlog.
 - `make help` lists every target — `make verify` mirrors CI (fmt + clippy +
   test); `make desktop` / `make play` / `make python` build the native faces.
 
