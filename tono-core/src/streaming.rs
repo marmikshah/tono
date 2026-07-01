@@ -1357,6 +1357,98 @@ mod tests {
         ));
     }
 
+    // ---- randomized byte-identity fuzz over the streamable node set ----
+
+    fn rf(rng: &mut Rng, lo: f64, hi: f64) -> f64 {
+        lo + (hi - lo) * (rng.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    fn gen_freq(rng: &mut Rng) -> serde_json::Value {
+        use serde_json::json;
+        if rng.next_u64().is_multiple_of(4) {
+            json!({ "lfo": { "shape": "sine", "rate": rf(rng, 1.0, 8.0), "depth": rf(rng, 10.0, 120.0), "center": rf(rng, 200.0, 800.0) } })
+        } else {
+            json!(rf(rng, 80.0, 1200.0))
+        }
+    }
+
+    fn gen_proc(rng: &mut Rng) -> serde_json::Value {
+        use serde_json::json;
+        let cut = rf(rng, 200.0, 4000.0);
+        match rng.next_u64() % 11 {
+            0 => json!({ "type":"lowpass", "cutoff":cut, "q":rf(rng,0.4,2.0) }),
+            1 => json!({ "type":"highpass", "cutoff":cut, "q":rf(rng,0.4,2.0) }),
+            2 => json!({ "type":"bandpass", "cutoff":cut, "q":rf(rng,0.4,2.0) }),
+            3 => {
+                json!({ "type":"peak", "cutoff":cut, "q":rf(rng,0.5,3.0), "gain_db":rf(rng,-8.0,8.0) })
+            }
+            4 => json!({ "type":"gain", "amount":rf(rng,0.3,1.2) }),
+            5 => json!({ "type":"delay", "secs":rf(rng,0.005,0.04), "feedback":rf(rng,0.0,0.6) }),
+            6 => json!({ "type":"reverb", "room":rf(rng,0.2,0.9), "mix":rf(rng,0.2,0.7) }),
+            7 => json!({ "type":"drive", "amount":rf(rng,1.0,8.0), "shape":"tanh" }),
+            8 => {
+                json!({ "type":"chorus", "rate":rf(rng,0.5,3.0), "depth":rf(rng,0.3,0.9), "mix":rf(rng,0.3,0.7) })
+            }
+            9 => json!({ "type":"bitcrush", "bits": 3 + (rng.next_u64()%8) as u32 }),
+            _ => {
+                json!({ "type":"compress", "threshold":rf(rng,-24.0,-6.0), "ratio":rf(rng,2.0,8.0), "attack":0.005, "release":0.06, "makeup":rf(rng,0.0,4.0) })
+            }
+        }
+    }
+
+    fn gen_src(rng: &mut Rng, depth: u32) -> serde_json::Value {
+        use serde_json::json;
+        let leaf = depth == 0;
+        let pick = rng.next_u64() % if leaf { 6 } else { 9 };
+        match pick {
+            0 => json!({ "type":"sine", "freq": gen_freq(rng) }),
+            1 => json!({ "type":"square", "freq": gen_freq(rng), "duty": rf(rng, 0.2, 0.8) }),
+            2 => json!({ "type":"sawtooth", "freq": gen_freq(rng) }),
+            3 => json!({ "type":"triangle", "freq": gen_freq(rng) }),
+            4 => {
+                json!({ "type":"fm", "freq": gen_freq(rng), "ratio": rf(rng,1.0,4.0), "index": gen_freq(rng) })
+            }
+            5 => {
+                json!({ "type":"super", "wave":"sawtooth", "freq": gen_freq(rng), "voices": 2 + (rng.next_u64()%6) as u32, "detune_cents": rf(rng,4.0,30.0) })
+            }
+            6 => json!({ "type":"mix", "inputs": [gen_src(rng, depth-1), gen_src(rng, depth-1)] }),
+            7 => json!({ "type":"mul", "inputs": [gen_src(rng, depth-1),
+                    { "type":"env", "adsr": { "a":rf(rng,0.001,0.02), "d":rf(rng,0.02,0.1), "s":rf(rng,0.2,0.8), "r":rf(rng,0.05,0.2) } }] }),
+            _ => {
+                let mut stages = vec![gen_src(rng, depth - 1)];
+                for _ in 0..(1 + rng.next_u64() % 3) {
+                    stages.push(gen_proc(rng));
+                }
+                json!({ "type":"chain", "stages": stages })
+            }
+        }
+    }
+
+    #[test]
+    fn fuzz_streamed_matches_offline_byte_for_byte() {
+        use serde_json::json;
+        let mut checked = 0;
+        for seed in 0..250u64 {
+            let mut rng = Rng::new(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xABCD);
+            let root = gen_src(&mut rng, 3);
+            let dur = rf(&mut rng, 0.02, 0.08);
+            let doc_json =
+                json!({ "name":"fuzz", "duration": dur, "seed": seed, "engine": 1, "root": root });
+            let Ok(doc) = serde_json::from_value::<SoundDoc>(doc_json) else {
+                continue;
+            };
+            if doc.validate().is_err() || !is_streamable(&doc) {
+                continue;
+            }
+            assert_byte_identical(&doc);
+            checked += 1;
+        }
+        assert!(
+            checked > 120,
+            "fuzz should exercise many graphs, got {checked}"
+        );
+    }
+
     #[test]
     fn non_streamable_graphs_are_rejected() {
         assert!(
