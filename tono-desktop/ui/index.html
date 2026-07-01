@@ -100,19 +100,12 @@
     </main>
     <div class="kbd">
       <div class="row" style="margin-bottom: 10px">
-        <label>voice
-          <select id="wave">
-            <option value="sawtooth">saw</option>
-            <option value="square">square</option>
-            <option value="triangle">triangle</option>
-            <option value="sine">sine</option>
-          </select>
-        </label>
+        <span style="color: var(--dim)">the keys play the sound above · amp env:</span>
         <label>A <input type="range" id="a" min="0" max="0.5" step="0.005" value="0.01" /></label>
         <label>D <input type="range" id="d" min="0" max="0.6" step="0.005" value="0.12" /></label>
         <label>S <input type="range" id="s" min="0" max="1" step="0.01" value="0.6" /></label>
         <label>R <input type="range" id="r" min="0" max="1" step="0.01" value="0.2" /></label>
-        <span style="color: var(--dim)">play with the mouse or your computer keyboard (A–K = white keys)</span>
+        <span style="color: var(--dim)">· mouse or computer keys (A–K)</span>
       </div>
       <div class="keys" id="keys"></div>
     </div>
@@ -161,21 +154,17 @@
       $("play").onclick = () => invoke("transport", { action: "play" });
       $("stop").onclick = () => invoke("transport", { action: "stop" });
 
-      // --- live keyboard --------------------------------------------------
-      const freqOf = (midi) => 440 * Math.pow(2, (midi - 69) / 12);
-      function pushInstrument() {
-        invoke("set_instrument", {
-          wave: $("wave").value,
-          a: +$("a").value, d: +$("d").value, s: +$("s").value, r: +$("r").value, duty: 0.5,
-        });
+      // --- live keyboard (plays the designed sound) -----------------------
+      function pushAmp() {
+        invoke("set_amp", { a: +$("a").value, d: +$("d").value, s: +$("s").value, r: +$("r").value });
       }
-      ["wave", "a", "d", "s", "r"].forEach((id) => $(id).addEventListener("input", pushInstrument));
+      ["a", "d", "s", "r"].forEach((id) => $(id).addEventListener("input", pushAmp));
 
       const held = new Set();
       const on = (midi) => {
         if (held.has(midi)) return;
         held.add(midi);
-        invoke("note_on", { key: midi, freq: freqOf(midi) });
+        invoke("note_on", { key: midi, velocity: 0.85 });
         document.querySelector(`[data-midi="${midi}"]`)?.classList.add("down");
       };
       const off = (midi) => {
@@ -238,7 +227,7 @@
         if (n !== undefined) off(base + n);
       });
 
-      pushInstrument();
+      pushAmp();
       render();
     </script>
   </body>
