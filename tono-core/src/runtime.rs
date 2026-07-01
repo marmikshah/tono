@@ -16,6 +16,8 @@
 //! seam. Multi-threaded real-time use goes through [`Engine::split`].
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use crate::dsl::{Node, SoundDoc};
 use crate::edit::{EditOp, apply_ops};
@@ -441,6 +443,147 @@ impl AudioSource for Engine {
     }
 }
 
+/// A wait-free single-producer / single-consumer ring of `f32` samples. Each
+/// slot is an `AtomicU32` (the sample's bits), so it is entirely safe — no
+/// `unsafe`, no locks. The [`Controller`] is the sole producer, the [`Renderer`]
+/// the sole consumer.
+struct SampleRing {
+    buf: Vec<AtomicU32>,
+    /// Next slot the consumer reads.
+    head: AtomicUsize,
+    /// Next slot the producer writes.
+    tail: AtomicUsize,
+}
+
+impl SampleRing {
+    fn new(capacity: usize) -> Self {
+        // One slot stays empty so full and empty are distinguishable.
+        let n = (capacity + 1).max(2);
+        SampleRing {
+            buf: (0..n).map(|_| AtomicU32::new(0)).collect(),
+            head: AtomicUsize::new(0),
+            tail: AtomicUsize::new(0),
+        }
+    }
+
+    fn cap(&self) -> usize {
+        self.buf.len()
+    }
+
+    fn len(&self) -> usize {
+        let t = self.tail.load(Ordering::Acquire);
+        let h = self.head.load(Ordering::Acquire);
+        (t + self.cap() - h) % self.cap()
+    }
+
+    fn free(&self) -> usize {
+        self.cap() - 1 - self.len()
+    }
+
+    /// Push one sample (producer). Returns false if full.
+    fn push(&self, sample: f32) -> bool {
+        let tail = self.tail.load(Ordering::Relaxed);
+        let next = (tail + 1) % self.cap();
+        if next == self.head.load(Ordering::Acquire) {
+            return false;
+        }
+        self.buf[tail].store(sample.to_bits(), Ordering::Relaxed);
+        self.tail.store(next, Ordering::Release);
+        true
+    }
+
+    /// Pop one sample (consumer), or `None` if empty.
+    fn pop(&self) -> Option<f32> {
+        let head = self.head.load(Ordering::Relaxed);
+        if head == self.tail.load(Ordering::Acquire) {
+            return None;
+        }
+        let bits = self.buf[head].load(Ordering::Relaxed);
+        self.head.store((head + 1) % self.cap(), Ordering::Release);
+        Some(f32::from_bits(bits))
+    }
+}
+
+/// The control side of a split engine: owns the [`Engine`] and produces audio
+/// into the shared ring. Lives on any non-audio thread — deref to call every
+/// `Engine` method (`play`, `set_gain`, `set_param`, …), then [`pump`](Self::pump)
+/// to keep the audio thread fed.
+pub struct Controller {
+    engine: Engine,
+    ring: Arc<SampleRing>,
+    pump_buf: Vec<f32>,
+}
+
+impl Controller {
+    /// Mix up to `frames` frames and hand them to the audio thread. Returns the
+    /// number of frames actually pushed — fewer when the ring is full, which is
+    /// the backpressure signal to stop pumping until the next tick.
+    pub fn pump(&mut self, frames: usize) -> usize {
+        if self.pump_buf.len() < frames * 2 {
+            self.pump_buf.resize(frames * 2, 0.0);
+        }
+        let block = &mut self.pump_buf[..frames * 2];
+        self.engine.fill(block);
+        let mut pushed = 0;
+        for f in 0..frames {
+            if self.ring.free() < 2 {
+                break; // keep L/R paired: only push a whole frame
+            }
+            self.ring.push(block[f * 2]);
+            self.ring.push(block[f * 2 + 1]);
+            pushed += 1;
+        }
+        pushed
+    }
+}
+
+impl std::ops::Deref for Controller {
+    type Target = Engine;
+    fn deref(&self) -> &Engine {
+        &self.engine
+    }
+}
+
+impl std::ops::DerefMut for Controller {
+    fn deref_mut(&mut self) -> &mut Engine {
+        &mut self.engine
+    }
+}
+
+/// The audio side of a split engine: drains the ring in the output callback.
+/// `Send`, alloc-free, lock-free — safe to hand to a cpal / AudioWorklet thread.
+/// On underrun it writes silence (the ring depth chosen at [`Engine::split`]
+/// trades latency against underrun safety).
+pub struct Renderer {
+    ring: Arc<SampleRing>,
+}
+
+impl AudioSource for Renderer {
+    fn fill(&mut self, out: &mut [f32]) -> usize {
+        for s in out.iter_mut() {
+            *s = self.ring.pop().unwrap_or(0.0);
+        }
+        out.len() / 2
+    }
+}
+
+impl Engine {
+    /// Split into a [`Controller`] (control thread) and a [`Renderer`] (audio
+    /// thread) joined by a wait-free ring `ring_frames` deep. Pump the controller
+    /// off the audio thread; the renderer drains it in the callback.
+    pub fn split(self, ring_frames: usize) -> (Controller, Renderer) {
+        let ring = Arc::new(SampleRing::new(ring_frames * 2));
+        (
+            Controller {
+                engine: self,
+                ring: ring.clone(),
+                pump_buf: Vec::new(),
+            },
+            Renderer { ring },
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -575,5 +718,47 @@ mod tests {
             (l - 1.0).abs() < 1e-6 && (r - 1.0).abs() < 1e-6,
             "unity at centre"
         );
+    }
+
+    #[test]
+    fn ring_pushes_pops_and_wraps() {
+        let r = SampleRing::new(4); // 4 usable slots
+        assert!(r.pop().is_none());
+        for i in 0..4 {
+            assert!(r.push(i as f32));
+        }
+        assert!(!r.push(9.0), "full");
+        assert_eq!(r.pop(), Some(0.0));
+        assert!(r.push(9.0), "space freed after a pop");
+        let got: Vec<f32> = std::iter::from_fn(|| r.pop()).collect();
+        assert_eq!(got, vec![1.0, 2.0, 3.0, 9.0]);
+    }
+
+    #[test]
+    fn split_pumps_audio_across_the_seam() {
+        let mut e = Engine::new(44_100);
+        let p = e.load(&doc(1.0));
+        let (mut ctl, mut rend) = e.split(1024);
+        ctl.play_looping(p); // Deref → Engine::play_looping
+        assert!(ctl.pump(512) > 0, "controller produced frames");
+        let mut out = vec![0.0f32; 512 * 2];
+        assert_eq!(rend.fill(&mut out), 512);
+        assert!(peak(&out) > 0.0, "renderer drained real audio");
+    }
+
+    #[test]
+    fn renderer_underrun_writes_silence() {
+        let e = Engine::new(44_100);
+        let (_ctl, mut rend) = e.split(256); // nothing pumped
+        let mut out = vec![1.0f32; 128 * 2];
+        rend.fill(&mut out);
+        assert!(peak(&out) < 1e-9, "underrun is clean silence, not garbage");
+    }
+
+    #[test]
+    fn control_and_audio_sides_are_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<Controller>();
+        assert_send::<Renderer>();
     }
 }
