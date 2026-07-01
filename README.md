@@ -21,7 +21,7 @@
   <img src="docs/band-demo-waveform.png" width="320" alt="waveform of the band demo groove">
 </p>
 
-<p align="center"><em>Everything you can hear in <a href="docs/examples/audio/">docs/examples/audio</a> — a complete piano piece, a four-instrument band, game-ready BGM loops, and an iconic-sounds pack — was rendered by this engine, and every one replays byte-for-byte. The logo and wordmark were drawn with <a href="https://github.com/marmikshah/atelier">atelier</a>, tono's pixel-art sibling.</em></p>
+<p align="center"><em>Everything you can hear in <a href="docs/examples/audio/">docs/examples/audio</a> — a complete piano piece, a four-instrument band, game-ready BGM loops, and an iconic-sounds pack — was rendered by this engine. The logo and wordmark were drawn with <a href="https://github.com/marmikshah/atelier">atelier</a>, tono's pixel-art sibling.</em></p>
 
 ## What it is
 
@@ -160,7 +160,7 @@ Rendering is a pure function of the document, so audio is a stable target you
 can **test, diff, and cache**. The real-time streaming path is byte-identical to
 an offline bounce (verified by a fuzzer in CI), and byte-changing kernel
 upgrades are gated behind a document `engine` revision so old sounds never
-change. `docs/examples/*.json` render identically every run.
+change. Render the same `SoundDoc` twice and you get the same bytes.
 
 ## More
 
