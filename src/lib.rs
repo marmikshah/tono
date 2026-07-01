@@ -9,7 +9,7 @@
 //! image writer, MIDI export, and the `tono` command-line tool that renders a
 //! `SoundDoc` to audio + feedback images (see `src/main.rs`).
 
-pub use tono_core::{analysis, dsl, dsp, edit, render, review, vary};
+pub use tono_core::{analysis, catalog, dsl, dsp, edit, render, review, song, vary};
 
 pub mod audio;
 pub mod imaging;
