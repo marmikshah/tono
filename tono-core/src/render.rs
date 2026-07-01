@@ -2025,14 +2025,17 @@ fn load_soundfont(path: &str) -> anyhow::Result<std::sync::Arc<rustysynth::Sound
     use std::sync::{Arc, Mutex, OnceLock};
     static CACHE: OnceLock<Mutex<HashMap<String, Arc<rustysynth::SoundFont>>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(f) = cache.lock().unwrap().get(path) {
+    if let Some(f) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(path) {
         return Ok(f.clone());
     }
     let mut file = std::fs::File::open(path)?;
     let font = Arc::new(
         rustysynth::SoundFont::new(&mut file).map_err(|e| anyhow::anyhow!("parse: {e:?}"))?,
     );
-    cache.lock().unwrap().insert(path.to_string(), font.clone());
+    cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(path.to_string(), font.clone());
     Ok(font)
 }
 
