@@ -650,7 +650,7 @@ fn eval_value(v: &Value, n: usize, sr: u32) -> Vec<f32> {
 /// Edit-stable seed for a [`Modulator::Rand`]: a hash of only the modulator's
 /// own fields, so its walk never shifts when sibling nodes are added or
 /// removed (the random stream is not threaded through graph traversal).
-fn rand_seed(seed: u64, from: f32, to: f32, rate: f32) -> u64 {
+pub(crate) fn rand_seed(seed: u64, from: f32, to: f32, rate: f32) -> u64 {
     let mut h = seed ^ 0x9E37_79B9_7F4A_7C15;
     for bits in [from.to_bits(), to.to_bits(), rate.to_bits()] {
         h = (h ^ bits as u64).wrapping_mul(0x0000_0100_0000_01B3);
