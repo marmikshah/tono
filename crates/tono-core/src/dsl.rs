@@ -926,7 +926,7 @@ pub enum SeqWave {
 /// An ADSR amplitude envelope. One shape, used in three places: the [`Node::Env`]
 /// amplitude envelope, the per-note envelope of a [`Node::Seq`], and (with a
 /// `from`/`to` range) the [`Modulator::EnvMod`] parameter envelope.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Adsr {
     /// Attack time in seconds.
     #[serde(default)]

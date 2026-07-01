@@ -17,6 +17,7 @@
 pub mod adaptive;
 #[cfg(feature = "analysis")]
 pub mod analysis;
+pub mod catalog;
 pub mod drumkit;
 pub mod dsl;
 pub mod dsp;
