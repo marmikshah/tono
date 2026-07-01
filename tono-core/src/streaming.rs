@@ -1242,13 +1242,17 @@ fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Pr
 pub struct StreamGraph {
     root: Src,
     pos: usize,
-    /// Live pitch scale applied to every oscillator (1.0 = as authored). Smoothed
-    /// per-sample toward `pitch_target` so glide/bend never zipper or click.
+    /// Live note-pitch scale (1.0 = as authored). Smoothed per-sample toward
+    /// `pitch_target` so a note change / portamento never zippers or clicks.
     pitch: f32,
     /// Where `pitch` is gliding to.
     pitch_target: f32,
     /// Per-sample one-pole glide coefficient in `(0, 1]`; `1.0` snaps instantly.
     glide: f32,
+    /// Instant pitch-wheel multiplier, applied on top of `pitch`. Kept separate
+    /// so bending never cancels an in-progress glide (and vice versa). The
+    /// oscillators see `pitch * bend`.
+    bend: f32,
 }
 
 impl StreamGraph {
@@ -1272,6 +1276,7 @@ impl StreamGraph {
             pitch: 1.0,
             pitch_target: 1.0,
             glide: 1.0,
+            bend: 1.0,
         })
     }
 
@@ -1281,7 +1286,7 @@ impl StreamGraph {
     pub fn fill(&mut self, out: &mut [f32]) {
         for s in out.iter_mut() {
             self.pitch += (self.pitch_target - self.pitch) * self.glide;
-            *s = self.root.step(self.pos, self.pitch);
+            *s = self.root.step(self.pos, self.pitch * self.bend);
             self.pos += 1;
         }
     }
@@ -1302,9 +1307,17 @@ impl StreamGraph {
         self.glide = coeff.clamp(f32::MIN_POSITIVE, 1.0);
     }
 
-    /// The pitch scale currently sounding (mid-glide, this trails the target).
+    /// The note-pitch scale currently sounding (mid-glide, this trails the
+    /// target). Excludes the bend multiplier.
     pub fn pitch(&self) -> f32 {
         self.pitch
+    }
+
+    /// Set the instant pitch-wheel multiplier (1.0 = centered), applied on top of
+    /// the note pitch. Independent of glide, so a bend mid-portamento leaves the
+    /// glide running.
+    pub fn set_bend(&mut self, mul: f32) {
+        self.bend = mul.max(0.0);
     }
 }
 

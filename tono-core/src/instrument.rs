@@ -237,6 +237,9 @@ pub struct Instrument {
     next_handle: u64,
     /// Sustain-pedal state: while down, note-offs are deferred until pedal-up.
     sustain: bool,
+    /// Pitch-wheel bend as a frequency ratio (1.0 = centered), applied live to
+    /// every sounding voice and any new one.
+    bend: f32,
     /// The shared master effect chain (built from `design.master`).
     master: Option<EffectChain>,
     /// Per-voice render scratch (mono).
@@ -321,6 +324,7 @@ impl Instrument {
             voices: Vec::new(),
             next_handle: 1,
             sustain: false,
+            bend: 1.0,
             master,
             scratch: Vec::new(),
             mix: Vec::new(),
@@ -363,7 +367,10 @@ impl Instrument {
         let handle = self.next_handle;
         self.next_handle += 1;
         let velocity = velocity.clamp(0.0, 1.0);
-        if let Ok(graph) = self.build_result(note, velocity) {
+        if let Ok(mut graph) = self.build_result(note, velocity) {
+            if self.bend != 1.0 {
+                graph.set_bend(self.bend); // catch a newly struck note up to the wheel
+            }
             let mut env = EnvGen::new(&self.design.amp, self.sample_rate);
             env.gate_on();
             if self.voices.len() >= self.design.max_voices
@@ -428,6 +435,17 @@ impl Instrument {
                     v.sustained = false;
                 }
             }
+        }
+    }
+
+    /// Bend every sounding voice (and any struck later) by `semitones` — the
+    /// pitch wheel. `0.0` is centered; a MIDI pitch wheel maps its ±8192 range to
+    /// your chosen semitone span (commonly ±2). The bend is a pure repitch of the
+    /// oscillators, applied live without rebuilding a voice.
+    pub fn set_bend(&mut self, semitones: f32) {
+        self.bend = 2f32.powf(semitones / 12.0);
+        for v in self.voices.iter_mut() {
+            v.graph.set_bend(self.bend);
         }
     }
 
@@ -546,6 +564,10 @@ mod tests {
         b.iter().fold(0.0f32, |m, &x| m.max(x.abs()))
     }
 
+    fn bits(b: &[f32]) -> Vec<u32> {
+        b.iter().map(|x| x.to_bits()).collect()
+    }
+
     #[test]
     fn note_maths() {
         assert!((Note::A4.freq() - 440.0).abs() < 1e-3);
@@ -609,6 +631,34 @@ mod tests {
         let mut out = vec![0.0f32; 256 * 2];
         inst.fill(&mut out);
         assert!(peak(&out) > 0.0);
+    }
+
+    #[test]
+    fn pitch_bend_repitches_live() {
+        // Bending A4 up an octave is a pure repitch, so it is bit-for-bit A5
+        // struck plain (same oscillator phase increment, same baked filter).
+        let mut a = Instrument::new(InstrumentDesign::new(saw_patch()), 48_000).unwrap();
+        a.note_on(Note::A4, 1.0);
+        a.set_bend(12.0);
+        let mut b = Instrument::new(InstrumentDesign::new(saw_patch()), 48_000).unwrap();
+        b.note_on(Note(81), 1.0); // A5
+        let (mut oa, mut ob) = (vec![0.0f32; 2048], vec![0.0f32; 2048]);
+        a.fill(&mut oa);
+        b.fill(&mut ob);
+        assert_eq!(bits(&oa), bits(&ob), "A4 + octave bend == A5");
+    }
+
+    #[test]
+    fn centered_bend_is_a_no_op() {
+        let mut bent = Instrument::new(InstrumentDesign::new(saw_patch()), 48_000).unwrap();
+        bent.note_on(Note::C4, 0.8);
+        bent.set_bend(0.0); // dead center
+        let mut plain = Instrument::new(InstrumentDesign::new(saw_patch()), 48_000).unwrap();
+        plain.note_on(Note::C4, 0.8);
+        let (mut ob, mut op) = (vec![0.0f32; 1024], vec![0.0f32; 1024]);
+        bent.fill(&mut ob);
+        plain.fill(&mut op);
+        assert_eq!(bits(&ob), bits(&op), "a centered wheel changes nothing");
     }
 
     #[test]
