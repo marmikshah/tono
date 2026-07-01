@@ -107,6 +107,13 @@
         <label>R <input type="range" id="r" min="0" max="1" step="0.01" value="0.2" /></label>
         <span style="color: var(--dim)">· mouse or computer keys (A–K)</span>
       </div>
+      <div class="row" style="margin-bottom: 10px">
+        <label>preset
+          <select id="preset"><option value="">— designed graph —</option></select>
+        </label>
+        <label>bend <input type="range" id="bend" min="-1" max="1" step="0.01" value="0" /></label>
+        <span style="color: var(--dim)">· pitch wheel springs back to center</span>
+      </div>
       <div class="keys" id="keys"></div>
     </div>
 
@@ -141,6 +148,8 @@
           $("err").innerHTML = `<span class="err">${res.error}</span>`;
           return;
         }
+        const preset = $("preset");
+        if (preset) preset.value = ""; // rendering plays the designed graph
         $("spec").src = "data:image/png;base64," + res.spectrogram_png;
         $("wave").src = "data:image/png;base64," + res.waveform_png;
         const s = JSON.parse(res.stats_json);
@@ -159,6 +168,34 @@
         invoke("set_amp", { a: +$("a").value, d: +$("d").value, s: +$("s").value, r: +$("r").value });
       }
       ["a", "d", "s", "r"].forEach((id) => $(id).addEventListener("input", pushAmp));
+
+      // --- factory presets --------------------------------------------------
+      (async () => {
+        const list = await invoke("list_presets");
+        const sel = $("preset");
+        for (const p of list) {
+          const o = document.createElement("option");
+          o.value = p.name;
+          o.textContent = `${p.category.toLowerCase()} · ${p.name} — ${p.description}`;
+          sel.appendChild(o);
+        }
+      })();
+      $("preset").addEventListener("change", (e) => {
+        const name = e.target.value;
+        if (name) invoke("load_preset", { name });
+        else render(); // "— designed graph —" reverts to the editor's sound
+      });
+
+      // --- pitch wheel (±2 semitones, springs back to center) ---------------
+      const bend = $("bend");
+      const sendBend = () => invoke("set_bend", { semitones: +bend.value * 2 });
+      bend.addEventListener("input", sendBend);
+      const centerBend = () => {
+        bend.value = 0;
+        sendBend();
+      };
+      bend.addEventListener("pointerup", centerBend);
+      bend.addEventListener("pointerleave", centerBend);
 
       const held = new Set();
       const on = (midi) => {

@@ -18,8 +18,12 @@ use midir::{MidiInput, MidiInputConnection};
 use tono_core::dsl::{Adsr, SoundDoc};
 use tono_core::instrument::{Instrument, InstrumentDesign, Note};
 use tono_core::patch::Patch;
+use tono_core::presets;
 use tono_core::runtime::AudioSource;
 use tono_core::stream::Player;
+
+/// Pitch-wheel range in semitones each way (the common ±2 default).
+const BEND_RANGE_SEMITONES: f32 = 2.0;
 
 /// Headroom so a fistful of held notes doesn't clip against the patch preview.
 const KEYS_GAIN: f32 = 0.6;
@@ -34,23 +38,27 @@ fn default_amp() -> Adsr {
     }
 }
 
-/// The keyboard voice — the currently-designed sound as a playable instrument —
-/// plus the amp envelope and the doc it was built from (so it rebuilds when the
-/// sound or envelope changes). `instrument` is `None` if the doc isn't streamable.
+/// The keyboard voice — a playable instrument built either from the currently
+/// designed graph (`doc` + `amp`) or, when a factory preset is loaded, from that
+/// `design`. `instrument` is `None` if the source isn't streamable.
 struct Keyboard {
     instrument: Option<Instrument>,
     amp: Adsr,
     doc: SoundDoc,
+    /// A loaded factory preset overriding the designed graph, if any.
+    design: Option<InstrumentDesign>,
     sr: u32,
 }
 
 impl Keyboard {
     fn rebuild(&mut self) {
-        let patch = Patch {
-            doc: self.doc.clone(),
-            params: Vec::new(),
-        };
-        let design = InstrumentDesign::new(patch).with_amp(self.amp);
+        let design = self.design.clone().unwrap_or_else(|| {
+            let patch = Patch {
+                doc: self.doc.clone(),
+                params: Vec::new(),
+            };
+            InstrumentDesign::new(patch).with_amp(self.amp)
+        });
         self.instrument = Instrument::new(design, self.sr).ok();
     }
 }
@@ -65,7 +73,8 @@ pub struct AudioHandle {
 
 impl AudioHandle {
     /// Swap in a new document: re-render the preview AND rebuild the keyboard
-    /// instrument, so the keys now play the sound you just designed.
+    /// instrument, so the keys now play the sound you just designed. Designing a
+    /// graph clears any loaded factory preset.
     pub fn set_doc(&self, mut doc: SoundDoc) {
         doc.sample_rate = self.device_sr;
         if let Ok(mut p) = self.player.lock() {
@@ -73,7 +82,28 @@ impl AudioHandle {
         }
         if let Ok(mut k) = self.keys.lock() {
             k.doc = doc;
+            k.design = None; // back to the designed graph
             k.rebuild();
+        }
+    }
+
+    /// Load a factory preset by name, so the keys play it. Unknown names are
+    /// ignored (the current instrument stays).
+    pub fn load_preset(&self, name: &str) {
+        if let Some(design) = presets::preset(name)
+            && let Ok(mut k) = self.keys.lock()
+        {
+            k.design = Some(design);
+            k.rebuild();
+        }
+    }
+
+    /// Bend every sounding keyboard voice by `semitones` (the pitch wheel).
+    pub fn set_bend(&self, semitones: f32) {
+        if let Ok(mut k) = self.keys.lock()
+            && let Some(inst) = k.instrument.as_mut()
+        {
+            inst.set_bend(semitones);
         }
     }
 
@@ -91,10 +121,14 @@ impl AudioHandle {
         }
     }
 
-    /// Set the keyboard's amplitude envelope (rebuilds the instrument).
+    /// Set the keyboard's amplitude envelope (rebuilds the instrument). Also
+    /// tweaks a loaded preset's envelope, so the ADSR sliders keep working.
     pub fn set_amp(&self, env: Adsr) {
         if let Ok(mut k) = self.keys.lock() {
             k.amp = env;
+            if let Some(d) = k.design.as_mut() {
+                d.amp = env;
+            }
             k.rebuild();
         }
     }
@@ -166,6 +200,7 @@ fn build_stream(mut doc: SoundDoc) -> Result<(cpal::Stream, AudioHandle)> {
         instrument: None,
         amp: default_amp(),
         doc,
+        design: None,
         sr: device_sr,
     };
     keyboard.rebuild();
@@ -302,6 +337,12 @@ fn midi_message(msg: &[u8], handle: &AudioHandle) {
             {
                 inst.set_sustain(val >= 64);
             }
+        }
+        // Pitch wheel: 14-bit little-endian, 8192 = centered.
+        (0xE0, msb) => {
+            let raw = (msb as i32) << 7 | msg[1] as i32;
+            let norm = (raw - 8192) as f32 / 8192.0; // -1.0 ..= ~1.0
+            handle.set_bend(norm * BEND_RANGE_SEMITONES);
         }
         _ => {}
     }
