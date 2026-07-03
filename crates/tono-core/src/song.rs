@@ -170,7 +170,9 @@ impl Song {
     pub fn add(mut self, instrument: Instrument, write: impl FnOnce(&mut Phrase)) -> Self {
         let mut phrase = Phrase::new(self.steps_per_beat);
         write(&mut phrase);
-        let name = self.unique_name(&instrument.name);
+        // The track name becomes the rendered layer id, which must be a slug
+        // (a-z, 0-9, _) — so slugify the instrument's display name.
+        let name = self.unique_name(&slugify(&instrument.name));
         self.tracks.push(SongTrack {
             name,
             wave: instrument.wave,
@@ -186,13 +188,14 @@ impl Song {
         self
     }
 
-    /// A track name not already taken — appends " 2", " 3", … on collision.
+    /// A track name not already taken — appends `_2`, `_3`, … on collision
+    /// (keeping it a valid layer-id slug).
     fn unique_name(&self, base: &str) -> String {
         if !self.tracks.iter().any(|t| t.name == base) {
             return base.to_string();
         }
         (2..)
-            .map(|i| format!("{base} {i}"))
+            .map(|i| format!("{base}_{i}"))
             .find(|n| !self.tracks.iter().any(|t| &t.name == n))
             .expect("an unused suffix always exists")
     }
@@ -540,6 +543,29 @@ impl Phrase {
     }
 }
 
+/// Turn a display name into a layer-id slug: lowercase, runs of non-`[a-z0-9]`
+/// collapsed to a single `_`, no leading/trailing `_`. `"Mellow Piano"` →
+/// `"mellow_piano"`, `"808 drums"` → `"808_drums"`.
+fn slugify(name: &str) -> String {
+    let mut s = String::with_capacity(name.len());
+    let mut pending_us = false;
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            if pending_us && !s.is_empty() {
+                s.push('_');
+            }
+            s.push(c.to_ascii_lowercase());
+            pending_us = false;
+        } else {
+            pending_us = true;
+        }
+    }
+    if s.is_empty() {
+        s.push_str("track");
+    }
+    s
+}
+
 fn unit_gain() -> f32 {
     1.0
 }
@@ -710,7 +736,54 @@ mod tests {
             .add(GrandPiano::grand(), |t| {
                 t.at(0.0).note("E4", 1.0);
             });
-        assert_eq!(song.tracks[0].name, "grand piano");
-        assert_eq!(song.tracks[1].name, "grand piano 2");
+        assert_eq!(song.tracks[0].name, "grand_piano");
+        assert_eq!(song.tracks[1].name, "grand_piano_2");
+    }
+
+    #[test]
+    fn catalog_names_become_valid_layer_id_slugs() {
+        use crate::catalog::{Drums, Guitar, Strings};
+        // Instruments with spaces / digits in their display names must yield
+        // slug layer ids so the doc passes validation (the CLI enforces it).
+        let doc = Song::new("s", 100.0)
+            .add(Strings::warm(), |t| {
+                t.at(0.0).chord(&["C4", "E4"], 4.0);
+            })
+            .add(Guitar::steel(), |t| {
+                t.at(0.0).note("E3", 4.0);
+            })
+            .add(Drums::tr808(), |t| {
+                t.at(0.0).kick();
+            })
+            .to_doc()
+            .unwrap();
+        assert!(
+            doc.validate().is_ok(),
+            "catalog song validates: {:?}",
+            doc.validate()
+        );
+        let Node::Tracks { tracks, .. } = &doc.root else {
+            panic!("tracks");
+        };
+        for t in tracks {
+            let id = t.id.as_deref().unwrap();
+            assert!(
+                id.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                "layer id '{id}' is a slug"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod slug_tests {
+    use super::slugify;
+    #[test]
+    fn slugifies_names() {
+        assert_eq!(slugify("Mellow Piano"), "mellow_piano");
+        assert_eq!(slugify("808 drums"), "808_drums");
+        assert_eq!(slugify("steel guitar"), "steel_guitar");
+        assert_eq!(slugify("  !!  "), "track");
     }
 }
