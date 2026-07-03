@@ -359,6 +359,22 @@ impl Song {
             if let Some(k) = t.voice.kit {
                 seq_json["kit"] = serde_json::to_value(k).map_err(|e| e.to_string())?;
             }
+            for (key, val) in [
+                ("bass_cutoff", t.voice.bass_cutoff),
+                ("bass_env", t.voice.bass_env),
+                ("bass_env_vel", t.voice.bass_env_vel),
+                ("bass_decay", t.voice.bass_decay),
+                ("bass_click", t.voice.bass_click),
+                ("bass_body", t.voice.bass_body),
+                ("bass_sub", t.voice.bass_sub),
+                ("bass_sub_ratio", t.voice.bass_sub_ratio),
+                ("bass_drive", t.voice.bass_drive),
+                ("bass_body_decay", t.voice.bass_body_decay),
+            ] {
+                if let Some(v) = val {
+                    seq_json[key] = serde_json::json!(v);
+                }
+            }
             let seq: Node = serde_json::from_value(seq_json)
                 .map_err(|e| format!("track '{}' seq build: {e}", t.name))?;
 

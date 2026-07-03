@@ -133,6 +133,38 @@ fn default_piano_detune() -> f32 {
 fn default_piano_decay() -> f32 {
     1.0
 }
+// Bass tone knobs (the `bass` voice). Every default is the current voice's
+// hard-coded constant, so omitting them renders byte-identically.
+fn default_bass_cutoff() -> f32 {
+    250.0
+}
+fn default_bass_env() -> f32 {
+    700.0
+}
+fn default_bass_env_vel() -> f32 {
+    1100.0
+}
+fn default_bass_decay() -> f32 {
+    0.15
+}
+fn default_bass_click() -> f32 {
+    0.0
+}
+fn default_bass_body() -> f32 {
+    0.7
+}
+fn default_bass_sub() -> f32 {
+    0.45
+}
+fn default_bass_sub_ratio() -> f32 {
+    1.0
+}
+fn default_bass_drive() -> f32 {
+    0.0
+}
+fn default_bass_body_decay() -> f32 {
+    2.0
+}
 fn default_duck_amount() -> f32 {
     0.8
 }
@@ -558,6 +590,36 @@ pub enum Node {
         /// alternate synthesized kits.
         #[serde(default)]
         kit: KitStyle,
+        /// Bass filter resting floor in Hz (the `bass` voice). Low = dark/round.
+        #[serde(default = "default_bass_cutoff")]
+        bass_cutoff: f32,
+        /// Bass fixed cutoff-sweep depth above the floor, Hz.
+        #[serde(default = "default_bass_env")]
+        bass_env: f32,
+        /// Bass velocity-scaled sweep depth, Hz (× note velocity).
+        #[serde(default = "default_bass_env_vel")]
+        bass_env_vel: f32,
+        /// Bass filter-sweep time constant, seconds — how fast the cutoff closes.
+        #[serde(default = "default_bass_decay")]
+        bass_decay: f32,
+        /// Bass pick-tick: an extra attack cutoff bump over ~8 ms, Hz. 0 = none.
+        #[serde(default = "default_bass_click")]
+        bass_click: f32,
+        /// Bass filtered-saw body level.
+        #[serde(default = "default_bass_body")]
+        bass_body: f32,
+        /// Bass sine-sub level.
+        #[serde(default = "default_bass_sub")]
+        bass_sub: f32,
+        /// Bass sub frequency ratio to the note. 1 = reinforce; 0.5 = octave down.
+        #[serde(default = "default_bass_sub_ratio")]
+        bass_sub_ratio: f32,
+        /// Bass tanh saturation, 0..1. 0 = clean; > 0 = synth-bass grit.
+        #[serde(default = "default_bass_drive")]
+        bass_drive: f32,
+        /// Bass note body decay, seconds (on top of the ADSR). Longer = sustained.
+        #[serde(default = "default_bass_body_decay")]
+        bass_body_decay: f32,
         /// Path to a SoundFont (.sf2) file when `wave` is `sampler`.
         #[serde(default)]
         sf2: String,

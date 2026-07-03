@@ -1856,6 +1856,19 @@ mod tests {
     }
 
     #[test]
+    fn bass_variant_streams_byte_identically() {
+        // The bass voice draws no RNG, so every variant pre-renders and streams
+        // bit-for-bit.
+        assert_byte_identical(&parse(
+            r#"{ "name":"b", "duration":1.0, "seed":2, "engine":3, "root": { "type":"seq",
+                "bpm":100, "steps_per_beat":4, "wave":"bass",
+                "bass_cutoff":600.0, "bass_env":1500.0, "bass_drive":0.35, "bass_sub_ratio":0.5, "bass_body_decay":6.0,
+                "env": { "a":0.003, "d":0.06, "s":0.8, "r":0.08 },
+                "notes": [ { "step":0, "len":4, "pitch":"E1" }, { "step":4, "len":4, "pitch":"G1" } ] } }"#,
+        ));
+    }
+
+    #[test]
     fn engine1_noise_falls_back_but_engine2_streams() {
         // engine < 2 keeps the shared stream ⇒ not streamable (buffer fallback).
         assert!(
