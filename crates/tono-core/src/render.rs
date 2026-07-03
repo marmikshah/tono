@@ -306,6 +306,9 @@ fn track_native_stereo(node: &Node, n: usize, sr: u32) -> Option<(Signal, Signal
         fm_index,
         fm_strike,
         pluck_decay,
+        pluck_body,
+        pluck_pick,
+        pluck_tone,
         piano_hammer,
         piano_strike,
         piano_inharm,
@@ -338,6 +341,9 @@ fn track_native_stereo(node: &Node, n: usize, sr: u32) -> Option<(Signal, Signal
             fm_index: *fm_index,
             fm_strike: *fm_strike,
             pluck_decay: *pluck_decay,
+            pluck_body: *pluck_body,
+            pluck_pick: *pluck_pick,
+            pluck_tone: *pluck_tone,
             piano_hammer: *piano_hammer,
             piano_strike: *piano_strike,
             piano_inharm: *piano_inharm,
@@ -1605,6 +1611,10 @@ struct SeqVoice<'a> {
     fm_index: f32,
     fm_strike: f32,
     pluck_decay: f32,
+    // Guitar tone stages (the `pluck` voice).
+    pluck_body: f32,
+    pluck_pick: f32,
+    pluck_tone: f32,
     // Piano tone knobs (engine-3 additive `piano` voice).
     piano_hammer: f32,
     piano_strike: f32,
@@ -1724,6 +1734,9 @@ pub(crate) fn seq_to_signal(node: &Node, n: usize, sr: u32, rng: &mut Rng, engin
         fm_index,
         fm_strike,
         pluck_decay,
+        pluck_body,
+        pluck_pick,
+        pluck_tone,
         piano_hammer,
         piano_strike,
         piano_inharm,
@@ -1756,6 +1769,9 @@ pub(crate) fn seq_to_signal(node: &Node, n: usize, sr: u32, rng: &mut Rng, engin
             fm_index: *fm_index,
             fm_strike: *fm_strike,
             pluck_decay: *pluck_decay,
+            pluck_body: *pluck_body,
+            pluck_pick: *pluck_pick,
+            pluck_tone: *pluck_tone,
             piano_hammer: *piano_hammer,
             piano_strike: *piano_strike,
             piano_inharm: *piano_inharm,
@@ -1865,19 +1881,58 @@ fn seq_note_signal(
             }
         }
         SeqWave::Pluck => {
-            // Karplus-Strong: a noise burst in a delay line tuned to the
-            // note's onset pitch (a plucked string cannot glide). The
-            // average-and-feed-back lowpass damps highs faster than lows,
-            // exactly like a real string.
+            // Karplus-Strong: a noise burst in a delay line tuned to the note's
+            // onset pitch. Three RNG-free stages wrap the loop — a tunable
+            // damping/brightness filter (`pluck_tone`), a fixed guitar-body mode
+            // bank (`pluck_body`), and a pick-attack click (`pluck_pick`) — each
+            // an identity op at its default, so the plain pluck is byte-identical
+            // and the `period` noise draws are unchanged.
             let period = ((srf / f[0].clamp(20.0, srf / 2.0)).round() as usize).max(2);
             let mut string: Vec<f32> = (0..period).map(|_| rng.bi()).collect();
             let mut spos = 0usize;
-            for _ in 0..n {
+            let bright = voice.pluck_tone.max(0.0);
+            let damp = (-voice.pluck_tone).max(0.0);
+            // Fixed guitar-body resonators: Helmholtz air, top plate, back.
+            let body_r = (-6.907_755 / (0.25 * srf)).exp();
+            let body_a2 = -body_r * body_r;
+            let body: [(f32, f32); 3] =
+                [(100.0, 1.0), (215.0, 0.8), (400.0, 0.5)].map(|(fr, g)| {
+                    let w0 = TAU * fr / srf;
+                    (2.0 * body_r * w0.cos(), g * w0.sin()) // (a1, b0)
+                });
+            let (mut by1, mut by2) = ([0.0f32; 3], [0.0f32; 3]);
+            let (mut lp, mut hp_in, mut hp_out) = (0.0f32, 0.0f32, 0.0f32);
+            for i in 0..n {
+                let t = i as f32 / srf;
                 let y = string[spos];
                 let next = string[(spos + 1) % string.len()];
-                string[spos] = voice.pluck_decay * 0.5 * (y + next);
+                // Pick click: the highpassed leading edge of the excitation.
+                let pick = if t < 0.008 {
+                    let hp = 0.9 * (hp_out + y - hp_in);
+                    hp_in = y;
+                    hp_out = hp;
+                    voice.pluck_pick * hp * (1.0 - t / 0.008)
+                } else {
+                    0.0
+                };
+                // Body resonance driven by the string output.
+                let mut body_sum = 0.0f32;
+                for k in 0..3 {
+                    let (a1, b0) = body[k];
+                    let yr = b0 * y + a1 * by1[k] + body_a2 * by2[k];
+                    by2[k] = by1[k];
+                    by1[k] = yr;
+                    body_sum += yr;
+                }
+                let out_sample =
+                    (1.0 - 0.3 * voice.pluck_body) * y + voice.pluck_body * 0.6 * body_sum + pick;
+                out.push(out_sample);
+                // Loop filter: brightness blend then a darkening one-pole.
+                let avg = (0.5 + 0.5 * bright) * y + (0.5 - 0.5 * bright) * next;
+                lp += damp * (avg - lp);
+                let filt = (1.0 - damp) * avg + damp * lp;
+                string[spos] = voice.pluck_decay * filt;
                 spos = (spos + 1) % string.len();
-                out.push(y);
             }
         }
         SeqWave::Piano if voice.engine >= 3 => {
@@ -3461,6 +3516,30 @@ mod tests {
         // The octave-down sub (ratio 0.5) puts real energy below the fundamental.
         let octave = render(&bass(r#""bass_sub":0.9,"bass_sub_ratio":0.5,"#));
         assert_ne!(bare, octave, "octave-down sub changes the voice");
+    }
+
+    #[test]
+    fn guitar_tone_stages_default_to_identity_and_variants_differ() {
+        let pluck = |extra: &str| {
+            doc(&format!(
+                r#"{{ "name":"n", "duration":1.2, "engine":3, "seed":3, "root": {{ "type":"seq",
+                    "bpm":90, "steps_per_beat":2, "wave":"pluck", "pluck_decay":0.96, "env": {{ "a":0.001, "s":1.0, "r":0.2 }},
+                    {extra}
+                    "notes": [ {{"step":0,"len":4,"pitch":"E3","gain":0.9}} ] }} }}"#
+            ))
+        };
+        // Byte-safe: omitting the stages == setting them at their identity defaults.
+        let bare = render(&pluck(""));
+        let defaults = render(&pluck(
+            r#""pluck_body":0.0,"pluck_pick":0.0,"pluck_tone":0.0,"#,
+        ));
+        assert_eq!(bare, defaults, "the pluck tone stages default to a no-op");
+        // A bodied, dark nylon variant is a different, well-formed waveform.
+        let nylon = render(&pluck(
+            r#""pluck_body":0.55,"pluck_pick":0.05,"pluck_tone":-0.35,"#,
+        ));
+        assert!(nylon.iter().all(|x| x.is_finite()));
+        assert_ne!(bare, nylon, "nylon body/tone/pick change the voice");
     }
 
     fn one_note(wave: &str, pitch: &str, secs: f32) -> Vec<f32> {

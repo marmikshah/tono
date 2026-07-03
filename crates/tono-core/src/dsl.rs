@@ -115,6 +115,17 @@ fn default_seq_fm_strike() -> f32 {
 fn default_pluck_decay() -> f32 {
     0.996
 }
+// Guitar tone stages on the `pluck` voice. All default to identity (0.0), so
+// omitting them renders byte-identically and draws no extra RNG.
+fn default_pluck_body() -> f32 {
+    0.0
+}
+fn default_pluck_pick() -> f32 {
+    0.0
+}
+fn default_pluck_tone() -> f32 {
+    0.0
+}
 // Piano tone knobs (engine-3 additive `piano` voice). Every default reproduces
 // the concert-grand kernel bit-for-bit (x*1.0==x, x/1.0==x, 0.125==1.0/8.0 in
 // f32), so a doc that omits them renders byte-identically. Variants set others.
@@ -564,6 +575,17 @@ pub enum Node {
         /// longer; low notes naturally ring longer than high ones).
         #[serde(default = "default_pluck_decay")]
         pluck_decay: f32,
+        /// Acoustic body-resonance depth when `wave` is `pluck`, 0..1 — mixes in
+        /// a fixed guitar-body mode bank. 0 = solid-body (default).
+        #[serde(default = "default_pluck_body")]
+        pluck_body: f32,
+        /// Pick/attack transient level when `wave` is `pluck`, 0..1. 0 = none.
+        #[serde(default = "default_pluck_pick")]
+        pluck_pick: f32,
+        /// String brightness/damping when `wave` is `pluck`, −1..1. 0 = the
+        /// current loop filter; + brightens, − darkens.
+        #[serde(default = "default_pluck_tone")]
+        pluck_tone: f32,
         /// Hammer hardness when `wave` is `piano` (engine ≥ 3): spectral
         /// brightness. 1 = concert grand; > 1 harder/brighter, < 1 softer/darker.
         #[serde(default = "default_piano_hammer")]
