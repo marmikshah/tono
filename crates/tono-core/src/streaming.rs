@@ -1869,6 +1869,20 @@ mod tests {
     }
 
     #[test]
+    fn guitar_variant_streams_byte_identically() {
+        // The pluck voice draws RNG (the KS burst); the new tone stages draw
+        // none, so the draw order is unchanged and the nylon variant streams
+        // bit-for-bit.
+        assert_byte_identical(&parse(
+            r#"{ "name":"g", "duration":1.0, "seed":5, "engine":3, "root": { "type":"seq",
+                "bpm":100, "steps_per_beat":4, "wave":"pluck", "pluck_decay":0.9,
+                "pluck_body":0.55, "pluck_pick":0.05, "pluck_tone":-0.35,
+                "env": { "a":0.001, "s":1.0, "r":0.2 },
+                "notes": [ { "step":0, "len":4, "pitch":"E3" }, { "step":4, "len":4, "pitch":"A3" } ] } }"#,
+        ));
+    }
+
+    #[test]
     fn engine1_noise_falls_back_but_engine2_streams() {
         // engine < 2 keeps the shared stream ⇒ not streamable (buffer fallback).
         assert!(

@@ -50,6 +50,12 @@ pub struct VoiceParams {
     pub fm_strike: Option<f32>,
     /// Karplus-Strong feedback decay, 0.8..1 — string ring time (`Guitar`).
     pub pluck_decay: Option<f32>,
+    /// Guitar body-resonance depth, 0..1 (`Guitar`).
+    pub pluck_body: Option<f32>,
+    /// Guitar pick-attack level, 0..1 (`Guitar`).
+    pub pluck_pick: Option<f32>,
+    /// Guitar string brightness/damping, −1..1 (`Guitar`).
+    pub pluck_tone: Option<f32>,
     /// Piano hammer hardness — spectral brightness (the `Piano` voice, engine ≥ 3).
     pub piano_hammer: Option<f32>,
     /// Piano hammer strike position — the spectral comb notch (`Piano`).
@@ -509,34 +515,45 @@ fn bass_tone(
 pub struct Guitar;
 
 impl Guitar {
-    /// Nylon-string — warm and short, a soft fingerpicked classical tone.
+    /// Nylon-string — warm and short: a dark loop, a big woody body, barely any
+    /// pick attack. A soft fingerpicked classical tone.
     pub fn nylon() -> Instrument {
         Instrument {
             voice: VoiceParams {
                 pluck_decay: Some(0.90),
+                pluck_tone: Some(-0.35),
+                pluck_body: Some(0.55),
+                pluck_pick: Some(0.05),
                 ..VoiceParams::default()
             },
             ..voice("nylon guitar", SeqWave::Pluck, pluck_env(0.25))
         }
     }
 
-    /// Steel-string acoustic — brighter and longer-ringing.
+    /// Steel-string acoustic — a sizzly bright loop, a present body, a clear pick
+    /// attack. Longer-ringing.
     pub fn steel() -> Instrument {
         Instrument {
             voice: VoiceParams {
                 pluck_decay: Some(0.965),
+                pluck_tone: Some(0.30),
+                pluck_body: Some(0.45),
+                pluck_pick: Some(0.30),
                 ..VoiceParams::default()
             },
             ..voice("steel guitar", SeqWave::Pluck, pluck_env(0.35))
         }
     }
 
-    /// Electric — long sustain, the string rings on.
+    /// Electric — the brightest loop, no acoustic body, a pick click, long clean
+    /// sustain. The solid-body pickup tone.
     pub fn electric() -> Instrument {
         Instrument {
             voice: VoiceParams {
                 pluck_decay: Some(0.99),
-                ..VoiceParams::default()
+                pluck_tone: Some(0.45),
+                pluck_pick: Some(0.25),
+                ..VoiceParams::default() // pluck_body None ⇒ 0.0 = solid body
             },
             ..voice("electric guitar", SeqWave::Pluck, pluck_env(0.5))
         }
@@ -663,6 +680,24 @@ mod tests {
         assert_eq!(Bass::pick().voice.bass_click, Some(2500.0)); // plectrum tick
         assert_eq!(Bass::synth().voice.bass_sub_ratio, Some(0.5)); // octave-down sub
         assert_eq!(Bass::sub().wave, SeqWave::Bass); // sub now uses the Bass voice
+    }
+
+    #[test]
+    fn guitar_variants_set_body_and_tone() {
+        assert_eq!(Guitar::nylon().voice.pluck_body, Some(0.55));
+        assert!(
+            Guitar::nylon().voice.pluck_tone.unwrap() < 0.0,
+            "nylon is dark"
+        );
+        assert!(
+            Guitar::steel().voice.pluck_tone.unwrap() > 0.0,
+            "steel is bright"
+        );
+        assert_eq!(
+            Guitar::electric().voice.pluck_body,
+            None,
+            "electric = solid body"
+        );
     }
 
     #[test]

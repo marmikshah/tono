@@ -341,6 +341,15 @@ impl Song {
             if let Some(v) = t.voice.pluck_decay {
                 seq_json["pluck_decay"] = serde_json::json!(v);
             }
+            if let Some(v) = t.voice.pluck_body {
+                seq_json["pluck_body"] = serde_json::json!(v);
+            }
+            if let Some(v) = t.voice.pluck_pick {
+                seq_json["pluck_pick"] = serde_json::json!(v);
+            }
+            if let Some(v) = t.voice.pluck_tone {
+                seq_json["pluck_tone"] = serde_json::json!(v);
+            }
             if let Some(v) = t.voice.piano_hammer {
                 seq_json["piano_hammer"] = serde_json::json!(v);
             }
