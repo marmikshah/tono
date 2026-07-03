@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.0 — 2026-07-03
+
+Per-track mixing on the song builder. Instruments gain `.reverb(0..1)` (a reverb
+send that wraps the track in a reverb), and `.swing(0..1)` / `.humanize(0..1)`
+to override the song-global groove per track. Byte-safe — a dry, unset track is
+identical to before.
+
 ## 1.4.0 — 2026-07-03
 
 A composition system on the one deterministic core: a catalog of ready-to-play
