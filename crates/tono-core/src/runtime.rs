@@ -540,21 +540,23 @@ impl Controller {
     /// number of frames actually pushed — fewer when the ring is full, which is
     /// the backpressure signal to stop pumping until the next tick.
     pub fn pump(&mut self, frames: usize) -> usize {
+        // Render only what the ring can take. Engine::fill advances every
+        // play head, so a frame rendered but not pushed would be audio lost
+        // forever — not deferred. As the sole producer, the space observed
+        // here can only grow before the pushes below.
+        let frames = frames.min(self.ring.free() / 2);
+        if frames == 0 {
+            return 0;
+        }
         if self.pump_buf.len() < frames * 2 {
             self.pump_buf.resize(frames * 2, 0.0);
         }
         let block = &mut self.pump_buf[..frames * 2];
         self.engine.fill(block);
-        let mut pushed = 0;
-        for f in 0..frames {
-            if self.ring.free() < 2 {
-                break; // keep L/R paired: only push a whole frame
-            }
-            self.ring.push(block[f * 2]);
-            self.ring.push(block[f * 2 + 1]);
-            pushed += 1;
+        for s in block.iter() {
+            self.ring.push(*s);
         }
-        pushed
+        frames
     }
 }
 
@@ -581,8 +583,16 @@ pub struct Renderer {
 
 impl AudioSource for Renderer {
     fn fill(&mut self, out: &mut [f32]) -> usize {
-        for s in out.iter_mut() {
-            *s = self.ring.pop().unwrap_or(0.0);
+        // Drain whole frames only: taking half a frame across an underrun
+        // would land every later left sample on a right slot — a permanent
+        // channel swap. As the sole consumer, an observed pair stays there.
+        for frame in out.chunks_mut(2) {
+            if frame.len() == 2 && self.ring.len() >= 2 {
+                frame[0] = self.ring.pop().unwrap_or(0.0);
+                frame[1] = self.ring.pop().unwrap_or(0.0);
+            } else {
+                frame.fill(0.0);
+            }
         }
         out.len() / 2
     }
@@ -905,6 +915,59 @@ mod tests {
         let mut out = vec![0.0f32; 512 * 2];
         assert_eq!(rend.fill(&mut out), 512);
         assert!(peak(&out) > 0.0, "renderer drained real audio");
+    }
+
+    #[test]
+    fn pump_never_drops_rendered_frames() {
+        // The split path must deliver the same bytes as an unsplit engine:
+        // pumping more than the ring can take must not advance play heads
+        // past what was actually delivered.
+        let mk = || {
+            let mut e = Engine::new(44_100);
+            let p = e.load(&doc(1.0));
+            e.play_looping(p);
+            e
+        };
+        let mut reference = mk();
+        let mut expected = vec![0.0f32; 192 * 2];
+        reference.fill(&mut expected);
+
+        let (mut ctl, mut rend) = mk().split(64);
+        let mut got = Vec::new();
+        let mut out = vec![0.0f32; 64 * 2];
+        while got.len() < expected.len() {
+            ctl.pump(200); // over-ask: the ring only holds 64 frames
+            rend.fill(&mut out);
+            got.extend_from_slice(&out);
+        }
+        assert_eq!(
+            &got[..expected.len()],
+            &expected[..],
+            "over-pumping dropped rendered frames"
+        );
+    }
+
+    #[test]
+    fn renderer_drains_whole_frames_only() {
+        // A partial frame in the ring must not shift channel alignment.
+        let ring = SampleRing::new(8);
+        for s in [1.0f32, 2.0, 3.0] {
+            ring.push(s); // one and a half frames
+        }
+        let mut rend = Renderer {
+            ring: std::sync::Arc::new(ring),
+        };
+        let mut out = vec![9.0f32; 4];
+        rend.fill(&mut out);
+        assert_eq!(out, vec![1.0, 2.0, 0.0, 0.0], "half frame must stay queued");
+        rend.ring.push(4.0);
+        let mut out = vec![9.0f32; 2];
+        rend.fill(&mut out);
+        assert_eq!(
+            out,
+            vec![3.0, 4.0],
+            "queued half frame pairs with the next sample"
+        );
     }
 
     #[test]
