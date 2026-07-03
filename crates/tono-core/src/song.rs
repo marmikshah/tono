@@ -59,6 +59,15 @@ pub struct SongTrack {
     /// Voice-specific synthesis parameters (from the catalog instrument).
     #[serde(default)]
     pub voice: VoiceParams,
+    /// Reverb send, 0..1 — wraps the track's seq in a reverb (0 = dry).
+    #[serde(default)]
+    pub reverb: f32,
+    /// Per-track swing override (0..1); `None` uses the song's swing.
+    #[serde(default)]
+    pub swing: Option<f32>,
+    /// Per-track humanize override (0..1); `None` uses the song's humanize.
+    #[serde(default)]
+    pub humanize: Option<f32>,
 }
 
 /// A reusable phrase: notes on the bar grid, `bars` long. Note `step`s are
@@ -153,6 +162,9 @@ impl Song {
             sf2_bank: 0,
             notes: Vec::new(),
             voice: VoiceParams::default(),
+            reverb: 0.0,
+            swing: None,
+            humanize: None,
         });
         self
     }
@@ -184,6 +196,9 @@ impl Song {
             sf2_bank: 0,
             notes: phrase.notes,
             voice: instrument.voice,
+            reverb: instrument.reverb,
+            swing: instrument.swing,
+            humanize: instrument.humanize,
         });
         self
     }
@@ -322,8 +337,8 @@ impl Song {
                 "steps_per_beat": self.steps_per_beat,
                 "wave": serde_json::to_value(t.wave).map_err(|e| e.to_string())?,
                 "env": serde_json::to_value(t.env).map_err(|e| e.to_string())?,
-                "swing": self.swing,
-                "humanize": self.humanize,
+                "swing": t.swing.unwrap_or(self.swing),
+                "humanize": t.humanize.unwrap_or(self.humanize),
                 "sf2": t.sf2,
                 "sf2_preset": t.sf2_preset,
                 "sf2_bank": t.sf2_bank,
@@ -390,9 +405,25 @@ impl Song {
             let seq: Node = serde_json::from_value(seq_json)
                 .map_err(|e| format!("track '{}' seq build: {e}", t.name))?;
 
+            // A reverb send wraps the seq in a chain (dry when reverb == 0, so
+            // the track is byte-identical without it).
+            let node = if t.reverb > 0.0 {
+                let rv = t.reverb.clamp(0.0, 1.0);
+                Node::Chain {
+                    stages: vec![
+                        seq,
+                        Node::Reverb {
+                            room: 0.6,
+                            mix: 0.5 * rv,
+                        },
+                    ],
+                }
+            } else {
+                seq
+            };
             doc_tracks.push(Track {
                 id: Some(t.name.clone()),
-                node: seq,
+                node,
                 pan: t.pan,
                 gain: t.gain,
                 at: 0.0,
@@ -738,6 +769,65 @@ mod tests {
             });
         assert_eq!(song.tracks[0].name, "grand_piano");
         assert_eq!(song.tracks[1].name, "grand_piano_2");
+    }
+
+    #[test]
+    fn per_track_reverb_wraps_and_is_dry_by_default() {
+        use crate::catalog::GrandPiano;
+        // Dry (default): the track node is a bare seq — byte-identical to before.
+        let dry = Song::new("s", 100.0)
+            .add(GrandPiano::grand(), |t| {
+                t.at(0.0).note("C4", 1.0);
+            })
+            .to_doc()
+            .unwrap();
+        let Node::Tracks { tracks, .. } = &dry.root else {
+            panic!("tracks")
+        };
+        assert!(
+            matches!(&tracks[0].node, Node::Seq { .. }),
+            "dry = bare seq"
+        );
+        // Wet: the seq is wrapped in a chain [seq, reverb].
+        let wet = Song::new("s", 100.0)
+            .add(GrandPiano::grand().reverb(0.5), |t| {
+                t.at(0.0).note("C4", 1.0);
+            })
+            .to_doc()
+            .unwrap();
+        let Node::Tracks { tracks, .. } = &wet.root else {
+            panic!("tracks")
+        };
+        let Node::Chain { stages } = &tracks[0].node else {
+            panic!("reverb wraps the seq in a chain")
+        };
+        assert!(matches!(stages[0], Node::Seq { .. }));
+        assert!(matches!(stages[1], Node::Reverb { .. }));
+        assert!(
+            render::render(&wet).iter().any(|&x| x != 0.0),
+            "wet song sounds"
+        );
+    }
+
+    #[test]
+    fn per_track_swing_overrides_the_song_swing() {
+        use crate::catalog::Bass;
+        let doc = Song::new("s", 120.0) // song swing defaults to 0
+            .add(Bass::finger().swing(0.6), |t| {
+                t.at(0.0).note("C2", 1.0).at(1.0).note("G1", 1.0);
+            })
+            .to_doc()
+            .unwrap();
+        let Node::Tracks { tracks, .. } = &doc.root else {
+            panic!("tracks")
+        };
+        let Node::Seq { swing, .. } = &tracks[0].node else {
+            panic!("seq")
+        };
+        assert!(
+            (*swing - 0.6).abs() < 1e-6,
+            "track swing overrides the song's"
+        );
     }
 
     #[test]

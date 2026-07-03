@@ -97,6 +97,12 @@ pub struct Instrument {
     pub gain: f32,
     /// Stereo position, −1 (hard left) .. 1 (hard right).
     pub pan: f32,
+    /// Reverb send, 0..1 — wraps the track in a reverb (0 = dry, default).
+    pub reverb: f32,
+    /// Per-track swing override (0..1); `None` uses the song's swing.
+    pub swing: Option<f32>,
+    /// Per-track humanize override (0..1); `None` uses the song's humanize.
+    pub humanize: Option<f32>,
     /// Voice-specific synthesis parameters.
     pub voice: VoiceParams,
 }
@@ -120,6 +126,24 @@ impl Instrument {
         self.pan = pan;
         self
     }
+
+    /// Set the reverb send, 0..1 (0 = dry). Wraps this track in a reverb.
+    pub fn reverb(mut self, amount: f32) -> Self {
+        self.reverb = amount;
+        self
+    }
+
+    /// Override the song's swing for this track, 0..1.
+    pub fn swing(mut self, swing: f32) -> Self {
+        self.swing = Some(swing);
+        self
+    }
+
+    /// Override the song's humanize for this track, 0..1.
+    pub fn humanize(mut self, humanize: f32) -> Self {
+        self.humanize = Some(humanize);
+        self
+    }
 }
 
 /// A short constructor: an instrument with unity gain, centered, no voice params.
@@ -130,6 +154,9 @@ fn voice(name: &str, wave: SeqWave, env: Adsr) -> Instrument {
         env,
         gain: 1.0,
         pan: 0.0,
+        reverb: 0.0,
+        swing: None,
+        humanize: None,
         voice: VoiceParams::default(),
     }
 }
