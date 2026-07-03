@@ -312,6 +312,16 @@ fn track_native_stereo(node: &Node, n: usize, sr: u32) -> Option<(Signal, Signal
         piano_detune,
         piano_decay,
         kit,
+        bass_cutoff,
+        bass_env,
+        bass_env_vel,
+        bass_decay,
+        bass_click,
+        bass_body,
+        bass_sub,
+        bass_sub_ratio,
+        bass_drive,
+        bass_body_decay,
         sf2,
         sf2_preset,
         sf2_bank,
@@ -334,6 +344,16 @@ fn track_native_stereo(node: &Node, n: usize, sr: u32) -> Option<(Signal, Signal
             piano_detune: *piano_detune,
             piano_decay: *piano_decay,
             kit: *kit,
+            bass_cutoff: *bass_cutoff,
+            bass_env: *bass_env,
+            bass_env_vel: *bass_env_vel,
+            bass_decay: *bass_decay,
+            bass_click: *bass_click,
+            bass_body: *bass_body,
+            bass_sub: *bass_sub,
+            bass_sub_ratio: *bass_sub_ratio,
+            bass_drive: *bass_drive,
+            bass_body_decay: *bass_body_decay,
             sf2,
             sf2_preset: *sf2_preset,
             sf2_bank: *sf2_bank,
@@ -1593,6 +1613,17 @@ struct SeqVoice<'a> {
     piano_decay: f32,
     // Drum-kit voicing (the `kit` wave).
     kit: KitStyle,
+    // Bass tone knobs (the `bass` wave).
+    bass_cutoff: f32,
+    bass_env: f32,
+    bass_env_vel: f32,
+    bass_decay: f32,
+    bass_click: f32,
+    bass_body: f32,
+    bass_sub: f32,
+    bass_sub_ratio: f32,
+    bass_drive: f32,
+    bass_body_decay: f32,
     // Read only by the SoundFont sampler path (feature = "sampler").
     #[cfg_attr(not(feature = "sampler"), allow(dead_code))]
     sf2: &'a str,
@@ -1699,6 +1730,16 @@ pub(crate) fn seq_to_signal(node: &Node, n: usize, sr: u32, rng: &mut Rng, engin
         piano_detune,
         piano_decay,
         kit,
+        bass_cutoff,
+        bass_env,
+        bass_env_vel,
+        bass_decay,
+        bass_click,
+        bass_body,
+        bass_sub,
+        bass_sub_ratio,
+        bass_drive,
+        bass_body_decay,
         sf2,
         sf2_preset,
         sf2_bank,
@@ -1721,6 +1762,16 @@ pub(crate) fn seq_to_signal(node: &Node, n: usize, sr: u32, rng: &mut Rng, engin
             piano_detune: *piano_detune,
             piano_decay: *piano_decay,
             kit: *kit,
+            bass_cutoff: *bass_cutoff,
+            bass_env: *bass_env,
+            bass_env_vel: *bass_env_vel,
+            bass_decay: *bass_decay,
+            bass_click: *bass_click,
+            bass_body: *bass_body,
+            bass_sub: *bass_sub,
+            bass_sub_ratio: *bass_sub_ratio,
+            bass_drive: *bass_drive,
+            bass_body_decay: *bass_body_decay,
             sf2,
             sf2_preset: *sf2_preset,
             sf2_bank: *sf2_bank,
@@ -2008,21 +2059,34 @@ fn seq_note_signal(
             }
         }
         SeqWave::Bass => {
-            // Fingered bass: a saw through a one-pole lowpass whose cutoff
-            // snaps open with velocity and settles, over a sine sub.
+            // A saw through a velocity-swept one-pole lowpass over a sine sub.
+            // Every constant is a `bass_*` knob; the defaults reproduce the
+            // original fingered bass bit-for-bit (and draw no RNG, so it streams
+            // byte-identically). `bass_click` adds a deterministic pick tick,
+            // `bass_drive` a tanh grit, `bass_sub_ratio` an octave-down sub.
+            const BASS_CLICK_TAU: f32 = 0.008;
+            let decay = voice.bass_decay.max(1e-3);
+            let body_decay = voice.bass_body_decay.max(1e-3);
+            let drive = voice.bass_drive.clamp(0.0, 1.0);
             let mut phase = 0.0f32;
+            let mut sub_phase = 0.0f32;
             let mut lp = 0.0f32;
             for (i, &fi) in f.iter().enumerate() {
                 let dt = fi.max(0.0) / srf;
                 let t = i as f32 / srf;
                 let saw = (2.0 * phase - 1.0) - poly_blep(phase, dt);
-                let cutoff = 250.0 + (700.0 + 1_100.0 * note.gain) * (-t / 0.15).exp();
+                let cutoff = voice.bass_cutoff
+                    + (voice.bass_env + voice.bass_env_vel * note.gain) * (-t / decay).exp()
+                    + voice.bass_click * (-t / BASS_CLICK_TAU).exp();
                 let a = 1.0 - (-TAU * cutoff / srf).exp();
                 lp += a * (saw - lp);
-                let sub = (TAU * phase).sin();
-                out.push((0.7 * lp + 0.45 * sub) * (-t / 2.0).exp());
+                let body = lp + drive * ((lp * (1.0 + 2.0 * drive)).tanh() - lp);
+                let sub = (TAU * sub_phase).sin();
+                out.push((voice.bass_body * body + voice.bass_sub * sub) * (-t / body_decay).exp());
                 phase += dt;
                 phase -= phase.floor();
+                sub_phase += dt * voice.bass_sub_ratio;
+                sub_phase -= sub_phase.floor();
             }
         }
         SeqWave::Kit => out = kit_drum(f, note, sr, rng, voice.kit),
@@ -3370,6 +3434,33 @@ mod tests {
             render(&kit("classic")),
             "default == classic"
         );
+    }
+
+    #[test]
+    fn bass_tone_knobs_default_to_the_current_voice_and_variants_differ() {
+        let bass = |extra: &str| {
+            doc(&format!(
+                r#"{{ "name":"n", "duration":1.5, "engine":3, "root": {{ "type":"seq",
+                    "bpm":90, "steps_per_beat":2, "wave":"bass", "env": {{ "a":0.005, "d":0.1, "s":0.9, "r":0.12 }},
+                    {extra}
+                    "notes": [ {{"step":0,"len":4,"pitch":"E1","gain":0.9}} ] }} }}"#
+            ))
+        };
+        // Byte-safe: omitting the bass_* keys == setting them at their defaults.
+        let bare = render(&bass(""));
+        let defaults = render(&bass(
+            r#""bass_cutoff":250.0,"bass_env":700.0,"bass_env_vel":1100.0,"bass_decay":0.15,"bass_click":0.0,"bass_body":0.7,"bass_sub":0.45,"bass_sub_ratio":1.0,"bass_drive":0.0,"bass_body_decay":2.0,"#,
+        ));
+        assert_eq!(bare, defaults, "bass defaults reproduce the current voice");
+        // A driven synth-bass variant is a different, well-formed waveform.
+        let synth = render(&bass(
+            r#""bass_cutoff":600.0,"bass_drive":0.35,"bass_sub_ratio":0.5,"bass_body_decay":6.0,"#,
+        ));
+        assert!(synth.iter().all(|x| x.is_finite()));
+        assert_ne!(bare, synth, "synth bass differs from finger");
+        // The octave-down sub (ratio 0.5) puts real energy below the fundamental.
+        let octave = render(&bass(r#""bass_sub":0.9,"bass_sub_ratio":0.5,"#));
+        assert_ne!(bare, octave, "octave-down sub changes the voice");
     }
 
     fn one_note(wave: &str, pitch: &str, secs: f32) -> Vec<f32> {

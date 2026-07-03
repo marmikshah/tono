@@ -62,6 +62,17 @@ pub struct VoiceParams {
     pub piano_decay: Option<f32>,
     /// Drum-kit voicing (the `Kit` voice); `None` = the classic kit.
     pub kit: Option<KitStyle>,
+    /// Bass filter floor / sweep / body / sub / drive knobs (the `Bass` voice).
+    pub bass_cutoff: Option<f32>,
+    pub bass_env: Option<f32>,
+    pub bass_env_vel: Option<f32>,
+    pub bass_decay: Option<f32>,
+    pub bass_click: Option<f32>,
+    pub bass_body: Option<f32>,
+    pub bass_sub: Option<f32>,
+    pub bass_sub_ratio: Option<f32>,
+    pub bass_drive: Option<f32>,
+    pub bass_body_decay: Option<f32>,
 }
 
 /// A ready-to-play instrument: a synth voice plus a tuned envelope, mixer
@@ -403,50 +414,91 @@ impl Bass {
         )
     }
 
-    /// Picked — more attack punch and a tighter release.
+    /// Picked — a bright plectrum tick, a fast-closing filter, a touch of grit.
     pub fn pick() -> Instrument {
-        voice(
-            "pick bass",
-            SeqWave::Bass,
-            Adsr {
-                a: 0.002,
-                d: 0.08,
-                s: 0.85,
-                r: 0.08,
-                punch: 0.25,
-            },
-        )
+        Instrument {
+            voice: bass_tone(
+                300.0, 800.0, 1200.0, 0.08, 2500.0, 0.75, 0.40, 1.0, 0.05, 1.6,
+            ),
+            ..voice(
+                "pick bass",
+                SeqWave::Bass,
+                Adsr {
+                    a: 0.002,
+                    d: 0.08,
+                    s: 0.85,
+                    r: 0.08,
+                    punch: 0.25,
+                },
+            )
+        }
     }
 
-    /// A pure **sub** bass — a deep sine, felt more than heard. Keep it mono and
-    /// low.
+    /// A pure **sub** bass — a deep sine with a whisper of body so it still
+    /// translates on small speakers; long hold, felt more than heard.
     pub fn sub() -> Instrument {
-        voice(
-            "sub bass",
-            SeqWave::Sine,
-            Adsr {
-                a: 0.005,
-                d: 0.0,
-                s: 1.0,
-                r: 0.1,
-                punch: 0.0,
-            },
-        )
+        Instrument {
+            voice: bass_tone(100.0, 150.0, 200.0, 0.25, 0.0, 0.22, 0.95, 1.0, 0.0, 4.0),
+            ..voice(
+                "sub bass",
+                SeqWave::Bass,
+                Adsr {
+                    a: 0.005,
+                    d: 0.0,
+                    s: 1.0,
+                    r: 0.1,
+                    punch: 0.0,
+                },
+            )
+        }
     }
 
-    /// A raw sawtooth synth bass — bright and buzzy for electronic tracks.
+    /// A bright, wide, tanh-driven synth bass over a fat octave-down sub — the
+    /// modern electronic/EDM voice.
     pub fn synth() -> Instrument {
-        voice(
-            "synth bass",
-            SeqWave::Sawtooth,
-            Adsr {
-                a: 0.003,
-                d: 0.06,
-                s: 0.8,
-                r: 0.08,
-                punch: 0.1,
-            },
-        )
+        Instrument {
+            voice: bass_tone(600.0, 1500.0, 800.0, 0.25, 0.0, 0.85, 0.35, 0.5, 0.35, 6.0),
+            ..voice(
+                "synth bass",
+                SeqWave::Bass,
+                Adsr {
+                    a: 0.003,
+                    d: 0.06,
+                    s: 0.8,
+                    r: 0.08,
+                    punch: 0.1,
+                },
+            )
+        }
+    }
+}
+
+/// Build [`VoiceParams`] for a bass variant (all ten `bass_*` knobs).
+#[allow(clippy::too_many_arguments)]
+fn bass_tone(
+    cutoff: f32,
+    env: f32,
+    env_vel: f32,
+    decay: f32,
+    click: f32,
+    body: f32,
+    sub: f32,
+    sub_ratio: f32,
+    drive: f32,
+    body_decay: f32,
+) -> VoiceParams {
+    VoiceParams {
+        bass_cutoff: Some(cutoff),
+        bass_env: Some(env),
+        bass_env_vel: Some(env_vel),
+        bass_decay: Some(decay),
+        bass_click: Some(click),
+        bass_body: Some(body),
+        bass_sub: Some(sub),
+        bass_sub_ratio: Some(sub_ratio),
+        bass_drive: Some(drive),
+        bass_body_decay: Some(body_decay),
+        ..VoiceParams::default()
     }
 }
 
@@ -603,6 +655,14 @@ mod tests {
         );
         assert_eq!(GrandPiano::honky_tonk().voice.piano_detune, Some(12.0));
         assert_eq!(GrandPiano::upright().voice.piano_inharm, Some(1.6));
+    }
+
+    #[test]
+    fn bass_variants_set_tone_and_finger_is_the_default_voice() {
+        assert_eq!(Bass::finger().voice, VoiceParams::default());
+        assert_eq!(Bass::pick().voice.bass_click, Some(2500.0)); // plectrum tick
+        assert_eq!(Bass::synth().voice.bass_sub_ratio, Some(0.5)); // octave-down sub
+        assert_eq!(Bass::sub().wave, SeqWave::Bass); // sub now uses the Bass voice
     }
 
     #[test]
