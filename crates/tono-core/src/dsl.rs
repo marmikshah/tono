@@ -115,6 +115,24 @@ fn default_seq_fm_strike() -> f32 {
 fn default_pluck_decay() -> f32 {
     0.996
 }
+// Piano tone knobs (engine-3 additive `piano` voice). Every default reproduces
+// the concert-grand kernel bit-for-bit (x*1.0==x, x/1.0==x, 0.125==1.0/8.0 in
+// f32), so a doc that omits them renders byte-identically. Variants set others.
+fn default_piano_hammer() -> f32 {
+    1.0
+}
+fn default_piano_strike() -> f32 {
+    0.125
+}
+fn default_piano_inharm() -> f32 {
+    1.0
+}
+fn default_piano_detune() -> f32 {
+    1.0
+}
+fn default_piano_decay() -> f32 {
+    1.0
+}
 fn default_duck_amount() -> f32 {
     0.8
 }
@@ -514,6 +532,27 @@ pub enum Node {
         /// longer; low notes naturally ring longer than high ones).
         #[serde(default = "default_pluck_decay")]
         pluck_decay: f32,
+        /// Hammer hardness when `wave` is `piano` (engine ≥ 3): spectral
+        /// brightness. 1 = concert grand; > 1 harder/brighter, < 1 softer/darker.
+        #[serde(default = "default_piano_hammer")]
+        piano_hammer: f32,
+        /// Hammer strike position when `wave` is `piano` (fraction along the
+        /// string, engine ≥ 3): the comb-notch that thins the spectrum. 0.125 =
+        /// grand; toward the bridge is brighter, toward center hollower.
+        #[serde(default = "default_piano_strike")]
+        piano_strike: f32,
+        /// String-stiffness scale when `wave` is `piano` (engine ≥ 3): stretches
+        /// the partials sharp. 1 = grand; > 1 = short/stiff upright jangle.
+        #[serde(default = "default_piano_inharm")]
+        piano_inharm: f32,
+        /// Unison detune width when `wave` is `piano` (engine ≥ 3): the two-string
+        /// beating. 1 ≈ ±1 cent (grand shimmer); ~12 = honky-tonk warble.
+        #[serde(default = "default_piano_detune")]
+        piano_detune: f32,
+        /// Ring-time scale when `wave` is `piano` (engine ≥ 3). 1 = grand;
+        /// < 1 = shorter, damped (felt/upright); > 1 = longer sustain.
+        #[serde(default = "default_piano_decay")]
+        piano_decay: f32,
         /// Path to a SoundFont (.sf2) file when `wave` is `sampler`.
         #[serde(default)]
         sf2: String,

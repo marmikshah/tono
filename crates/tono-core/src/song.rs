@@ -341,6 +341,21 @@ impl Song {
             if let Some(v) = t.voice.pluck_decay {
                 seq_json["pluck_decay"] = serde_json::json!(v);
             }
+            if let Some(v) = t.voice.piano_hammer {
+                seq_json["piano_hammer"] = serde_json::json!(v);
+            }
+            if let Some(v) = t.voice.piano_strike {
+                seq_json["piano_strike"] = serde_json::json!(v);
+            }
+            if let Some(v) = t.voice.piano_inharm {
+                seq_json["piano_inharm"] = serde_json::json!(v);
+            }
+            if let Some(v) = t.voice.piano_detune {
+                seq_json["piano_detune"] = serde_json::json!(v);
+            }
+            if let Some(v) = t.voice.piano_decay {
+                seq_json["piano_decay"] = serde_json::json!(v);
+            }
             let seq: Node = serde_json::from_value(seq_json)
                 .map_err(|e| format!("track '{}' seq build: {e}", t.name))?;
 
