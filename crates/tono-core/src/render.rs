@@ -944,7 +944,9 @@ fn apply_processor(
             out
         }
         Node::Delay { secs, feedback } => {
-            let dn = ((secs * sr as f32) as usize).max(1);
+            // validate() caps secs at 30 s; the clamp guards direct render
+            // calls on unvalidated docs from an unbounded allocation.
+            let dn = ((secs.min(30.0) * sr as f32) as usize).max(1);
             let mut buf = vec![0.0f32; dn];
             let mut w = 0usize;
             let mut out = Vec::with_capacity(input.len());

@@ -1144,7 +1144,9 @@ fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Pr
             held: 0.0,
         },
         Node::Delay { secs, feedback } => {
-            let dn = ((*secs * srf) as usize).max(1);
+            // Mirrors the offline clamp: validate() caps secs at 30 s; this
+            // guards unvalidated docs from an unbounded allocation.
+            let dn = ((secs.min(30.0) * srf) as usize).max(1);
             Proc::Delay {
                 buf: vec![0.0; dn],
                 w: 0,
