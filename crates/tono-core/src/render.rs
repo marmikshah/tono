@@ -1171,12 +1171,24 @@ pub(crate) fn drive_curve(x: f32, shape: DriveShape) -> f32 {
         DriveShape::Hard => x.clamp(-1.0, 1.0),
         DriveShape::Fold => {
             // Reflect anything outside [-1, 1] back inward (wavefolding).
+            // This runs per sample on the real-time path, so it must always
+            // terminate: a non-finite input would otherwise loop forever, and
+            // the iteration cap bounds pathological amplitudes (folding is
+            // musically meaningless that far out; no sane input gets near it).
+            if !x.is_finite() {
+                return 0.0;
+            }
             let mut y = x;
+            let mut folds = 0;
             while !(-1.0..=1.0).contains(&y) {
                 if y > 1.0 {
                     y = 2.0 - y;
                 } else {
                     y = -2.0 - y;
+                }
+                folds += 1;
+                if folds > 1024 {
+                    return y.clamp(-1.0, 1.0);
                 }
             }
             y
@@ -3042,6 +3054,19 @@ mod tests {
         let s = render(&d);
         let clipped = s.iter().filter(|x| x.abs() > 0.95).count();
         assert!(clipped > s.len() / 2);
+    }
+
+    #[test]
+    fn drive_fold_terminates_on_any_input() {
+        // The fold loop runs per sample on the real-time path: a non-finite
+        // input must not hang it, and huge amplitudes must stay bounded.
+        assert_eq!(drive_curve(f32::NAN, DriveShape::Fold), 0.0);
+        assert_eq!(drive_curve(f32::INFINITY, DriveShape::Fold), 0.0);
+        assert_eq!(drive_curve(f32::NEG_INFINITY, DriveShape::Fold), 0.0);
+        assert!((-1.0..=1.0).contains(&drive_curve(1.0e9, DriveShape::Fold)));
+        // Realistic inputs keep the exact reflection behavior.
+        assert_eq!(drive_curve(1.5, DriveShape::Fold), 0.5);
+        assert_eq!(drive_curve(-1.5, DriveShape::Fold), -0.5);
     }
 
     #[test]
