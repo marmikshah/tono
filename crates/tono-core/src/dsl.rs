@@ -553,6 +553,11 @@ pub enum Node {
         /// < 1 = shorter, damped (felt/upright); > 1 = longer sustain.
         #[serde(default = "default_piano_decay")]
         piano_decay: f32,
+        /// Drum-kit voicing when `wave` is `kit`. Omitted ⇒ `classic` (the
+        /// original kit, byte-identical); `acoustic`/`electronic`/`808` are
+        /// alternate synthesized kits.
+        #[serde(default)]
+        kit: KitStyle,
         /// Path to a SoundFont (.sf2) file when `wave` is `sampler`.
         #[serde(default)]
         sf2: String,
@@ -964,6 +969,27 @@ pub enum SeqWave {
     /// follow the GM drum map). The biggest realism jump available: this is
     /// how DAWs sound real.
     Sampler,
+}
+
+/// Which drum-kit voicing the `kit` seq wave synthesizes. Every style follows
+/// the same General MIDI note map; they differ only in how each drum is
+/// synthesized. `Classic` is the original kit — omitting `kit` (or setting it to
+/// `classic`) renders byte-identically to before this field existed.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum KitStyle {
+    /// The original synthesized GM kit.
+    #[default]
+    Classic,
+    /// A deeper, more realistic acoustic kit — punchier kick, tuned snare body,
+    /// ringier toms, shimmery cymbals.
+    Acoustic,
+    /// Clean synthesized electronic drums — tight, punchy, crisp.
+    Electronic,
+    /// Roland TR-808 style — a long booming sub kick, ringy cowbell, snappy
+    /// snare, tick-y percussion.
+    #[serde(rename = "808")]
+    Eight08,
 }
 
 /// An ADSR amplitude envelope. One shape, used in three places: the [`Node::Env`]

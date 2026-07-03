@@ -1841,6 +1841,21 @@ mod tests {
     }
 
     #[test]
+    fn kit_styles_stream_byte_identically() {
+        // Each alternate kit keeps the one-draw-per-sample rng discipline, so the
+        // pre-rendered stream matches the offline bounce bit-for-bit.
+        for style in ["acoustic", "electronic", "808"] {
+            assert_byte_identical(&parse(&format!(
+                r#"{{ "name":"k", "duration":0.8, "seed":6, "engine":3, "root": {{ "type":"seq",
+                    "bpm":120, "steps_per_beat":4, "wave":"kit", "kit":"{style}", "env": {{ "a":0.001, "s":1.0, "r":0.05 }},
+                    "notes": [ {{"step":0,"len":1,"pitch":"midi:36"}}, {{"step":2,"len":1,"pitch":"midi:38"}},
+                               {{"step":3,"len":1,"pitch":"midi:42"}}, {{"step":4,"len":1,"pitch":"midi:49"}},
+                               {{"step":6,"len":1,"pitch":"midi:46"}} ] }} }}"#
+            )));
+        }
+    }
+
+    #[test]
     fn engine1_noise_falls_back_but_engine2_streams() {
         // engine < 2 keeps the shared stream ⇒ not streamable (buffer fallback).
         assert!(
