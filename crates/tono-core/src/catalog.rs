@@ -50,6 +50,16 @@ pub struct VoiceParams {
     pub fm_strike: Option<f32>,
     /// Karplus-Strong feedback decay, 0.8..1 — string ring time (`Guitar`).
     pub pluck_decay: Option<f32>,
+    /// Piano hammer hardness — spectral brightness (the `Piano` voice, engine ≥ 3).
+    pub piano_hammer: Option<f32>,
+    /// Piano hammer strike position — the spectral comb notch (`Piano`).
+    pub piano_strike: Option<f32>,
+    /// Piano string-stiffness scale — inharmonic partial stretch (`Piano`).
+    pub piano_inharm: Option<f32>,
+    /// Piano unison detune width — the two-string beating (`Piano`).
+    pub piano_detune: Option<f32>,
+    /// Piano ring-time scale (`Piano`).
+    pub piano_decay: Option<f32>,
 }
 
 /// A ready-to-play instrument: a synth voice plus a tuned envelope, mixer
@@ -125,16 +135,21 @@ fn piano_env(release: f32) -> Adsr {
 pub struct GrandPiano;
 
 impl GrandPiano {
-    /// The concert grand — balanced, pedal-length release.
+    /// The concert grand — the reference voice, all tone knobs at default.
     pub fn grand() -> Instrument {
         voice("grand piano", SeqWave::Piano, piano_env(0.35))
     }
 
-    /// Brighter and more forward — a touch of punch, tighter release. Cuts
-    /// through a busy mix.
+    /// Hard-voiced and forward — a harder hammer and a higher strike lift the
+    /// upper partials; cuts through a busy mix.
     pub fn bright() -> Instrument {
         Instrument {
             gain: 1.05,
+            voice: piano_tone(&[
+                (Tone::Hammer, 1.6),
+                (Tone::Strike, 0.11),
+                (Tone::Decay, 1.05),
+            ]),
             ..voice(
                 "bright piano",
                 SeqWave::Piano,
@@ -147,15 +162,88 @@ impl GrandPiano {
         }
     }
 
-    /// Soft and rounded — quieter, long pedal release for ballads and pads.
+    /// Soft-voiced ballad grand — a softer hammer rounds off the top over a long
+    /// pedal decay. Warm, but still a full grand.
     pub fn mellow() -> Instrument {
-        voice("mellow piano", SeqWave::Piano, piano_env(0.6)).gain(0.9)
+        Instrument {
+            gain: 0.9,
+            voice: piano_tone(&[
+                (Tone::Hammer, 0.65),
+                (Tone::Strike, 0.14),
+                (Tone::Decay, 1.1),
+            ]),
+            ..voice("mellow piano", SeqWave::Piano, piano_env(0.6))
+        }
     }
 
-    /// Tight and dry — short release, no pedal. Upright / honky-tonk feel.
-    pub fn upright() -> Instrument {
-        voice("upright piano", SeqWave::Piano, piano_env(0.12))
+    /// Intimate felt piano — a blanket over the strings: a very soft hammer
+    /// strips the highs to a muffled core, the hammer thump sitting proud.
+    pub fn felt() -> Instrument {
+        Instrument {
+            gain: 0.85,
+            voice: piano_tone(&[
+                (Tone::Hammer, 0.35),
+                (Tone::Strike, 0.16),
+                (Tone::Decay, 0.8),
+            ]),
+            ..voice("felt piano", SeqWave::Piano, piano_env(0.5))
+        }
     }
+
+    /// Boxy parlour upright — short, stiff strings stretch the partials sharp
+    /// (a metallic jangle); slightly hard, dry, no pedal.
+    pub fn upright() -> Instrument {
+        Instrument {
+            voice: piano_tone(&[
+                (Tone::Hammer, 1.15),
+                (Tone::Strike, 0.115),
+                (Tone::Inharm, 1.6),
+                (Tone::Detune, 1.3),
+                (Tone::Decay, 0.7),
+            ]),
+            ..voice("upright piano", SeqWave::Piano, piano_env(0.12))
+        }
+    }
+
+    /// Tack/bar piano — a wide, deliberately out-of-tune unison warble over
+    /// short inharmonic strings and a bright tinny attack. Plinky, fast-decaying.
+    pub fn honky_tonk() -> Instrument {
+        Instrument {
+            voice: piano_tone(&[
+                (Tone::Hammer, 1.5),
+                (Tone::Strike, 0.11),
+                (Tone::Inharm, 1.7),
+                (Tone::Detune, 12.0),
+                (Tone::Decay, 0.65),
+            ]),
+            ..voice("honky-tonk piano", SeqWave::Piano, piano_env(0.12))
+        }
+    }
+}
+
+/// Which piano tone knob a [`piano_tone`] entry sets.
+enum Tone {
+    Hammer,
+    Strike,
+    Inharm,
+    Detune,
+    Decay,
+}
+
+/// Build [`VoiceParams`] for a piano variant from a list of (knob, value) pairs;
+/// unlisted knobs stay `None` (the concert-grand default).
+fn piano_tone(knobs: &[(Tone, f32)]) -> VoiceParams {
+    let mut v = VoiceParams::default();
+    for (knob, value) in knobs {
+        match knob {
+            Tone::Hammer => v.piano_hammer = Some(*value),
+            Tone::Strike => v.piano_strike = Some(*value),
+            Tone::Inharm => v.piano_inharm = Some(*value),
+            Tone::Detune => v.piano_detune = Some(*value),
+            Tone::Decay => v.piano_decay = Some(*value),
+        }
+    }
+    v
 }
 
 /// The **electric piano** — a Rhodes-style tine voice: soft FM body plus a
@@ -444,7 +532,9 @@ mod tests {
             GrandPiano::grand(),
             GrandPiano::bright(),
             GrandPiano::mellow(),
+            GrandPiano::felt(),
             GrandPiano::upright(),
+            GrandPiano::honky_tonk(),
             ElectricPiano::rhodes(),
             ElectricPiano::wurli(),
             ElectricPiano::dx(),
@@ -465,6 +555,20 @@ mod tests {
             assert!(!i.name.is_empty());
             assert!(i.gain > 0.0);
         }
+    }
+
+    #[test]
+    fn grand_is_the_default_voice_and_variants_set_tone_knobs() {
+        // The flagship grand leaves every knob at default (byte-identical to the
+        // bare engine-3 piano); the variants each set a distinct spectrum.
+        assert_eq!(GrandPiano::grand().voice, VoiceParams::default());
+        assert_eq!(GrandPiano::bright().voice.piano_hammer, Some(1.6));
+        assert!(
+            GrandPiano::felt().voice.piano_hammer.unwrap() < 0.5,
+            "felt is soft"
+        );
+        assert_eq!(GrandPiano::honky_tonk().voice.piano_detune, Some(12.0));
+        assert_eq!(GrandPiano::upright().voice.piano_inharm, Some(1.6));
     }
 
     #[test]

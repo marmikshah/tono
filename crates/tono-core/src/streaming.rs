@@ -1828,6 +1828,19 @@ mod tests {
     }
 
     #[test]
+    fn engine3_piano_variant_streams_byte_identically() {
+        // A honky-tonk variant (wide detune, inharmonic, hard hammer) must still
+        // pre-render and stream bit-for-bit.
+        assert_byte_identical(&parse(
+            r#"{ "name":"honk", "duration":1.0, "seed":4, "engine":3, "root": { "type":"seq",
+                "bpm":90, "steps_per_beat":4, "wave":"piano",
+                "piano_detune":12.0, "piano_inharm":1.7, "piano_hammer":1.5, "piano_strike":0.11, "piano_decay":0.65,
+                "env": { "a":0.002, "s":1.0, "r":0.2 },
+                "notes": [ { "step":0, "len":4, "pitch":"A3" }, { "step":4, "len":4, "pitch":"C4" } ] } }"#,
+        ));
+    }
+
+    #[test]
     fn engine1_noise_falls_back_but_engine2_streams() {
         // engine < 2 keeps the shared stream ⇒ not streamable (buffer fallback).
         assert!(

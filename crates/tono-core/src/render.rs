@@ -306,6 +306,11 @@ fn track_native_stereo(node: &Node, n: usize, sr: u32) -> Option<(Signal, Signal
         fm_index,
         fm_strike,
         pluck_decay,
+        piano_hammer,
+        piano_strike,
+        piano_inharm,
+        piano_detune,
+        piano_decay,
         sf2,
         sf2_preset,
         sf2_bank,
@@ -322,6 +327,11 @@ fn track_native_stereo(node: &Node, n: usize, sr: u32) -> Option<(Signal, Signal
             fm_index: *fm_index,
             fm_strike: *fm_strike,
             pluck_decay: *pluck_decay,
+            piano_hammer: *piano_hammer,
+            piano_strike: *piano_strike,
+            piano_inharm: *piano_inharm,
+            piano_detune: *piano_detune,
+            piano_decay: *piano_decay,
             sf2,
             sf2_preset: *sf2_preset,
             sf2_bank: *sf2_bank,
@@ -1573,6 +1583,12 @@ struct SeqVoice<'a> {
     fm_index: f32,
     fm_strike: f32,
     pluck_decay: f32,
+    // Piano tone knobs (engine-3 additive `piano` voice).
+    piano_hammer: f32,
+    piano_strike: f32,
+    piano_inharm: f32,
+    piano_detune: f32,
+    piano_decay: f32,
     // Read only by the SoundFont sampler path (feature = "sampler").
     #[cfg_attr(not(feature = "sampler"), allow(dead_code))]
     sf2: &'a str,
@@ -1673,6 +1689,11 @@ pub(crate) fn seq_to_signal(node: &Node, n: usize, sr: u32, rng: &mut Rng, engin
         fm_index,
         fm_strike,
         pluck_decay,
+        piano_hammer,
+        piano_strike,
+        piano_inharm,
+        piano_detune,
+        piano_decay,
         sf2,
         sf2_preset,
         sf2_bank,
@@ -1689,6 +1710,11 @@ pub(crate) fn seq_to_signal(node: &Node, n: usize, sr: u32, rng: &mut Rng, engin
             fm_index: *fm_index,
             fm_strike: *fm_strike,
             pluck_decay: *pluck_decay,
+            piano_hammer: *piano_hammer,
+            piano_strike: *piano_strike,
+            piano_inharm: *piano_inharm,
+            piano_detune: *piano_detune,
+            piano_decay: *piano_decay,
             sf2,
             sf2_preset: *sf2_preset,
             sf2_bank: *sf2_bank,
@@ -1812,12 +1838,15 @@ fn seq_note_signal(
                 dmul: f32, // per-sample decay multiplier
                 phase: [f32; 2],
             }
+            // Five tone knobs (defaults reproduce the concert grand bit-for-bit).
             let f0 = f[0].max(20.0);
-            let b_inharm = (7.0e-5 * (f0 / 55.0)).clamp(5.0e-5, 1.2e-3);
-            let base_decay = (10.0 / (1.0 + f0 / 110.0)).clamp(0.45, 9.0);
-            let strike = 1.0 / 8.0; // hammer strikes ~1/8 along the string
+            let b_inharm = (7.0e-5 * voice.piano_inharm * (f0 / 55.0))
+                .clamp(5.0e-5 * voice.piano_inharm, 1.2e-3 * voice.piano_inharm);
+            let base_decay = (10.0 * voice.piano_decay / (1.0 + f0 / 110.0)).clamp(0.45, 9.0);
+            let strike = voice.piano_strike.clamp(0.01, 0.5); // hammer position along the string
             let bright = 0.45 + 0.55 * note.gain; // velocity opens the high partials
-            let detune = 1.000_6_f32; // ~1 cent unison spread
+            let hammer = voice.piano_hammer.max(1e-3); // hardness: flattens the tilt
+            let detune = 1.0 + (1.000_6_f32 - 1.0) * voice.piano_detune; // unison spread
             let string_det = [1.0 / detune, detune];
 
             let mut partials: Vec<Partial> = Vec::new();
@@ -1829,7 +1858,7 @@ fn seq_note_signal(
                     break; // keep every partial below Nyquist
                 }
                 let notch = (std::f32::consts::PI * kf * strike).sin().abs();
-                let amp = notch / kf * bright.powf((kf - 1.0) * 0.18);
+                let amp = notch / kf * bright.powf((kf - 1.0) * 0.18 / hammer);
                 let decay = (base_decay / (1.0 + 0.55 * (kf - 1.0))).max(0.05);
                 partials.push(Partial {
                     step: ratio,
@@ -2885,6 +2914,52 @@ mod tests {
             "engine-3 bass rings longer than treble: {} vs {}",
             tail(&bass),
             tail(&treble)
+        );
+    }
+
+    #[test]
+    fn engine3_piano_tone_knobs_default_to_the_concert_grand() {
+        // Omitting the piano_* keys must render byte-identically to setting them
+        // at their documented defaults — the byte-safe contract for the knobs.
+        let bare = r#"{ "name":"n", "duration":1.0, "engine":3, "root": { "type":"seq",
+            "bpm":60, "steps_per_beat":1, "wave":"piano", "env": { "a":0.002, "s":1.0, "r":0.1 },
+            "notes": [ { "step":0, "len":1, "pitch":"C4" } ] } }"#;
+        let defaults = r#"{ "name":"n", "duration":1.0, "engine":3, "root": { "type":"seq",
+            "bpm":60, "steps_per_beat":1, "wave":"piano", "env": { "a":0.002, "s":1.0, "r":0.1 },
+            "piano_hammer":1.0, "piano_strike":0.125, "piano_inharm":1.0, "piano_detune":1.0, "piano_decay":1.0,
+            "notes": [ { "step":0, "len":1, "pitch":"C4" } ] } }"#;
+        assert_eq!(
+            render(&doc(bare)),
+            render(&doc(defaults)),
+            "the tone-knob defaults reproduce the grand bit-for-bit"
+        );
+    }
+
+    #[test]
+    fn engine3_piano_variants_are_spectrally_distinct() {
+        let piano = |extra: &str| {
+            doc(&format!(
+                r#"{{ "name":"n", "duration":1.5, "engine":3, "root": {{ "type":"seq",
+                    "bpm":60, "steps_per_beat":1, "wave":"piano", "env": {{ "a":0.002, "s":1.0, "r":0.1 }},
+                    {extra}
+                    "notes": [ {{ "step":0, "len":1, "pitch":"C4", "gain":0.9 }} ] }} }}"#
+            ))
+        };
+        let grand = render(&piano(""));
+        let felt = render(&piano(
+            r#""piano_hammer":0.35, "piano_strike":0.16, "piano_decay":0.8,"#,
+        ));
+        let honky = render(&piano(r#""piano_detune":12.0, "piano_inharm":1.7,"#));
+        assert_ne!(grand, felt, "felt is a different waveform");
+        assert_ne!(grand, honky, "honky-tonk is a different waveform");
+        // Felt's soft hammer removes upper partials — less high-frequency energy
+        // (a first-difference sum is a crude high-pass).
+        let hf = |s: &[f32]| s.windows(2).map(|w| (w[1] - w[0]).abs()).sum::<f32>();
+        assert!(
+            hf(&felt) < hf(&grand),
+            "felt is darker than the grand: {} vs {}",
+            hf(&felt),
+            hf(&grand)
         );
     }
 
