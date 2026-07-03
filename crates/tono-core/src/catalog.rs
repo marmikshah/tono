@@ -32,7 +32,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::dsl::{Adsr, SeqWave};
+use crate::dsl::{Adsr, KitStyle, SeqWave};
 
 /// Extra per-voice synthesis parameters an instrument sets on its `seq`. Only
 /// the fields the chosen `wave` reads matter — the rest are ignored (e.g.
@@ -60,6 +60,8 @@ pub struct VoiceParams {
     pub piano_detune: Option<f32>,
     /// Piano ring-time scale (`Piano`).
     pub piano_decay: Option<f32>,
+    /// Drum-kit voicing (the `Kit` voice); `None` = the classic kit.
+    pub kit: Option<KitStyle>,
 }
 
 /// A ready-to-play instrument: a synth voice plus a tuned envelope, mixer
@@ -506,10 +508,39 @@ fn pluck_env(release: f32) -> Adsr {
 pub struct Drums;
 
 impl Drums {
-    /// An acoustic kit on the GM map.
+    /// A deeper, more realistic acoustic kit — the go-to.
     pub fn acoustic() -> Instrument {
-        voice(
-            "drums",
+        drum_kit("drums", KitStyle::Acoustic)
+    }
+
+    /// The original synthesized GM kit (byte-frozen).
+    pub fn classic() -> Instrument {
+        Instrument {
+            voice: VoiceParams::default(), // no kit key ⇒ classic, unchanged
+            ..drum_kit("classic drums", KitStyle::Classic)
+        }
+    }
+
+    /// Clean synthesized electronic drums — tight, punchy, crisp.
+    pub fn electronic() -> Instrument {
+        drum_kit("electronic drums", KitStyle::Electronic)
+    }
+
+    /// Roland TR-808 style — a long booming sub kick and ringy cowbell.
+    pub fn tr808() -> Instrument {
+        drum_kit("808 drums", KitStyle::Eight08)
+    }
+}
+
+/// A drum kit on the GM map with the given [`KitStyle`].
+fn drum_kit(name: &str, style: KitStyle) -> Instrument {
+    Instrument {
+        voice: VoiceParams {
+            kit: Some(style),
+            ..VoiceParams::default()
+        },
+        ..voice(
+            name,
             SeqWave::Kit,
             Adsr {
                 a: 0.001,
@@ -550,6 +581,9 @@ mod tests {
             Guitar::steel(),
             Guitar::electric(),
             Drums::acoustic(),
+            Drums::classic(),
+            Drums::electronic(),
+            Drums::tr808(),
         ];
         for i in &all {
             assert!(!i.name.is_empty());

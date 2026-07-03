@@ -356,6 +356,9 @@ impl Song {
             if let Some(v) = t.voice.piano_decay {
                 seq_json["piano_decay"] = serde_json::json!(v);
             }
+            if let Some(k) = t.voice.kit {
+                seq_json["kit"] = serde_json::to_value(k).map_err(|e| e.to_string())?;
+            }
             let seq: Node = serde_json::from_value(seq_json)
                 .map_err(|e| format!("track '{}' seq build: {e}", t.name))?;
 
