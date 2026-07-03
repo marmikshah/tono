@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.4.0 — 2026-07-03
+
+A composition system on the one deterministic core: a catalog of ready-to-play
+synthesized instruments and a fluent multi-instrument song builder, plus a deep
+pass on the instrument voices. Pure synthesis — no soundfonts, no files — and
+every change is byte-safe: existing documents render bit-for-bit as before.
+
+### Instrument catalog + song builder
+- **`tono_core::catalog`** — ready-to-play instruments (grand piano, electric
+  piano, organ, strings, bass, guitar, drums) with variants, each a tuned voice
+  you hand to the song builder.
+- **`Song::add(instrument, |t| …)`** — a fluent, beat-timeline builder: place
+  notes with `.at(beat).note/.chord`, step a melody with `.play/.rest`, hit drums
+  with `.kick/.snare/.hat`. Compiles to the deterministic `tracks` SoundDoc.
+- `cargo run -p tono-play --example lofi` / `band` — full songs in a few lines.
+
+### Deeper voices (all byte-safe, opt-in per variant)
+- **Grand piano** — an inharmonic additive model (stretched partials, per-partial
+  decay, hammer-strike spectrum, detuned unison), gated at `engine` 3; six
+  variants (bright/mellow/felt/upright/honky-tonk) via five tone knobs.
+- **Drums** — four synthesized kits (classic/acoustic/electronic/808).
+- **Bass** — finger/pick/sub/synth via ten tone knobs.
+- **Guitar** — nylon/steel/electric via body resonance, pick noise, and tone.
+
+## 1.3.0 — 2026-07-01
+
+The engine becomes a **library + CLI**. The MCP server is removed entirely;
+`tono-core` is the published deterministic engine and `tono render` is the CLI
+that turns a `SoundDoc` into audio plus analysis images. Install via Cargo
+(`cargo add tono-core` / `cargo install tono`).
+
 ## 1.2.0 — 2026-06-28
 
 Higher-fidelity synthesis gated so it never breaks byte-stability, a workspace
