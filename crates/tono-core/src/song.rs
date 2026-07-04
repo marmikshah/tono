@@ -75,6 +75,7 @@ pub struct SongTrack {
 /// relative to the pattern's start, so the same pattern drops in at any bar.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Pattern {
+    /// Pattern name — placements reference it.
     pub name: String,
     /// Length in bars (how far the next pattern on the same track is pushed).
     pub bars: u32,
@@ -85,8 +86,11 @@ pub struct Pattern {
 /// Place `pattern` on `track` starting at bar `bar` (0-based).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Placement {
+    /// The track the pattern plays on.
     pub track: String,
+    /// The pattern to play.
     pub pattern: String,
+    /// The bar it starts at (0-based).
     pub bar: u32,
 }
 
@@ -95,6 +99,7 @@ pub struct Placement {
 #[non_exhaustive]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Song {
+    /// Project name.
     pub name: String,
     /// Tempo in beats per minute.
     pub bpm: f32,
@@ -110,8 +115,11 @@ pub struct Song {
     /// Humanize, 0..1 (deterministic timing/velocity jitter), applied to every track.
     #[serde(default)]
     pub humanize: f32,
+    /// The instrument tracks.
     pub tracks: Vec<SongTrack>,
+    /// The reusable phrases.
     pub patterns: Vec<Pattern>,
+    /// Where each pattern plays.
     pub arrangement: Vec<Placement>,
     /// A master effect chain over the whole mix.
     #[serde(default)]

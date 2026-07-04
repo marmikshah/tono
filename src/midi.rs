@@ -18,7 +18,9 @@ const PPQ: u16 = 480;
 
 /// What [`export_midi`] wrote.
 pub struct MidiSummary {
+    /// MIDI tracks written (one per seq).
     pub tracks: usize,
+    /// Total notes written.
     pub notes: usize,
 }
 

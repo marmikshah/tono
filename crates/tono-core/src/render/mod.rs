@@ -102,8 +102,11 @@ pub struct LayerStats {
 /// captured from the same pass (free — no extra render).
 #[derive(Debug, PartialEq)]
 pub struct TracksRender {
+    /// The left channel of the mastered stereo bus.
     pub left: Signal,
+    /// The right channel of the mastered stereo bus.
     pub right: Signal,
+    /// Per-layer contribution stats captured from the same pass.
     pub layers: Vec<LayerStats>,
 }
 

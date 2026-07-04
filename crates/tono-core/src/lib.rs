@@ -14,6 +14,8 @@
 //! playground, or a lean in-engine runtime. The `tono render` CLI, audio-file
 //! encoders, and MIDI export live in the `tono` shell crate that depends on this one.
 
+#![warn(missing_docs)]
+
 pub mod adaptive;
 #[cfg(feature = "analysis")]
 pub mod analysis;
@@ -40,3 +42,18 @@ pub mod voice;
 /// pair was a reliable source of confusion.
 #[deprecated(since = "2.0.0", note = "renamed to `player`")]
 pub use player as stream;
+
+/// The workhorse names in one import: `use tono_core::prelude::*;` covers the
+/// primary flow (author a doc or a [`song::Song`], render it, analyze it, play
+/// it) without hunting across the crate's nineteen modules.
+pub mod prelude {
+    #[cfg(feature = "analysis")]
+    pub use crate::analysis::{Analysis, stats, stats_stereo};
+    pub use crate::catalog::{Bass, Drums, GrandPiano, Guitar, Voice};
+    pub use crate::dsl::{Adsr, ENGINE_VERSION, Node, SeqNote, SeqWave, SoundDoc, Value};
+    pub use crate::instrument::{Instrument, InstrumentDesign, Note};
+    pub use crate::patch::Patch;
+    pub use crate::render::{RenderProduct, render, render_product};
+    pub use crate::runtime::{AudioSource, Engine, Mixer, StreamSource, Tween};
+    pub use crate::song::{Song, note, note_vel};
+}

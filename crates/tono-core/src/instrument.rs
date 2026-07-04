@@ -124,7 +124,10 @@ pub enum PitchMap {
     /// Transpose every source frequency in the graph by `note.freq() /
     /// reference.freq()`. Turns *any* sound into a playable instrument with no
     /// pitch param required.
-    Transpose { reference: Note },
+    Transpose {
+        /// The note the patch is authored at (plays the graph unchanged).
+        reference: Note,
+    },
 }
 
 /// How notes share voices.
@@ -138,7 +141,11 @@ pub enum PlayMode {
     /// to the most-recent one still held (last-note priority). `legato` keeps the
     /// amp envelope running when a note arrives while another is held — a smooth,
     /// connected line rather than a re-struck one.
-    Mono { legato: bool },
+    Mono {
+        /// Keep the amp envelope running when a note arrives while another is
+        /// held — a smooth, connected line rather than a re-struck one.
+        legato: bool,
+    },
 }
 
 /// Instrument-level modulation — LFOs that make a voice breathe. All off by

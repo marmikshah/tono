@@ -24,10 +24,15 @@ use crate::patch::Patch;
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Category {
+    /// Cutting melodic leads.
     Lead,
+    /// Low-end foundations.
     Bass,
+    /// Sustained atmospheric beds.
     Pad,
+    /// Piano-like struck voices.
     Keys,
+    /// Short plucked/percussive tones.
     Pluck,
 }
 

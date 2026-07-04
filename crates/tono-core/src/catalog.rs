@@ -70,14 +70,23 @@ pub struct VoiceParams {
     pub kit: Option<KitStyle>,
     /// Bass filter floor / sweep / body / sub / drive knobs (the `Bass` voice).
     pub bass_cutoff: Option<f32>,
+    /// Bass fixed cutoff-sweep depth above the floor, Hz (`Bass`).
     pub bass_env: Option<f32>,
+    /// Bass velocity-scaled sweep depth, Hz (`Bass`).
     pub bass_env_vel: Option<f32>,
+    /// Bass filter-sweep time constant, seconds (`Bass`).
     pub bass_decay: Option<f32>,
+    /// Bass pick-tick attack bump, Hz (`Bass`).
     pub bass_click: Option<f32>,
+    /// Bass filtered-saw body level (`Bass`).
     pub bass_body: Option<f32>,
+    /// Bass sine-sub level (`Bass`).
     pub bass_sub: Option<f32>,
+    /// Bass sub frequency ratio to the note (`Bass`).
     pub bass_sub_ratio: Option<f32>,
+    /// Bass tanh saturation, 0..1 (`Bass`).
     pub bass_drive: Option<f32>,
+    /// Bass note body decay, seconds (`Bass`).
     pub bass_body_decay: Option<f32>,
 }
 

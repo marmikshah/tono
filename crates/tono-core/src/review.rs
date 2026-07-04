@@ -75,7 +75,9 @@ pub struct Review {
     pub grade: Status,
     /// How many findings landed at each status.
     pub pass: u32,
+    /// Number of WARN findings.
     pub warn: u32,
+    /// Number of FAIL findings.
     pub fail: u32,
     /// Every graded criterion, worst first.
     pub findings: Vec<Finding>,

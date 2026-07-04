@@ -28,10 +28,12 @@ pub(crate) fn splitmix_mix(mut z: u64) -> u64 {
 pub struct Rng(u64);
 
 impl Rng {
+    /// A stream seeded at `seed` — the same seed replays the same draws.
     pub fn new(seed: u64) -> Self {
         Rng(seed)
     }
 
+    /// The next 64 raw bits of the stream.
     pub fn next_u64(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(GOLDEN_GAMMA);
         splitmix_mix(self.0)
