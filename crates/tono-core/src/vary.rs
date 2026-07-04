@@ -217,11 +217,13 @@ fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
         Node::Peak { cutoff, q, gain_db } => {
             mutate_value(cutoff, amount, rng);
             *q = jitter(*q, amount, rng, 0.05);
-            *gain_db += rng.bi() * amount * 6.0;
+            // Clamped to the ±24 dB validation bound: mutate promises a
+            // still-valid document.
+            *gain_db = (*gain_db + rng.bi() * amount * 6.0).clamp(-24.0, 24.0);
         }
         Node::Lowshelf { cutoff, gain_db } | Node::Highshelf { cutoff, gain_db } => {
             mutate_value(cutoff, amount, rng);
-            *gain_db += rng.bi() * amount * 6.0;
+            *gain_db = (*gain_db + rng.bi() * amount * 6.0).clamp(-24.0, 24.0);
         }
         Node::Super {
             freq, detune_cents, ..

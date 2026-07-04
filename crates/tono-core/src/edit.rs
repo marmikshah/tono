@@ -359,16 +359,34 @@ pub fn describe(doc: &SoundDoc) -> DescribeMap {
 /// Hz, and any structural difference is a clear error. `t = 0` ⇒ `a`,
 /// `t = 1` ⇒ `b`.
 pub fn morph(a: &SoundDoc, b: &SoundDoc, t: f32) -> Result<SoundDoc, String> {
-    let ja = serde_json::to_value(a).map_err(|e| e.to_string())?;
+    let mut ja = serde_json::to_value(a).map_err(|e| e.to_string())?;
     let mut jb = serde_json::to_value(b).map_err(|e| e.to_string())?;
-    // Names/version are identity, not parameters — unify before the walk.
+    // Name/version/engine/seed/sample_rate are identity and provenance, not
+    // parameters — unify them before the walk. Interpolating `engine` would
+    // sweep a morph through different DSP kernels mid-t (audible timbre
+    // jumps), and an optional-field presence mismatch would reject two
+    // structurally identical sounds.
     jb["name"] = ja["name"].clone();
+    jb["seed"] = ja["seed"].clone();
+    jb["sample_rate"] = ja["sample_rate"].clone();
     // `version` is optional on the wire: mirror a's presence/absence exactly
     // so the key sets always match.
     if let Some(v) = ja.get("version") {
         jb["version"] = v.clone();
     } else if let Some(o) = jb.as_object_mut() {
         o.remove("version");
+    }
+    // The newer kernel of the two wins, so a morph never downgrades either
+    // sound's DSP (engine 0 = the legacy omitted field).
+    let engine = a.effective_engine().max(b.effective_engine());
+    for j in [&mut ja, &mut jb] {
+        if let Some(o) = j.as_object_mut() {
+            if engine > 0 {
+                o.insert("engine".into(), serde_json::json!(engine));
+            } else {
+                o.remove("engine");
+            }
+        }
     }
     // Layer identity is positional in a morph: two same-shaped mixer docs
     // almost always carry different layer ids (they're unique per doc), and
@@ -631,5 +649,31 @@ mod tests {
         let c: SoundDoc =
             serde_json::from_str(r#"{ "name": "c", "root": { "type": "noise" } }"#).unwrap();
         assert!(morph(&a, &c, 0.5).is_err());
+    }
+
+    #[test]
+    fn morph_unifies_engine_seed_and_rate_instead_of_lerping() {
+        // Presence mismatch (engine on one side only) must not reject the
+        // morph, and the value must never interpolate through intermediate
+        // kernels — the newer of the two wins.
+        let a: SoundDoc = serde_json::from_str(
+            r#"{ "name": "a", "duration": 0.2, "seed": 7,
+                 "root": { "type": "sine", "freq": 200 } }"#,
+        )
+        .unwrap();
+        let b: SoundDoc = serde_json::from_str(
+            r#"{ "name": "b", "duration": 0.2, "seed": 99, "engine": 3,
+                 "root": { "type": "sine", "freq": 400 } }"#,
+        )
+        .unwrap();
+        let mid = morph(&a, &b, 0.5).unwrap();
+        assert_eq!(mid.engine, Some(3), "max engine wins, never a lerp");
+        assert_eq!(mid.seed, 7, "a's seed is identity, not a parameter");
+        // Both legacy (no engine) stays legacy.
+        let c: SoundDoc = serde_json::from_str(
+            r#"{ "name": "c", "duration": 0.2, "root": { "type": "sine", "freq": 300 } }"#,
+        )
+        .unwrap();
+        assert_eq!(morph(&a, &c, 0.5).unwrap().engine, None);
     }
 }

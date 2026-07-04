@@ -21,18 +21,20 @@
 //!   pre-rendered with that seed via the exact offline synthesis and read back
 //!   block-by-block.
 //!
-//! Only three things fall back to the byte-identical buffer-backed
+//! What falls back to the byte-identical buffer-backed
 //! [`crate::stream::Player`]: RNG nodes under `engine < 2` (they keep the old
 //! shared, order-dependent stream); the **sampler** seq (an external stateful
 //! rustysynth voice); a **`tracks` root** (the stereo mixer + master path — the
-//! runtime's instance-per-layer model covers layering); and a **`normalize`**
-//! output stage (a whole-buffer op).
+//! runtime's instance-per-layer model covers layering); a **`normalize`**
+//! output stage (a whole-buffer op); **`loop` playback** (the crossfaded loop
+//! body is a whole-buffer transform); and a **stereo** (Haas/Wide) treatment
+//! (applied at write time, not in the graph).
 
 use std::f32::consts::TAU;
 
 use crate::dsl::{
-    Curve, DriveShape, Modulator, Node, NoiseColor, SeqWave, Shape, SoundDoc, SuperWave, Value,
-    note_to_hz,
+    Curve, DriveShape, Modulator, Node, NoiseColor, Playback, SeqWave, Shape, SoundDoc, Stereo,
+    SuperWave, Value, note_to_hz,
 };
 use crate::dsp::{Rng, node_path, node_seed};
 use crate::render::{drive_antideriv, drive_curve, osc, poly_blep, rand_seed, seq_to_signal};
@@ -1144,7 +1146,9 @@ fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Pr
             held: 0.0,
         },
         Node::Delay { secs, feedback } => {
-            let dn = ((*secs * srf) as usize).max(1);
+            // Mirrors the offline clamp: validate() caps secs at 30 s; this
+            // guards unvalidated docs from an unbounded allocation.
+            let dn = ((secs.min(30.0) * srf) as usize).max(1);
             Proc::Delay {
                 buf: vec![0.0; dn],
                 w: 0,
@@ -1320,7 +1324,15 @@ impl StreamGraph {
     /// streamable subset — the caller then falls back to the buffer-backed
     /// [`crate::stream::Player`].
     pub fn try_from_doc(doc: &SoundDoc) -> Option<Self> {
-        if doc.normalize.is_some() || matches!(doc.root, Node::Tracks { .. }) {
+        // Loop docs render offline as their crossfaded loop body and stereo
+        // (Haas/Wide) docs are stereoized at write time — neither transform
+        // exists on the streaming path, so accepting them would play the raw
+        // graph: un-looped, un-widened, and not byte-identical to the bounce.
+        if doc.normalize.is_some()
+            || matches!(doc.playback, Playback::Loop { .. })
+            || !matches!(doc.stereo, Stereo::Mono)
+            || matches!(doc.root, Node::Tracks { .. })
+        {
             return None;
         }
         let n = ((doc.duration * doc.sample_rate as f32).ceil() as usize).max(1);
@@ -1908,6 +1920,29 @@ mod tests {
             StreamGraph::try_from_doc(&parse(
                 r#"{ "name":"t", "duration":0.05, "root": { "type":"tracks", "tracks": [
                     { "node": { "type":"sine", "freq":440 } } ] } }"#
+            ))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn loop_and_stereo_docs_fall_back_to_the_player() {
+        // The streaming path has no loop-body or stereoize transform: playing
+        // the raw graph would be un-looped / un-widened and not byte-identical
+        // to the bounce.
+        assert!(
+            StreamGraph::try_from_doc(&parse(
+                r#"{ "name":"l", "duration":0.5,
+                    "playback": { "mode":"loop", "start_secs":0.1, "crossfade_secs":0.05 },
+                    "root": { "type":"sine", "freq":220 } }"#
+            ))
+            .is_none()
+        );
+        assert!(
+            StreamGraph::try_from_doc(&parse(
+                r#"{ "name":"s", "duration":0.1,
+                    "stereo": { "mode":"haas", "ms":12 },
+                    "root": { "type":"sine", "freq":220 } }"#
             ))
             .is_none()
         );

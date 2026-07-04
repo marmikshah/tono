@@ -583,8 +583,20 @@ impl Instrument {
         };
         let mut env = EnvGen::new(&self.design.amp, self.sample_rate);
         env.gate_on();
-        if self.voices.len() >= self.design.max_voices
-            && let Some(victim) = self.quietest()
+        // Steal by forcing the quietest sounding voice into a ~5 ms release —
+        // never a mid-sample cut (an audible click on every steal). The pool
+        // briefly holds the declicking voices on top of max_voices; a note
+        // flood faster than the declick window falls back to hard removal so
+        // the pool stays bounded.
+        let sounding = self.voices.iter().filter(|v| !v.releasing).count();
+        if sounding >= self.design.max_voices
+            && let Some(victim) = self.quietest(|v| !v.releasing)
+        {
+            self.voices[victim].env.kill();
+            self.voices[victim].releasing = true;
+        }
+        if self.voices.len() >= self.design.max_voices * 2
+            && let Some(victim) = self.quietest(|_| true)
         {
             self.voices.remove(victim);
         }
@@ -672,10 +684,12 @@ impl Instrument {
         }
     }
 
-    fn quietest(&self) -> Option<usize> {
+    /// Index of the quietest voice among those matching `pick`.
+    fn quietest(&self, pick: impl Fn(&Voice) -> bool) -> Option<usize> {
         self.voices
             .iter()
             .enumerate()
+            .filter(|(_, v)| pick(v))
             .min_by(|(_, a), (_, b)| a.env.level().total_cmp(&b.env.level()))
             .map(|(i, _)| i)
     }
@@ -1111,7 +1125,47 @@ mod tests {
         for n in 60..70 {
             inst.note_on(Note(n), 0.8);
         }
-        assert_eq!(inst.active_voices(), 4, "capped at max_voices");
+        // Stolen voices ramp out over ~5 ms instead of hard-cutting; once the
+        // declick window has rendered, the pool is back at the cap.
+        let mut out = vec![0.0f32; 1024 * 2];
+        inst.fill(&mut out);
+        assert_eq!(
+            inst.active_voices(),
+            4,
+            "capped at max_voices once steals declick"
+        );
+    }
+
+    #[test]
+    fn voice_stealing_ramps_instead_of_cutting() {
+        // One sustained voice at full level, pool of one: the next note must
+        // fade the victim out, not step it to silence mid-sample.
+        let amp = Adsr {
+            a: 0.001,
+            d: 0.0,
+            s: 1.0,
+            r: 0.3,
+            punch: 0.0,
+        };
+        let design = InstrumentDesign::new(saw_patch())
+            .with_amp(amp)
+            .with_max_voices(1);
+        let mut inst = Instrument::new(design, 48_000).unwrap();
+        inst.note_on(Note::A4, 1.0);
+        let mut warm = vec![0.0f32; 512 * 2];
+        inst.fill(&mut warm); // the voice reaches full sustain
+        inst.note_on(Note::C4, 1.0); // pool full: steals the A4
+        let mut fade = vec![0.0f32; 512 * 2];
+        inst.fill(&mut fade);
+        let mut max_jump = 0.0f32;
+        let mut prev = warm[warm.len() - 2];
+        for f in 0..512 {
+            max_jump = max_jump.max((fade[f * 2] - prev).abs());
+            prev = fade[f * 2];
+        }
+        // A saw at full level steps by up to ~2.0 when hard-cut at the wrap;
+        // the 5 ms ramp keeps adjacent samples close.
+        assert!(max_jump < 0.5, "steal clicked: max sample jump {max_jump}");
     }
 
     #[test]

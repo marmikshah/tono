@@ -76,12 +76,11 @@ impl<S: AudioSource + Send + 'static> Speaker<S> {
                         scratch.resize(frames * 2, 0.0);
                     }
                     let st = &mut scratch[..frames * 2];
-                    match cb.lock() {
-                        Ok(mut s) => {
-                            s.fill(st);
-                        }
-                        Err(_) => st.fill(0.0),
-                    }
+                    // A panic elsewhere poisons the lock; the source is plain
+                    // audio state, so keep playing rather than go silent.
+                    let mut s = cb.lock().unwrap_or_else(|p| p.into_inner());
+                    s.fill(st);
+                    drop(s);
                     for f in 0..frames {
                         let (l, r) = (st[f * 2], st[f * 2 + 1]);
                         let base = f * chans;
@@ -119,7 +118,10 @@ impl<S: AudioSource + Send + 'static> Speaker<S> {
     /// Drive the playing source (e.g. `instrument.note_on(...)`). Briefly locks
     /// the audio thread — fine for a playground/prototype.
     pub fn control<R>(&self, f: impl FnOnce(&mut S) -> R) -> R {
-        f(&mut self.source.lock().expect("audio source mutex poisoned"))
+        // Recover from a poisoned lock (a panic on another thread) — the
+        // source is plain audio state and controlling it must not cascade
+        // the panic into the caller.
+        f(&mut self.source.lock().unwrap_or_else(|p| p.into_inner()))
     }
 }
 

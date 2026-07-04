@@ -1441,6 +1441,28 @@ impl SoundDoc {
                         self.duration, t.at
                     ));
                 }
+                for lane in &t.automation {
+                    let (lname, lo, hi) = match lane.target {
+                        AutoTarget::Gain => ("gain", 0.0, 2.0),
+                        AutoTarget::Pan => ("pan", -1.0, 1.0),
+                    };
+                    for (pi, p) in lane.points.iter().enumerate() {
+                        if !p.t.is_finite() || p.t < 0.0 {
+                            return Err(format!(
+                                "{who}: automation[{lname}].points[{pi}].t must be >= 0 \
+                                 seconds, got {}",
+                                p.t
+                            ));
+                        }
+                        if !(lo..=hi).contains(&p.v) {
+                            return Err(format!(
+                                "{who}: automation[{lname}].points[{pi}].v must be in \
+                                 [{lo}, {hi}], got {}",
+                                p.v
+                            ));
+                        }
+                    }
+                }
                 if contains_tracks(&t.node) {
                     return Err("tracks cannot nest inside a track".into());
                 }
@@ -1474,43 +1496,84 @@ fn contains_tracks(node: &Node) -> bool {
     }
 }
 
+/// A finite value (rejects NaN/±inf — they would render NaN audio).
+fn finite(name: &str, v: f32) -> Result<(), String> {
+    if !v.is_finite() {
+        return Err(format!("{name} must be a finite number, got {v}"));
+    }
+    Ok(())
+}
+
+/// A finite, strictly positive value.
+fn positive(name: &str, v: f32) -> Result<(), String> {
+    finite(name, v)?;
+    if v <= 0.0 {
+        return Err(format!("{name} must be > 0, got {v}"));
+    }
+    Ok(())
+}
+
+/// A finite, non-negative value.
+fn non_negative(name: &str, v: f32) -> Result<(), String> {
+    finite(name, v)?;
+    if v < 0.0 {
+        return Err(format!("{name} must be >= 0, got {v}"));
+    }
+    Ok(())
+}
+
 fn validate_value(v: &Value, what: &str) -> Result<(), String> {
     match v {
-        Value::Const(_) => Ok(()),
+        Value::Const(c) => finite(what, *c),
         Value::Note(s) => note_to_hz(s).map(|_| ()).ok_or_else(|| {
             format!("{what}: '{s}' is not a valid note (e.g. \"A4\", \"C#3\", \"midi:69\")")
         }),
         Value::Modulated(m) => match m {
-            Modulator::Slide { secs, .. } => {
-                if *secs <= 0.0 {
-                    return Err(format!("{what}: slide.secs must be > 0, got {secs}"));
-                }
-                Ok(())
+            Modulator::Slide { from, to, secs, .. } => {
+                finite(&format!("{what}: slide.from"), *from)?;
+                finite(&format!("{what}: slide.to"), *to)?;
+                positive(&format!("{what}: slide.secs"), *secs)
             }
-            Modulator::Lfo { rate, .. } => {
-                if *rate <= 0.0 {
-                    return Err(format!("{what}: lfo.rate must be > 0, got {rate}"));
-                }
-                Ok(())
+            Modulator::Lfo {
+                rate,
+                depth,
+                center,
+                ..
+            } => {
+                positive(&format!("{what}: lfo.rate"), *rate)?;
+                finite(&format!("{what}: lfo.depth"), *depth)?;
+                finite(&format!("{what}: lfo.center"), *center)
             }
             Modulator::Arp { steps, rate } => {
                 if steps.is_empty() {
                     return Err(format!("{what}: arp.steps must be non-empty"));
                 }
-                if *rate <= 0.0 {
-                    return Err(format!("{what}: arp.rate must be > 0, got {rate}"));
+                for (i, s) in steps.iter().enumerate() {
+                    finite(&format!("{what}: arp.steps[{i}]"), *s)?;
                 }
-                Ok(())
+                positive(&format!("{what}: arp.rate"), *rate)
             }
-            Modulator::EnvMod { adsr, .. } => adsr.validate(&format!("{what}: env")),
-            Modulator::Rand { rate, .. } => {
-                if *rate <= 0.0 {
-                    return Err(format!("{what}: rand.rate must be > 0, got {rate}"));
-                }
-                Ok(())
+            Modulator::EnvMod { adsr, from, to } => {
+                finite(&format!("{what}: env.from"), *from)?;
+                finite(&format!("{what}: env.to"), *to)?;
+                adsr.validate(&format!("{what}: env"))
+            }
+            Modulator::Rand { from, to, rate, .. } => {
+                finite(&format!("{what}: rand.from"), *from)?;
+                finite(&format!("{what}: rand.to"), *to)?;
+                positive(&format!("{what}: rand.rate"), *rate)
             }
         },
     }
+}
+
+/// Validate a `Value` that names a frequency: a constant must be finite and
+/// strictly positive (a modulated form is clamped per-sample at render time).
+fn validate_freq_value(v: &Value, what: &str) -> Result<(), String> {
+    if let Value::Const(c) = v {
+        positive(what, *c)?;
+    }
+    validate_value(v, what)
 }
 
 fn in_unit(name: &str, v: f32) -> Result<(), String> {
@@ -1541,12 +1604,12 @@ fn validate_unit_value(v: &Value, what: &str) -> Result<(), String> {
 fn validate_node(node: &Node) -> Result<(), String> {
     match node {
         Node::Square { freq, duty } => {
-            validate_value(freq, "square.freq")?;
+            validate_freq_value(freq, "square.freq")?;
             validate_unit_value(duty, "square.duty")
         }
-        Node::Triangle { freq } => validate_value(freq, "triangle.freq"),
-        Node::Sawtooth { freq } => validate_value(freq, "sawtooth.freq"),
-        Node::Sine { freq } => validate_value(freq, "sine.freq"),
+        Node::Triangle { freq } => validate_freq_value(freq, "triangle.freq"),
+        Node::Sawtooth { freq } => validate_freq_value(freq, "sawtooth.freq"),
+        Node::Sine { freq } => validate_freq_value(freq, "sine.freq"),
         Node::Noise { .. } => Ok(()),
         Node::Impact { hardness, velocity } => {
             in_unit("impact.hardness", *hardness)?;
@@ -1562,32 +1625,49 @@ fn validate_node(node: &Node) -> Result<(), String> {
             Ok(())
         }
         Node::Fm { freq, ratio, index } => {
-            validate_value(freq, "fm.freq")?;
-            if *ratio <= 0.0 {
-                return Err(format!("fm.ratio must be > 0, got {ratio}"));
-            }
+            validate_freq_value(freq, "fm.freq")?;
+            positive("fm.ratio", *ratio)?;
             validate_value(index, "fm.index")
         }
+        // Bound exhaustively (no `..`): the compiler then forces a validation
+        // decision for every knob this variant grows.
         Node::Seq {
             bpm,
             steps_per_beat,
+            wave,
             duty,
             fm_ratio,
             fm_index,
             fm_strike,
             pluck_decay,
+            pluck_body,
+            pluck_pick,
+            pluck_tone,
+            piano_hammer,
+            piano_strike,
+            piano_inharm,
+            piano_detune,
+            piano_decay,
+            kit: _,
+            bass_cutoff,
+            bass_env,
+            bass_env_vel,
+            bass_decay,
+            bass_click,
+            bass_body,
+            bass_sub,
+            bass_sub_ratio,
+            bass_drive,
+            bass_body_decay,
             sf2,
             sf2_preset,
-            wave,
+            sf2_bank: _,
             swing,
             humanize,
             env,
             notes,
-            ..
         } => {
-            if *bpm <= 0.0 {
-                return Err(format!("seq.bpm must be > 0, got {bpm}"));
-            }
+            positive("seq.bpm", *bpm)?;
             if *steps_per_beat < 1 {
                 return Err("seq.steps_per_beat must be >= 1".into());
             }
@@ -1595,20 +1675,38 @@ fn validate_node(node: &Node) -> Result<(), String> {
                 return Err("seq.notes must be non-empty".into());
             }
             validate_unit_value(duty, "seq.duty")?;
-            if *fm_ratio <= 0.0 {
-                return Err(format!("seq.fm_ratio must be > 0, got {fm_ratio}"));
-            }
+            positive("seq.fm_ratio", *fm_ratio)?;
             if !(0.0..=20.0).contains(fm_index) {
                 return Err(format!("seq.fm_index must be in [0, 20], got {fm_index}"));
             }
-            if *fm_strike <= 0.0 {
-                return Err(format!("seq.fm_strike must be > 0, got {fm_strike}"));
-            }
+            positive("seq.fm_strike", *fm_strike)?;
             if !(0.8..1.0).contains(pluck_decay) {
                 return Err(format!(
                     "seq.pluck_decay must be in [0.8, 1), got {pluck_decay}"
                 ));
             }
+            in_unit("seq.pluck_body", *pluck_body)?;
+            in_unit("seq.pluck_pick", *pluck_pick)?;
+            if !(-1.0..=1.0).contains(pluck_tone) {
+                return Err(format!(
+                    "seq.pluck_tone must be in [-1, 1], got {pluck_tone}"
+                ));
+            }
+            positive("seq.piano_hammer", *piano_hammer)?;
+            positive("seq.piano_strike", *piano_strike)?;
+            positive("seq.piano_inharm", *piano_inharm)?;
+            non_negative("seq.piano_detune", *piano_detune)?;
+            positive("seq.piano_decay", *piano_decay)?;
+            positive("seq.bass_cutoff", *bass_cutoff)?;
+            non_negative("seq.bass_env", *bass_env)?;
+            non_negative("seq.bass_env_vel", *bass_env_vel)?;
+            positive("seq.bass_decay", *bass_decay)?;
+            non_negative("seq.bass_click", *bass_click)?;
+            non_negative("seq.bass_body", *bass_body)?;
+            non_negative("seq.bass_sub", *bass_sub)?;
+            positive("seq.bass_sub_ratio", *bass_sub_ratio)?;
+            in_unit("seq.bass_drive", *bass_drive)?;
+            positive("seq.bass_body_decay", *bass_body_decay)?;
             in_unit("seq.swing", *swing)?;
             in_unit("seq.humanize", *humanize)?;
             if *wave == SeqWave::Sampler {
@@ -1633,7 +1731,7 @@ fn validate_node(node: &Node) -> Result<(), String> {
                     return Err("seq note.len must be >= 1".into());
                 }
                 in_unit("seq note.gain", note.gain)?;
-                validate_value(&note.pitch, "seq note.pitch")?;
+                validate_freq_value(&note.pitch, "seq note.pitch")?;
             }
             Ok(())
         }
@@ -1669,21 +1767,16 @@ fn validate_node(node: &Node) -> Result<(), String> {
         | Node::Highpass { cutoff, q }
         | Node::Bandpass { cutoff, q }
         | Node::Notch { cutoff, q } => {
-            validate_value(cutoff, "filter.cutoff")?;
-            if *q <= 0.0 {
-                return Err(format!("filter.q must be > 0, got {q}"));
-            }
-            Ok(())
+            validate_freq_value(cutoff, "filter.cutoff")?;
+            positive("filter.q", *q)
         }
         Node::Peak { cutoff, q, gain_db } => {
-            validate_value(cutoff, "peak.cutoff")?;
-            if *q <= 0.0 {
-                return Err(format!("peak.q must be > 0, got {q}"));
-            }
+            validate_freq_value(cutoff, "peak.cutoff")?;
+            positive("peak.q", *q)?;
             validate_gain_db("peak.gain_db", *gain_db)
         }
         Node::Lowshelf { cutoff, gain_db } | Node::Highshelf { cutoff, gain_db } => {
-            validate_value(cutoff, "shelf.cutoff")?;
+            validate_freq_value(cutoff, "shelf.cutoff")?;
             validate_gain_db("shelf.gain_db", *gain_db)
         }
         Node::Super {
@@ -1717,8 +1810,12 @@ fn validate_node(node: &Node) -> Result<(), String> {
             Ok(())
         }
         Node::Delay { secs, feedback } => {
-            if *secs <= 0.0 {
-                return Err(format!("delay.secs must be > 0, got {secs}"));
+            // The upper bound caps the delay-line allocation: an unbounded
+            // `secs` would let a validated document request a buffer of
+            // arbitrary size and abort the process.
+            positive("delay.secs", *secs)?;
+            if *secs > 30.0 {
+                return Err(format!("delay.secs must be in (0, 30] seconds, got {secs}"));
             }
             in_unit("delay.feedback", *feedback)
         }
@@ -1751,7 +1848,7 @@ fn validate_node(node: &Node) -> Result<(), String> {
             in_unit("modal.mix", *mix)
         }
         Node::Drive { amount, .. } => validate_value(amount, "drive.amount"),
-        Node::RingMod { freq } => validate_value(freq, "ringmod.freq"),
+        Node::RingMod { freq } => validate_freq_value(freq, "ringmod.freq"),
         Node::Chorus { rate, depth, mix } => {
             if *rate <= 0.0 {
                 return Err(format!("chorus.rate must be > 0, got {rate}"));
@@ -2130,5 +2227,60 @@ mod tests {
         assert!(d.validate().unwrap_err().contains("mix/mul"));
         let d = doc(r#"{ "name": "n", "root": { "type": "sine", "freq": "H9" } }"#);
         assert!(d.validate().unwrap_err().contains("not a valid note"));
+    }
+
+    #[test]
+    fn validate_bounds_the_delay_line() {
+        // Unbounded delay.secs would let a validated doc request an arbitrary
+        // allocation and abort the process.
+        let d = doc(r#"{ "name": "n", "root": { "type": "chain", "stages": [
+                { "type": "noise" }, { "type": "delay", "secs": 1e9, "feedback": 0.3 }
+            ] } }"#);
+        assert!(d.validate().unwrap_err().contains("delay.secs"));
+        let ok = doc(r#"{ "name": "n", "root": { "type": "chain", "stages": [
+                { "type": "noise" }, { "type": "delay", "secs": 0.3, "feedback": 0.3 }
+            ] } }"#);
+        assert!(ok.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_non_finite_and_non_positive_constants() {
+        // 1e308 overflows the silent f64→f32 cast to inf, which renders NaN.
+        let d = doc(r#"{ "name": "n", "root": { "type": "sine", "freq": 1e308 } }"#);
+        assert!(d.validate().unwrap_err().contains("finite"));
+        let d = doc(r#"{ "name": "n", "root": { "type": "sine", "freq": -440 } }"#);
+        assert!(d.validate().unwrap_err().contains("sine.freq"));
+        let d = doc(r#"{ "name": "n", "root": { "type": "square", "duty": 0.5,
+                "freq": { "slide": { "from": 1e308, "to": 440, "secs": 0.1 } } } }"#);
+        assert!(d.validate().unwrap_err().contains("slide.from"));
+    }
+
+    #[test]
+    fn validate_rejects_non_finite_seq_voice_knobs() {
+        let d = doc(
+            r#"{ "name": "n", "root": { "type": "seq", "bpm": 120, "wave": "bass",
+                "bass_cutoff": 1e308,
+                "env": { "a": 0.005, "d": 0.05, "s": 0.7, "r": 0.1 },
+                "notes": [ { "step": 0, "len": 2, "pitch": "E1" } ] } }"#,
+        );
+        assert!(d.validate().unwrap_err().contains("bass_cutoff"));
+    }
+
+    #[test]
+    fn validate_checks_automation_lanes() {
+        let d = doc(
+            r#"{ "name": "n", "version": 2, "root": { "type": "tracks", "tracks": [
+                { "id": "a", "node": { "type": "noise" },
+                  "automation": [ { "target": "gain", "points": [ { "t": -1, "v": 0.5 } ] } ] }
+            ] } }"#,
+        );
+        assert!(d.validate().unwrap_err().contains(".t must be >= 0"));
+        let d = doc(
+            r#"{ "name": "n", "version": 2, "root": { "type": "tracks", "tracks": [
+                { "id": "a", "node": { "type": "noise" },
+                  "automation": [ { "target": "pan", "points": [ { "t": 0, "v": 7 } ] } ] }
+            ] } }"#,
+        );
+        assert!(d.validate().unwrap_err().contains("[-1, 1]"));
     }
 }
