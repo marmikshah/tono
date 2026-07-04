@@ -135,9 +135,11 @@ byte-identically by all of them:
   block-by-block, driven by gameplay. Ship a parametric
   [patch](docs/runtime.md) and render endless per-instance SFX variations with
   **zero baked files** — the pure core compiles into your game.
-- **A native desktop studio** — a Tauri app with real-time audio: play your
-  patch like an instrument from the computer keyboard or a MIDI controller
-  (`make desktop`). Optional — never part of the default build or CI.
+- **A native pattern station** — a Tauri app with real-time audio: an FL-style
+  step grid over the catalog instruments, looping live. Edit cells while it
+  plays (click-free crossfade), mix with per-track faders, undo everything,
+  and watch the LUFS/spectrogram feedback update per edit (`make desktop`).
+  Optional — never part of the default build or CI.
 - **A programmatic playground** — build a sound or instrument in a few lines of
   Rust and hear it (`make play`).
 
