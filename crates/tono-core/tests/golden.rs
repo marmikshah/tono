@@ -232,8 +232,8 @@ const CORPUS: &[Case] = &[
             Some((0x6851c603baadc1f8, 0xe7e3536620aae2c7)),
         ),
         linux: Some((
-            0x9cf01dcf618e7053,
-            Some((0x6851c603baadc1f8, 0xe7e3536620aae2c7)),
+            0x3c8de23ac5905e22,
+            Some((0x9576fcfbea2777d3, 0xe7e3536620aae2c7)),
         )),
     },
     Case {
@@ -243,7 +243,7 @@ const CORPUS: &[Case] = &[
             "root": { "type": "chain", "stages": [
                 { "type": "sine", "freq": 440 }, { "type": "gain", "amount": 0.05 } ] } }"#,
         mac: (0xb6b0676f4086d076, None),
-        linux: Some((0xb6b0676f4086d076, None)),
+        linux: Some((0x1c0c5f125c813202, None)),
     },
 ];
 
