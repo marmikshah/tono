@@ -85,7 +85,12 @@ fn render_graph(graph: String, studio: State<Studio>) -> RenderResult {
     }
 
     let product = render::render_product(&doc);
-    let stats = analysis::stats(&product.mono, doc.sample_rate);
+    // Level metrics measure the stereo pair when there is one; the images
+    // read the mono mid.
+    let stats = match &product.stereo {
+        Some((l, r)) => analysis::stats_stereo(l, r, doc.sample_rate),
+        None => analysis::stats(&product.mono, doc.sample_rate),
+    };
     let b64 = |bytes: Vec<u8>| base64::engine::general_purpose::STANDARD.encode(bytes);
     RenderResult {
         ok: true,

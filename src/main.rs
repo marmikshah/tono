@@ -141,8 +141,14 @@ fn render_cmd(args: &[String]) -> anyhow::Result<()> {
     }
 
     // The feedback images + numeric analysis — the loop's "look at it" half.
+    // Level metrics measure the stereo pair when there is one (the export);
+    // the images read the mono mid.
     let png = out_dir.join(format!("{stem}.png"));
-    let analysis = tono::imaging::analyze_to_disk(&product.mono, doc.sample_rate, &png)?;
+    let stereo = product
+        .stereo
+        .as_ref()
+        .map(|(l, r)| (l.as_slice(), r.as_slice()));
+    let analysis = tono::imaging::analyze_to_disk(&product.mono, stereo, doc.sample_rate, &png)?;
     let stats = out_dir.join(format!("{stem}.stats.json"));
     fs::write(&stats, serde_json::to_string_pretty(&analysis)?)?;
 
