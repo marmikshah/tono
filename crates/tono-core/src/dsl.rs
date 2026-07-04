@@ -31,7 +31,12 @@ pub const SCHEMA_VERSION: u32 = 2;
 /// (stretched partials, per-partial decay, a hammer-strike spectrum, and a
 /// detuned unison pair) — a far richer grand than the two-operator FM of
 /// engine ≤ 2, which stays bit-exact for older documents.
-pub const ENGINE_VERSION: u32 = 3;
+/// Revision 4 corrects the mixer output stage — loudness normalization
+/// measures the stereo program jointly (one shared gain, preserving the
+/// authored balance), uses sample-rate-correct gated BS.1770 loudness, and
+/// limits against a real oversampled true-peak estimate — and seeds humanize
+/// jitter per note, so chords stop sharing one timing/velocity offset.
+pub const ENGINE_VERSION: u32 = 4;
 
 // Serde `default = "..."` requires free functions. Values with non-obvious
 // origins: q 0.707 is Butterworth (maximally flat), haas 12 ms sits in the

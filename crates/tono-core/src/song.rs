@@ -114,6 +114,18 @@ pub struct Song {
     /// A master effect chain over the whole mix.
     #[serde(default)]
     pub master: Vec<Node>,
+    /// DSP-kernel revision this song is pinned to (see [`ENGINE_VERSION`]),
+    /// stamped at creation. A song saved as JSON therefore reopens and renders
+    /// byte-identically on newer tonos, exactly like a `SoundDoc` — kernel
+    /// upgrades never silently change a saved project's audio. Omitted (saves
+    /// from before this field) ⇒ compiled with the current engine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<u32>,
+    /// Document schema version for the compiled doc (see
+    /// [`crate::dsl::SCHEMA_VERSION`]), stamped at creation. Omitted (older
+    /// saves) ⇒ the compiled doc keeps its historical v1 semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
 }
 
 /// A note for a pattern at grid `step`, `len` steps long, pitched by name
@@ -146,6 +158,8 @@ impl Song {
             patterns: Vec::new(),
             arrangement: Vec::new(),
             master: Vec::new(),
+            engine: Some(ENGINE_VERSION),
+            version: Some(crate::dsl::SCHEMA_VERSION),
         }
     }
 
@@ -448,13 +462,21 @@ impl Song {
             tracks: doc_tracks,
             master: self.master.clone(),
         };
-        let doc: SoundDoc = serde_json::from_value(serde_json::json!({
+        // The song's pinned engine/version win over the current ones, so a
+        // saved project replays byte-identically across kernel upgrades.
+        // Older saves without the pins keep their historical behavior: the
+        // current engine, v1 schema semantics.
+        let mut json = serde_json::json!({
             "name": self.name,
             "duration": duration,
-            "engine": ENGINE_VERSION,
+            "engine": self.engine.unwrap_or(ENGINE_VERSION),
             "root": serde_json::to_value(&root).map_err(|e| e.to_string())?,
-        }))
-        .map_err(|e| format!("song doc build: {e}"))?;
+        });
+        if let Some(v) = self.version {
+            json["version"] = serde_json::json!(v);
+        }
+        let doc: SoundDoc =
+            serde_json::from_value(json).map_err(|e| format!("song doc build: {e}"))?;
         Ok(doc)
     }
 }
@@ -874,6 +896,39 @@ mod tests {
                 "layer id '{id}' is a slug"
             );
         }
+    }
+
+    #[test]
+    fn song_pins_engine_and_version_at_creation() {
+        let amp = Adsr {
+            a: 0.005,
+            d: 0.1,
+            s: 0.8,
+            r: 0.2,
+            punch: 0.0,
+        };
+        let mut song = Song::new("pinned", 120.0);
+        song.add_track("bass", SeqWave::Bass, amp);
+        song.tracks[0].notes.push(note(0, 4, "C2"));
+        assert_eq!(song.engine, Some(ENGINE_VERSION));
+        let doc = song.to_doc().unwrap();
+        assert_eq!(doc.engine, Some(ENGINE_VERSION));
+        assert_eq!(doc.version, Some(crate::dsl::SCHEMA_VERSION));
+
+        // A save pinned to an older engine keeps it across upgrades — the
+        // audio of a saved project never silently changes.
+        song.engine = Some(3);
+        assert_eq!(song.to_doc().unwrap().engine, Some(3));
+
+        // Legacy saves (no pins) keep their historical behavior: current
+        // engine, v1 doc semantics.
+        let mut v = serde_json::to_value(&song).unwrap();
+        v.as_object_mut().unwrap().remove("engine");
+        v.as_object_mut().unwrap().remove("version");
+        let legacy: Song = serde_json::from_value(v).unwrap();
+        let doc = legacy.to_doc().unwrap();
+        assert_eq!(doc.engine, Some(ENGINE_VERSION));
+        assert_eq!(doc.version, None);
     }
 
     #[test]
