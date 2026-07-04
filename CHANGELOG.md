@@ -1,5 +1,53 @@
 # Changelog
 
+## Unreleased — 2.0.0
+
+A verified bug sweep, a corrected output stage behind engine revision 4, and an
+organization/API pass. Every pre-existing document still renders byte-for-byte
+(a golden corpus now pins this in CI); the 2.0 major is for the API surface,
+not the audio.
+
+### Fixed (no rendered bytes change)
+- `delay.secs` is bounded — an unbounded value passed `validate()` then aborted
+  the process on an arbitrary allocation; constants/modulator endpoints must be
+  finite (1e308 rendered NaN buffers); automation lanes are validated.
+- The split engine no longer loses frames when over-pumped, and an odd-length
+  underrun no longer permanently swaps L/R.
+- `StreamSource` carries the bounce's peak-limit gain (streams matched the raw
+  graph, playing louder than the bounce); loop/stereo docs fall back to the
+  `Player` instead of playing un-looped/un-widened; the `fold` waveshaper can
+  no longer hang the audio thread on a non-finite sample.
+- Voice stealing declicks with a ~5 ms fade (instrument + drum kit) instead of
+  a hard mid-sample cut.
+- MIDI export carries velocity, puts drums on channel 10, and no longer drifts
+  on non-divisor grids; CLI flags consume their values and unknown options are
+  loud errors; morph no longer lerps `engine`/`seed`; a stack of smaller fixes.
+
+### Engine revision 4 (opt-in via the doc's `engine`; new songs stamp it)
+- Loudness normalization measures the whole stereo program with ONE shared gain
+  (the per-channel stage collapsed asymmetric mixes toward center), using gated
+  BS.1770 loudness at the doc's actual sample rate, and enforces `ceiling_dbtp`
+  against a real oversampled true-peak estimate.
+- Humanize jitter is seeded per note, so chords stop moving as a block.
+- `Song` pins `engine`/`version` at creation: saved projects replay
+  byte-identically across kernel upgrades.
+- All metering (analysis, CLI, desktop) now reads the stereo pair that ships,
+  with oversampled true-peak and gated loudness.
+
+### Changed (API — the reason this is 2.0.0)
+- `stream` → `player` (deprecated alias kept); `catalog::Instrument` →
+  `catalog::Voice` (deprecated alias kept).
+- `#[non_exhaustive]` on the enums and builder-structs that grow every release.
+- Dead `voice::{BandOsc, Voice, PolySynth}` removed (only `EnvGen` was used).
+- `render`/`dsl` split into focused submodules (same public paths);
+  `tono_core::prelude` added; the root `tono` crate re-exports every module;
+  `missing_docs` is enforced.
+
+### Known limitation (documented)
+- Byte-identity holds per platform: platform libm (`sin`/`cos`/`exp`/`powf`)
+  differs between macOS-arm64 and linux-x86_64, so the golden pins are
+  per-platform. Deterministic transcendental kernels are future work.
+
 ## 1.5.0 — 2026-07-03
 
 Per-track mixing on the song builder. Instruments gain `.reverb(0..1)` (a reverb

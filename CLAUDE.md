@@ -29,10 +29,20 @@ The root is the `tono` crate (the CLI); the sub-crates live under `crates/`.
 ## The invariant that matters
 
 Rendering is a pure function of `(graph, seed, sample_rate)` → **byte-identical**
-audio. Session files replay byte-for-byte; example recipes are replay-tested in
-CI. Do not change synthesis math in a way that breaks existing renders — gate
-byte-changing kernel upgrades behind the document `engine` revision. The
-real-time audition path must stay byte-identical to an offline bounce.
+audio. A golden corpus (`crates/tono-core/tests/golden.rs`) pins the exact
+rendered hashes of representative documents — and the docs/examples recipes —
+in CI, so a kernel change that shifts the offline and streaming paths together
+still fails loudly. Do not change synthesis math in a way that breaks existing
+renders — gate byte-changing kernel upgrades behind the document `engine`
+revision. The real-time audition path must stay byte-identical to an offline
+bounce.
+
+Known limitation: byte-identity currently holds **per platform**. The DSP calls
+platform libm (`sin`/`cos`/`exp`/`powf`), whose last bits differ between
+macOS-arm64 and linux-x86_64, so the golden pins are per-platform (integer-RNG /
+PolyBLEP / rational-filter content is identical everywhere; transcendental
+content is not). Making the invariant truly cross-platform means deterministic
+transcendental kernels behind a future engine revision.
 
 ## Build / test
 
