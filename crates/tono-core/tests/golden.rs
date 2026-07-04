@@ -178,6 +178,31 @@ const CORPUS: &[Case] = &[
         mono: 0x430d046059c90676,
         stereo: None,
     },
+    Case {
+        // The same mixer as tracks-mix, opted into engine 4: joint gated
+        // loudness with one shared gain and an oversampled true-peak ceiling.
+        name: "tracks-mix-v4",
+        json: r#"{ "name": "tracks-mix-v4", "duration": 0.5, "seed": 9, "engine": 4,
+            "normalize": { "target_lufs": -14, "ceiling_dbtp": -1.0 },
+            "root": { "type": "tracks", "tracks": [
+                { "id": "pad", "node": { "type": "sine", "freq": 220 }, "pan": -0.8, "gain": 0.3 },
+                { "id": "hiss", "node": { "type": "noise", "color": "white" }, "pan": 0.9, "gain": 0.6,
+                  "automation": [ { "target": "gain", "points": [
+                      { "t": 0.0, "v": 0.1 }, { "t": 0.4, "v": 0.8 } ] } ] },
+                { "id": "lead", "node": { "type": "square", "freq": 440, "duty": 0.25 }, "gain": 0.4, "at": 0.1 }
+            ], "master": [ { "type": "reverb", "room": 0.3, "mix": 0.2 } ] } }"#,
+        mono: 0x9cf01dcf618e7053,
+        stereo: Some((0x6851c603baadc1f8, 0xe7e3536620aae2c7)),
+    },
+    Case {
+        name: "normalize-mono-v4",
+        json: r#"{ "name": "normalize-mono-v4", "duration": 0.5, "engine": 4,
+            "normalize": { "target_lufs": -16, "ceiling_dbtp": -1.0 },
+            "root": { "type": "chain", "stages": [
+                { "type": "sine", "freq": 440 }, { "type": "gain", "amount": 0.05 } ] } }"#,
+        mono: 0xb6b0676f4086d076,
+        stereo: None,
+    },
 ];
 
 /// Song fluent path golden: the arrangement layer compiles through `to_doc`

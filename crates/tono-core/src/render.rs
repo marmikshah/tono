@@ -8,7 +8,10 @@ use crate::dsl::{
     Adsr, AutoLane, AutoPoint, AutoTarget, Curve, DriveShape, KitStyle, Mode, Modulator, Node,
     NoiseColor, Normalize, Playback, SeqNote, SeqWave, Shape, SoundDoc, Stereo, SuperWave, Value,
 };
-use crate::dsp::{Rng, db_to_lin, loudness_lufs, peak_limit, true_peak};
+use crate::dsp::{
+    Rng, db_to_lin, loudness_lufs, loudness_lufs_gated, peak_limit, true_peak,
+    true_peak_oversampled,
+};
 use std::f32::consts::{FRAC_PI_2, LN_2, TAU};
 
 /// A block of mono audio samples.
@@ -283,8 +286,16 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
         right = make_loop_buffer(&right, sr, start_secs, end_secs, crossfade_secs);
     }
     if let Some(nz) = &doc.normalize {
-        normalize_output(&mut left, nz);
-        normalize_output(&mut right, nz);
+        if engine >= 4 {
+            // One shared gain over the stereo program — the authored balance
+            // is sacred. Engine ≤ 3 docs keep the original per-channel stage
+            // bit-for-bit (it gain-matched L and R independently, collapsing
+            // any asymmetric mix toward center).
+            normalize_output_v4(&mut [&mut left, &mut right], nz, sr);
+        } else {
+            normalize_output(&mut left, nz);
+            normalize_output(&mut right, nz);
+        }
     }
     peak_limit(&mut [&mut left, &mut right]);
     Some(TracksRender {
@@ -439,6 +450,7 @@ fn render_plain(doc: &SoundDoc) -> Signal {
     }
     match &doc.normalize {
         // Loudness-matched / true-peak-limited output stage (opt-in).
+        Some(nz) if engine >= 4 => normalize_output_v4(&mut [&mut out], nz, sr),
         Some(nz) => normalize_output(&mut out, nz),
         // Default: a transparent sample-peak safety limit only.
         None => peak_limit(&mut [&mut out]),
@@ -522,6 +534,48 @@ fn normalize_output(samples: &mut [f32], nz: &Normalize) {
     // Safety: catch inter-sample residue above the ceiling, then sample peak.
     true_peak_limit(samples, nz.ceiling_dbtp);
     peak_limit(&mut [samples]);
+}
+
+/// Engine ≥ 4 output stage over the whole program (1 = mono, 2 = stereo):
+/// loudness is measured jointly with gated BS.1770 at the actual sample rate
+/// and corrected with ONE shared gain (per-channel matching collapsed any
+/// asymmetric mix toward center), and the ceiling is enforced against a real
+/// oversampled true-peak estimate (the legacy linear estimate could never see
+/// an inter-sample over, so the documented dBTP ceiling was not honored).
+fn normalize_output_v4(channels: &mut [&mut [f32]], nz: &Normalize, sr: u32) {
+    let ceil = db_to_lin(nz.ceiling_dbtp);
+    if let Some(target) = nz.target_lufs {
+        for _ in 0..2 {
+            let cur = {
+                let views: Vec<&[f32]> = channels.iter().map(|c| &**c).collect();
+                loudness_lufs_gated(&views, sr)
+            };
+            if cur <= -120.0 {
+                break;
+            }
+            let g = db_to_lin(target - cur);
+            for c in channels.iter_mut() {
+                for x in c.iter_mut() {
+                    *x *= g;
+                }
+                soft_limit(c, ceil);
+            }
+        }
+    }
+    // Shared true-peak gain, then the joint sample-peak safety net.
+    let tp = channels
+        .iter()
+        .map(|c| true_peak_oversampled(c))
+        .fold(0.0f32, f32::max);
+    if tp > ceil && tp > 0.0 {
+        let g = ceil / tp;
+        for c in channels.iter_mut() {
+            for x in c.iter_mut() {
+                *x *= g;
+            }
+        }
+    }
+    peak_limit(channels);
 }
 
 /// Soft-knee peak limiter: transparent below `0.7 × ceil`, smoothly (tanh)
@@ -3311,6 +3365,39 @@ mod tests {
         assert!((lufs + 20.0).abs() < 1.5, "got {lufs} LUFS");
         // True peak respects the −1 dBTP ceiling (small estimation slack).
         assert!(crate::dsp::dbfs(true_peak(&s)) <= -0.9);
+    }
+
+    #[test]
+    fn engine4_normalize_preserves_the_stereo_balance() {
+        // A quiet hard-left noise against a loud hard-right sine. Engine ≤ 3
+        // gain-matched each channel to the target independently, collapsing
+        // the authored imbalance; engine 4 applies one shared gain.
+        let mk = |engine: u32, normalize: &str| -> SoundDoc {
+            doc(&format!(
+                r#"{{ "name":"bal", "duration":1.0, "seed":9, "engine":{engine}, {normalize}
+                    "root": {{ "type":"tracks", "tracks": [
+                        {{ "id":"quiet", "node": {{ "type":"noise", "color":"white" }},
+                           "pan":-1.0, "gain":0.02 }},
+                        {{ "id":"loud", "node": {{ "type":"sine", "freq":110 }},
+                           "pan":1.0, "gain":0.8 }} ] }} }}"#
+            ))
+        };
+        let nz = r#""normalize": { "target_lufs": -14, "ceiling_dbtp": -1.0 },"#;
+        let balance = |d: &SoundDoc| -> f32 {
+            let tr = render_tracks(d).unwrap();
+            rms(&tr.right) / rms(&tr.left).max(1e-9)
+        };
+        let authored = balance(&mk(4, ""));
+        let v4 = balance(&mk(4, nz));
+        let v3 = balance(&mk(3, nz));
+        assert!(
+            (v4 / authored).log10().abs() < 0.1,
+            "engine 4 keeps the authored R/L balance: {authored:.1} → {v4:.1}"
+        );
+        assert!(
+            v3 < authored / 4.0,
+            "engine 3's per-channel stage collapses it: {authored:.1} → {v3:.1} (pinned legacy)"
+        );
     }
 
     #[test]
