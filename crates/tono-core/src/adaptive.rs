@@ -39,8 +39,12 @@ impl LoopBuffer {
     }
 
     /// Loop pre-rendered stereo samples — trim them to a musical bar length for a
-    /// seamless loop.
-    pub fn from_stereo(left: Vec<f32>, right: Vec<f32>) -> Self {
+    /// seamless loop. Channels of unequal length are truncated to the shorter
+    /// one: indexing past the short channel would panic on the audio thread.
+    pub fn from_stereo(mut left: Vec<f32>, mut right: Vec<f32>) -> Self {
+        let n = left.len().min(right.len());
+        left.truncate(n);
+        right.truncate(n);
         LoopBuffer {
             left,
             right,

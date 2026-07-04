@@ -240,9 +240,9 @@ pub fn review(
         "shorten the document duration (or keep it for a deliberate ring-out)",
     ));
 
-    // Loop seam (loops only).
-    if is_loop {
-        let seam = seam_db.unwrap_or(0.0);
+    // Loop seam (loops only, and only when the caller measured one —
+    // fabricating a 0 dB seam would guarantee a spurious FAIL).
+    if is_loop && let Some(seam) = seam_db {
         let status = if seam <= -40.0 {
             Status::Pass
         } else if seam <= -25.0 {

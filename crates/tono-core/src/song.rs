@@ -259,9 +259,12 @@ impl Song {
         self
     }
 
-    /// The song's length in bars (the end of its last-ending pattern).
+    /// The song's length in bars: the end of its last-ending pattern or of the
+    /// last note written directly onto a track (the fluent [`Song::add`] path).
     pub fn length_bars(&self) -> u32 {
-        self.arrangement
+        let steps_per_bar = (self.steps_per_beat * self.beats_per_bar).max(1);
+        let from_patterns = self
+            .arrangement
             .iter()
             .map(|pl| {
                 let bars = self
@@ -273,7 +276,15 @@ impl Song {
                 pl.bar + bars
             })
             .max()
-            .unwrap_or(0)
+            .unwrap_or(0);
+        let from_notes = self
+            .tracks
+            .iter()
+            .flat_map(|t| t.notes.iter())
+            .map(|n| (n.step + n.len).div_ceil(steps_per_bar))
+            .max()
+            .unwrap_or(0);
+        from_patterns.max(from_notes)
     }
 
     /// Compile to a deterministic [`SoundDoc`] — a `tracks` root of `seq` tracks.
@@ -863,6 +874,24 @@ mod tests {
                 "layer id '{id}' is a slug"
             );
         }
+    }
+
+    #[test]
+    fn length_bars_counts_direct_track_notes() {
+        // Notes written via the fluent path live on the track, not in a
+        // pattern placement — they must still count toward the song length.
+        let amp = Adsr {
+            a: 0.005,
+            d: 0.1,
+            s: 0.8,
+            r: 0.2,
+            punch: 0.0,
+        };
+        let mut song = Song::new("fluent", 120.0); // 16 steps per bar
+        song.add_track("bass", SeqWave::Bass, amp);
+        assert_eq!(song.length_bars(), 0);
+        song.tracks[0].notes.push(note(17, 4, "C2")); // ends at step 21 → bar 2
+        assert_eq!(song.length_bars(), 2);
     }
 }
 
