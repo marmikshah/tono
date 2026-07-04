@@ -37,10 +37,7 @@ pub struct RenderProduct {
 /// v2). SplitMix64 finalizer over a golden-gamma offset, so streams never
 /// correlate with each other or with the v1 threaded stream.
 fn track_stream_seed(seed: u64, i: u64) -> u64 {
-    let mut z = seed ^ i.wrapping_add(1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
+    crate::dsp::splitmix_mix(seed ^ i.wrapping_add(1).wrapping_mul(crate::dsp::GOLDEN_GAMMA))
 }
 
 /// The master bus's stream key (validate rejects a layer id hashing to it).
@@ -753,9 +750,9 @@ fn eval_value(v: &Value, n: usize, sr: u32) -> Vec<f32> {
 /// own fields, so its walk never shifts when sibling nodes are added or
 /// removed (the random stream is not threaded through graph traversal).
 pub(crate) fn rand_seed(seed: u64, from: f32, to: f32, rate: f32) -> u64 {
-    let mut h = seed ^ 0x9E37_79B9_7F4A_7C15;
+    let mut h = seed ^ crate::dsp::GOLDEN_GAMMA;
     for bits in [from.to_bits(), to.to_bits(), rate.to_bits()] {
-        h = (h ^ bits as u64).wrapping_mul(0x0000_0100_0000_01B3);
+        h = (h ^ bits as u64).wrapping_mul(crate::dsp::FNV_PRIME);
     }
     h
 }
@@ -1168,17 +1165,10 @@ fn biquad(input: &[f32], cutoff: &Value, q: f32, sr: u32, kind: FilterKind) -> S
 /// the classic Freeverb values, scaled to the sample rate.
 fn reverb(input: &[f32], room: f32, mix: f32, sr: u32, spread: usize) -> Signal {
     let scale = sr as f32 / 44_100.0;
-    let comb_tunings = [
-        1116 + spread,
-        1188 + spread,
-        1277 + spread,
-        1356 + spread,
-        1422 + spread,
-        1491 + spread,
-    ];
-    let allpass_tunings = [556 + spread, 441 + spread, 341 + spread, 225 + spread];
+    let comb_tunings = crate::dsp::FREEVERB_COMB_TUNINGS.map(|t| t + spread);
+    let allpass_tunings = crate::dsp::FREEVERB_ALLPASS_TUNINGS.map(|t| t + spread);
     let feedback = 0.7 + 0.28 * room.clamp(0.0, 1.0);
-    let damp = 0.2;
+    let damp = crate::dsp::FREEVERB_DAMP;
 
     let mut wet = vec![0.0f32; input.len()];
     // Parallel combs (summed).
@@ -1384,8 +1374,8 @@ fn modal_bank(input: &[f32], modes: &[Mode], mix: f32, sr: u32) -> Signal {
 /// Chorus: a single voice of modulated delay mixed with the dry signal.
 fn chorus(input: &[f32], rate: f32, depth: f32, mix: f32, sr: u32) -> Signal {
     let srf = sr as f32;
-    let base = 0.015 * srf; // ~15 ms centre delay
-    let swing = depth.clamp(0.0, 1.0) * 0.010 * srf; // up to ±10 ms
+    let base = crate::dsp::CHORUS_BASE_SECS * srf;
+    let swing = depth.clamp(0.0, 1.0) * crate::dsp::CHORUS_SWING_SECS * srf;
     let max_delay = (base + swing) as usize + 2;
     let mut buf = vec![0.0f32; max_delay];
     let mut w = 0usize;
@@ -1411,8 +1401,8 @@ fn chorus(input: &[f32], rate: f32, depth: f32, mix: f32, sr: u32) -> Signal {
 /// Flanger: a 0.5–6 ms swept delay with feedback, mixed against the dry path.
 fn flanger(input: &[f32], rate: f32, depth: f32, feedback: f32, mix: f32, sr: u32) -> Signal {
     let srf = sr as f32;
-    let base = 0.0025 * srf; // 2.5 ms centre
-    let swing = depth.clamp(0.0, 1.0) * 0.002 * srf; // up to ±2 ms
+    let base = crate::dsp::FLANGER_BASE_SECS * srf; // 2.5 ms centre
+    let swing = depth.clamp(0.0, 1.0) * crate::dsp::FLANGER_SWING_SECS * srf; // up to ±2 ms
     let max_delay = (base + swing) as usize + 2;
     let mut buf = vec![0.0f32; max_delay];
     let mut w = 0usize;
@@ -2784,30 +2774,9 @@ fn kit_drum_808(f: &[f32], _note: &SeqNote, sr: u32, rng: &mut Rng) -> Signal {
 fn adsr(env: &Adsr, n: usize, sr: u32) -> Signal {
     let Adsr { a, d, s, r, punch } = *env;
     let srf = sr as f32;
-    let dur = n as f32 / srf;
-    let rel_start = (dur - r).max(0.0);
-    let punch_win = a + d;
+    let rel_start = (n as f32 / srf - r).max(0.0);
     (0..n)
-        .map(|i| {
-            let t = i as f32 / srf;
-            let mut v = if t < a {
-                if a > 0.0 { t / a } else { 1.0 }
-            } else if t < a + d {
-                let p = if d > 0.0 { (t - a) / d } else { 1.0 };
-                1.0 - (1.0 - s) * p
-            } else if t < rel_start {
-                s
-            } else if r > 0.0 {
-                let p = ((t - rel_start) / r).clamp(0.0, 1.0);
-                s * (1.0 - p)
-            } else {
-                0.0
-            };
-            if punch > 0.0 && punch_win > 0.0 && t < punch_win {
-                v *= 1.0 + punch * (1.0 - t / punch_win);
-            }
-            v
-        })
+        .map(|i| crate::dsp::adsr_env(i as f32 / srf, a, d, s, r, punch, rel_start))
         .collect()
 }
 

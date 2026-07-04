@@ -36,32 +36,8 @@ use crate::dsl::{
     Curve, DriveShape, Modulator, Node, NoiseColor, Playback, SeqWave, Shape, SoundDoc, Stereo,
     SuperWave, Value, note_to_hz,
 };
-use crate::dsp::{Rng, node_path, node_seed};
+use crate::dsp::{Rng, adsr_env, node_path, node_seed};
 use crate::render::{drive_antideriv, drive_curve, osc, poly_blep, rand_seed, seq_to_signal};
-
-/// The ADSR envelope value at time `t` seconds — the exact body of the offline
-/// `adsr` (also used by `Modulator::EnvMod`). `rel_start` anchors the release to
-/// the end of the render (`total_secs - r`).
-fn adsr_env(t: f32, a: f32, d: f32, s: f32, r: f32, punch: f32, rel_start: f32) -> f32 {
-    let mut v = if t < a {
-        if a > 0.0 { t / a } else { 1.0 }
-    } else if t < a + d {
-        let p = if d > 0.0 { (t - a) / d } else { 1.0 };
-        1.0 - (1.0 - s) * p
-    } else if t < rel_start {
-        s
-    } else if r > 0.0 {
-        let p = ((t - rel_start) / r).clamp(0.0, 1.0);
-        s * (1.0 - p)
-    } else {
-        0.0
-    };
-    let punch_win = a + d;
-    if punch > 0.0 && punch_win > 0.0 && t < punch_win {
-        v *= 1.0 + punch * (1.0 - t / punch_win);
-    }
-    v
-}
 
 /// A per-sample evaluator for a dsl [`Value`], byte-identical to `eval_value` at
 /// the given absolute sample index. Const/Note are constant; the modulators match
@@ -1157,8 +1133,8 @@ fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Pr
         }
         Node::Reverb { room, mix } => {
             let scale = srf / 44_100.0;
-            let comb_tunings = [1116usize, 1188, 1277, 1356, 1422, 1491];
-            let allpass_tunings = [556usize, 441, 341, 225];
+            let comb_tunings = crate::dsp::FREEVERB_COMB_TUNINGS;
+            let allpass_tunings = crate::dsp::FREEVERB_ALLPASS_TUNINGS;
             let combs = comb_tunings
                 .iter()
                 .map(|&tn| {
@@ -1177,7 +1153,7 @@ fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Pr
                 combs,
                 allpasses,
                 feedback: 0.7 + 0.28 * room.clamp(0.0, 1.0),
-                damp: 0.2,
+                damp: crate::dsp::FREEVERB_DAMP,
                 g: 0.5,
                 comb_norm: 1.0 / 6.0,
                 mix: mix.clamp(0.0, 1.0),
@@ -1222,8 +1198,8 @@ fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Pr
             srf,
         },
         Node::Chorus { rate, depth, mix } => {
-            let base = 0.015 * srf;
-            let swing = depth.clamp(0.0, 1.0) * 0.010 * srf;
+            let base = crate::dsp::CHORUS_BASE_SECS * srf;
+            let swing = depth.clamp(0.0, 1.0) * crate::dsp::CHORUS_SWING_SECS * srf;
             let max_delay = (base + swing) as usize + 2;
             Proc::Chorus {
                 buf: vec![0.0; max_delay],
@@ -1242,8 +1218,8 @@ fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Pr
             feedback,
             mix,
         } => {
-            let base = 0.0025 * srf;
-            let swing = depth.clamp(0.0, 1.0) * 0.002 * srf;
+            let base = crate::dsp::FLANGER_BASE_SECS * srf;
+            let swing = depth.clamp(0.0, 1.0) * crate::dsp::FLANGER_SWING_SECS * srf;
             let max_delay = (base + swing) as usize + 2;
             Proc::Flanger {
                 buf: vec![0.0; max_delay],
