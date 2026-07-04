@@ -24,13 +24,19 @@ pub mod dsp;
 pub mod edit;
 pub mod instrument;
 pub mod patch;
+pub mod player;
 pub mod presets;
 pub mod render;
 #[cfg(feature = "analysis")]
 pub mod review;
 pub mod runtime;
 pub mod song;
-pub mod stream;
 pub mod streaming;
 pub mod vary;
 pub mod voice;
+
+/// Renamed to [`player`] — `stream` (the buffer-backed audition `Player`) sat
+/// one suffix away from [`streaming`] (the per-sample block renderer), and the
+/// pair was a reliable source of confusion.
+#[deprecated(since = "2.0.0", note = "renamed to `player`")]
+pub use player as stream;

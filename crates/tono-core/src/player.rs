@@ -7,10 +7,11 @@
 //! (see `player_output_matches_offline_bounce`). So you can audition live, tweak,
 //! and still ship the exact thing you heard.
 //!
-//! v1 is buffer-backed — [`Player::set_doc`] re-renders the document (instant for
-//! short SFX) and [`Player::fill`] serves it with a play cursor and looping. The
-//! future per-block *streaming* renderer (for held/playable instrument notes and
-//! long sounds) slots in behind this same interface without changing hosts.
+//! The `Player` is buffer-backed — [`Player::set_doc`] re-renders the document
+//! (instant for short SFX) and [`Player::fill`] serves it with a play cursor
+//! and looping. Its per-sample counterpart is [`crate::streaming`]: the
+//! stateful block renderer for the causal subset of the graph; the runtime
+//! picks between them and both stay byte-identical to the offline bounce.
 
 use crate::dsl::SoundDoc;
 use crate::render;

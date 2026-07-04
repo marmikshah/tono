@@ -22,7 +22,7 @@
 //!   block-by-block.
 //!
 //! What falls back to the byte-identical buffer-backed
-//! [`crate::stream::Player`]: RNG nodes under `engine < 2` (they keep the old
+//! [`crate::player::Player`]: RNG nodes under `engine < 2` (they keep the old
 //! shared, order-dependent stream); the **sampler** seq (an external stateful
 //! rustysynth voice); a **`tracks` root** (the stereo mixer + master path — the
 //! runtime's instance-per-layer model covers layering); a **`normalize`**
@@ -1322,7 +1322,7 @@ pub struct StreamGraph {
 impl StreamGraph {
     /// Build a streamer for `doc`, or `None` if the graph is outside the
     /// streamable subset — the caller then falls back to the buffer-backed
-    /// [`crate::stream::Player`].
+    /// [`crate::player::Player`].
     pub fn try_from_doc(doc: &SoundDoc) -> Option<Self> {
         // Loop docs render offline as their crossfaded loop body and stereo
         // (Haas/Wide) docs are stereoized at write time — neither transform

@@ -7,7 +7,7 @@
 //! setters. Host output adapters (cpal, an AudioWorklet, a Bevy source) target
 //! the [`AudioSource`] trait, so they never depend on a concrete engine type.
 //!
-//! Backed today by the deterministic buffer renderer ([`crate::stream::Player`]),
+//! Backed today by the deterministic buffer renderer ([`crate::player::Player`]),
 //! which keeps the mix **byte-identical to an offline bounce**. Instance master
 //! controls (gain / pan / stop) apply live per block; parameter and layer-gain
 //! changes ([`Engine::set_param`] / [`Engine::set_layer_gain`]) re-render the
@@ -40,7 +40,7 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use crate::dsl::{Node, SoundDoc};
 use crate::edit::{EditOp, apply_ops};
 use crate::patch::Patch;
-use crate::stream::Player;
+use crate::player::Player;
 use crate::streaming::StreamGraph;
 
 /// A block-serving audio source: fill `out` (interleaved stereo L,R,L,R…) and
