@@ -1,6 +1,6 @@
 //! catalog — a library of ready-to-play instruments.
 //!
-//! Each constructor returns an [`Instrument`]: a synthesized voice with a tuned
+//! Each constructor returns an [`Voice`]: a synthesized voice with a tuned
 //! envelope, mixer defaults, and voice parameters — no soundfonts, no files,
 //! generated entirely from the graph and byte-identical every render. Hand one
 //! to [`Song::add`](crate::song::Song::add) and write its notes on the shared
@@ -81,12 +81,18 @@ pub struct VoiceParams {
     pub bass_body_decay: Option<f32>,
 }
 
-/// A ready-to-play instrument: a synth voice plus a tuned envelope, mixer
+/// A ready-to-play song voice: a synth wave plus a tuned envelope, mixer
 /// defaults, and [`VoiceParams`]. Build one from the catalog constructors
 /// ([`GrandPiano`], [`Bass`], [`Drums`], …) and add it to a
 /// [`Song`](crate::song::Song).
+///
+/// Named `Voice` because the crate has three instrument-shaped layers: this
+/// catalog voice (what a song track plays), a preset
+/// [`InstrumentDesign`](crate::instrument::InstrumentDesign) (what the live
+/// keyboard plays), and the playable
+/// [`Instrument`](crate::instrument::Instrument) engine itself.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Instrument {
+pub struct Voice {
     /// Display name — becomes the song track / rendered layer id.
     pub name: String,
     /// The synthesized voice.
@@ -107,7 +113,12 @@ pub struct Instrument {
     pub voice: VoiceParams,
 }
 
-impl Instrument {
+/// The old name of [`Voice`] — it collided with the live-playable
+/// [`crate::instrument::Instrument`], the crate's other `Instrument`.
+#[deprecated(since = "2.0.0", note = "renamed to `catalog::Voice`")]
+pub type Instrument = Voice;
+
+impl Voice {
     /// Rename the instrument (the track / layer id). Handy when a song has two
     /// of the same instrument.
     pub fn named(mut self, name: impl Into<String>) -> Self {
@@ -147,8 +158,8 @@ impl Instrument {
 }
 
 /// A short constructor: an instrument with unity gain, centered, no voice params.
-fn voice(name: &str, wave: SeqWave, env: Adsr) -> Instrument {
-    Instrument {
+fn voice(name: &str, wave: SeqWave, env: Adsr) -> Voice {
+    Voice {
         name: name.to_string(),
         wave,
         env,
@@ -182,14 +193,14 @@ pub struct GrandPiano;
 
 impl GrandPiano {
     /// The concert grand — the reference voice, all tone knobs at default.
-    pub fn grand() -> Instrument {
+    pub fn grand() -> Voice {
         voice("grand piano", SeqWave::Piano, piano_env(0.35))
     }
 
     /// Hard-voiced and forward — a harder hammer and a higher strike lift the
     /// upper partials; cuts through a busy mix.
-    pub fn bright() -> Instrument {
-        Instrument {
+    pub fn bright() -> Voice {
+        Voice {
             gain: 1.05,
             voice: piano_tone(&[
                 (Tone::Hammer, 1.6),
@@ -210,8 +221,8 @@ impl GrandPiano {
 
     /// Soft-voiced ballad grand — a softer hammer rounds off the top over a long
     /// pedal decay. Warm, but still a full grand.
-    pub fn mellow() -> Instrument {
-        Instrument {
+    pub fn mellow() -> Voice {
+        Voice {
             gain: 0.9,
             voice: piano_tone(&[
                 (Tone::Hammer, 0.65),
@@ -224,8 +235,8 @@ impl GrandPiano {
 
     /// Intimate felt piano — a blanket over the strings: a very soft hammer
     /// strips the highs to a muffled core, the hammer thump sitting proud.
-    pub fn felt() -> Instrument {
-        Instrument {
+    pub fn felt() -> Voice {
+        Voice {
             gain: 0.85,
             voice: piano_tone(&[
                 (Tone::Hammer, 0.35),
@@ -238,8 +249,8 @@ impl GrandPiano {
 
     /// Boxy parlour upright — short, stiff strings stretch the partials sharp
     /// (a metallic jangle); slightly hard, dry, no pedal.
-    pub fn upright() -> Instrument {
-        Instrument {
+    pub fn upright() -> Voice {
+        Voice {
             voice: piano_tone(&[
                 (Tone::Hammer, 1.15),
                 (Tone::Strike, 0.115),
@@ -253,8 +264,8 @@ impl GrandPiano {
 
     /// Tack/bar piano — a wide, deliberately out-of-tune unison warble over
     /// short inharmonic strings and a bright tinny attack. Plinky, fast-decaying.
-    pub fn honky_tonk() -> Instrument {
-        Instrument {
+    pub fn honky_tonk() -> Voice {
+        Voice {
             voice: piano_tone(&[
                 (Tone::Hammer, 1.5),
                 (Tone::Strike, 0.11),
@@ -298,7 +309,7 @@ pub struct ElectricPiano;
 
 impl ElectricPiano {
     /// Classic Rhodes — warm body, bell-like tine.
-    pub fn rhodes() -> Instrument {
+    pub fn rhodes() -> Voice {
         voice(
             "electric piano",
             SeqWave::Epiano,
@@ -313,7 +324,7 @@ impl ElectricPiano {
     }
 
     /// Barkier, shorter — a Wurlitzer-ish reed with quicker decay.
-    pub fn wurli() -> Instrument {
+    pub fn wurli() -> Voice {
         voice(
             "wurli",
             SeqWave::Epiano,
@@ -329,8 +340,8 @@ impl ElectricPiano {
 
     /// A glassy DX-style FM electric piano — the two-operator FM voice tuned to
     /// a 1:1 ratio with a short bright strike.
-    pub fn dx() -> Instrument {
-        Instrument {
+    pub fn dx() -> Voice {
+        Voice {
             voice: VoiceParams {
                 fm_ratio: Some(1.0),
                 fm_index: Some(3.5),
@@ -358,7 +369,7 @@ pub struct Organ;
 
 impl Organ {
     /// Full drawbars, gentle key-click percussion.
-    pub fn tonewheel() -> Instrument {
+    pub fn tonewheel() -> Voice {
         voice(
             "organ",
             SeqWave::Organ,
@@ -373,7 +384,7 @@ impl Organ {
     }
 
     /// Punchier attack for rock stabs.
-    pub fn rock() -> Instrument {
+    pub fn rock() -> Voice {
         voice(
             "rock organ",
             SeqWave::Organ,
@@ -396,7 +407,7 @@ pub struct Strings;
 
 impl Strings {
     /// A balanced ensemble swell — pads, sustained chords.
-    pub fn ensemble() -> Instrument {
+    pub fn ensemble() -> Voice {
         voice(
             "strings",
             SeqWave::Strings,
@@ -411,7 +422,7 @@ impl Strings {
     }
 
     /// Warmer and slower — a longer swell and tail for cinematic beds.
-    pub fn warm() -> Instrument {
+    pub fn warm() -> Voice {
         voice(
             "warm strings",
             SeqWave::Strings,
@@ -433,7 +444,7 @@ pub struct Bass;
 impl Bass {
     /// Fingered electric bass — a filtered saw whose cutoff snaps with velocity
     /// over a solid sine sub. Punchy, dark, sits under the mix.
-    pub fn finger() -> Instrument {
+    pub fn finger() -> Voice {
         voice(
             "bass",
             SeqWave::Bass,
@@ -448,8 +459,8 @@ impl Bass {
     }
 
     /// Picked — a bright plectrum tick, a fast-closing filter, a touch of grit.
-    pub fn pick() -> Instrument {
-        Instrument {
+    pub fn pick() -> Voice {
+        Voice {
             voice: bass_tone(
                 300.0, 800.0, 1200.0, 0.08, 2500.0, 0.75, 0.40, 1.0, 0.05, 1.6,
             ),
@@ -469,8 +480,8 @@ impl Bass {
 
     /// A pure **sub** bass — a deep sine with a whisper of body so it still
     /// translates on small speakers; long hold, felt more than heard.
-    pub fn sub() -> Instrument {
-        Instrument {
+    pub fn sub() -> Voice {
+        Voice {
             voice: bass_tone(100.0, 150.0, 200.0, 0.25, 0.0, 0.22, 0.95, 1.0, 0.0, 4.0),
             ..voice(
                 "sub bass",
@@ -488,8 +499,8 @@ impl Bass {
 
     /// A bright, wide, tanh-driven synth bass over a fat octave-down sub — the
     /// modern electronic/EDM voice.
-    pub fn synth() -> Instrument {
-        Instrument {
+    pub fn synth() -> Voice {
+        Voice {
             voice: bass_tone(600.0, 1500.0, 800.0, 0.25, 0.0, 0.85, 0.35, 0.5, 0.35, 6.0),
             ..voice(
                 "synth bass",
@@ -544,8 +555,8 @@ pub struct Guitar;
 impl Guitar {
     /// Nylon-string — warm and short: a dark loop, a big woody body, barely any
     /// pick attack. A soft fingerpicked classical tone.
-    pub fn nylon() -> Instrument {
-        Instrument {
+    pub fn nylon() -> Voice {
+        Voice {
             voice: VoiceParams {
                 pluck_decay: Some(0.90),
                 pluck_tone: Some(-0.35),
@@ -559,8 +570,8 @@ impl Guitar {
 
     /// Steel-string acoustic — a sizzly bright loop, a present body, a clear pick
     /// attack. Longer-ringing.
-    pub fn steel() -> Instrument {
-        Instrument {
+    pub fn steel() -> Voice {
+        Voice {
             voice: VoiceParams {
                 pluck_decay: Some(0.965),
                 pluck_tone: Some(0.30),
@@ -574,8 +585,8 @@ impl Guitar {
 
     /// Electric — the brightest loop, no acoustic body, a pick click, long clean
     /// sustain. The solid-body pickup tone.
-    pub fn electric() -> Instrument {
-        Instrument {
+    pub fn electric() -> Voice {
+        Voice {
             voice: VoiceParams {
                 pluck_decay: Some(0.99),
                 pluck_tone: Some(0.45),
@@ -605,32 +616,32 @@ pub struct Drums;
 
 impl Drums {
     /// A deeper, more realistic acoustic kit — the go-to.
-    pub fn acoustic() -> Instrument {
+    pub fn acoustic() -> Voice {
         drum_kit("drums", KitStyle::Acoustic)
     }
 
     /// The original synthesized GM kit (byte-frozen).
-    pub fn classic() -> Instrument {
-        Instrument {
+    pub fn classic() -> Voice {
+        Voice {
             voice: VoiceParams::default(), // no kit key ⇒ classic, unchanged
             ..drum_kit("classic drums", KitStyle::Classic)
         }
     }
 
     /// Clean synthesized electronic drums — tight, punchy, crisp.
-    pub fn electronic() -> Instrument {
+    pub fn electronic() -> Voice {
         drum_kit("electronic drums", KitStyle::Electronic)
     }
 
     /// Roland TR-808 style — a long booming sub kick and ringy cowbell.
-    pub fn tr808() -> Instrument {
+    pub fn tr808() -> Voice {
         drum_kit("808 drums", KitStyle::Eight08)
     }
 }
 
 /// A drum kit on the GM map with the given [`KitStyle`].
-fn drum_kit(name: &str, style: KitStyle) -> Instrument {
-    Instrument {
+fn drum_kit(name: &str, style: KitStyle) -> Voice {
+    Voice {
         voice: VoiceParams {
             kit: Some(style),
             ..VoiceParams::default()
@@ -747,7 +758,7 @@ mod tests {
     fn round_trips_through_serde() {
         let i = Guitar::steel();
         let json = serde_json::to_string(&i).unwrap();
-        let back: Instrument = serde_json::from_str(&json).unwrap();
+        let back: Voice = serde_json::from_str(&json).unwrap();
         assert_eq!(i, back);
     }
 }

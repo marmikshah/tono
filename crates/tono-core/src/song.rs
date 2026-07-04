@@ -22,7 +22,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::{Instrument, VoiceParams};
+use crate::catalog::{Voice, VoiceParams};
 use crate::dsl::{Adsr, ENGINE_VERSION, Node, SeqNote, SeqWave, SoundDoc, Track, Value};
 
 /// One instrument track: an instrument voice plus its mixer settings. Notes come
@@ -183,7 +183,7 @@ impl Song {
         self
     }
 
-    /// Add a catalog [`Instrument`] and write its notes on the shared beat
+    /// Add a catalog [`Voice`] and write its notes on the shared beat
     /// timeline, in one fluent call — the ergonomic way to build a song.
     ///
     /// The closure gets a [`Phrase`]: place notes with `.at(beat).note(pitch,
@@ -193,7 +193,7 @@ impl Song {
     ///
     /// Beats map to the grid at the song's `steps_per_beat`; a duplicate
     /// instrument name is disambiguated automatically.
-    pub fn add(mut self, instrument: Instrument, write: impl FnOnce(&mut Phrase)) -> Self {
+    pub fn add(mut self, instrument: Voice, write: impl FnOnce(&mut Phrase)) -> Self {
         let mut phrase = Phrase::new(self.steps_per_beat);
         write(&mut phrase);
         // The track name becomes the rendered layer id, which must be a slug
