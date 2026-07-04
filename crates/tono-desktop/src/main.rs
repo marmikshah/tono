@@ -1,223 +1,325 @@
-//! tono-desktop — the optional native studio.
+//! tono-desktop — the pattern station.
 //!
-//! Not part of the default build or CI; built only via
-//! `make desktop`. Two entry points on one engine:
-//! - `tono-desktop` (no args) launches the Tauri window (the node-patcher
-//!   frontend) with native real-time audio.
-//! - `tono-desktop play FILE.json [SECS]` is a headless native preview.
+//! The walking skeleton of the DAW: an FL-style step grid over catalog
+//! instruments, looping live through the native audio deck. Click a cell and
+//! hear it on the next block; every edit is undoable; the project saves as an
+//! ordinary tono [`Song`](tono_core::song::Song) wrapped with its grid rows.
+//!
+//! Not part of the default build or CI; built only via `make desktop`. Two
+//! entry points on one engine:
+//! - `tono-desktop` (no args) launches the station window.
+//! - `tono-desktop play FILE.json [SECS]` is a headless native preview (loops).
+//!
+//! State lives in Rust ([`studio::Station`]); the webview is a pure view that
+//! sends commands and re-renders from the returned [`StudioState`].
 
 mod audio;
+mod studio;
 
 use std::sync::Mutex;
 
 use audio::AudioHandle;
 use base64::Engine as _;
 use serde::Serialize;
+use studio::Station;
 use tauri::State;
-use tono_core::dsl::{Adsr, SoundDoc};
-use tono_core::{analysis, presets, render};
+use tono_core::{analysis, render};
 
-/// A minimal doc used to spin up the audio engine when a preset is loaded before
-/// anything has been rendered (silent until the preview transport is played).
-const INIT_DOC: &str =
-    r#"{"name":"init","duration":1.0,"engine":2,"root":{"type":"sine","freq":220}}"#;
-
-/// App state: the lazily-created audio engine handle (built on first render,
-/// since it needs an output device).
-#[derive(Default)]
-struct Studio {
-    engine: Mutex<Option<AudioHandle>>,
+/// App state: the station (project + undo) and the lazily-created audio deck
+/// (built on first play, since it needs an output device).
+struct App {
+    station: Mutex<Station>,
+    audio: Mutex<Option<AudioHandle>>,
 }
 
-/// What `render_graph` hands the frontend: the analysis feedback for a graph,
-/// minus audio samples (audio plays natively through the engine).
+impl Default for App {
+    fn default() -> Self {
+        App {
+            station: Mutex::new(Station::new()),
+            audio: Mutex::new(None),
+        }
+    }
+}
+
+/// One grid lane as the UI renders it.
 #[derive(Serialize)]
-struct RenderResult {
+struct RowState {
+    label: String,
+    track: String,
+    pitch: String,
+    steps: Vec<bool>,
+}
+
+/// One mixer channel as the UI renders it.
+#[derive(Serialize)]
+struct TrackState {
+    name: String,
+    gain: f32,
+    pan: f32,
+    muted: bool,
+}
+
+/// The whole view model — every command returns a fresh one, so the frontend
+/// is a pure render of this.
+#[derive(Serialize)]
+struct StudioState {
+    bpm: f32,
+    swing: f32,
+    steps: u32,
+    steps_per_beat: u32,
+    rows: Vec<RowState>,
+    tracks: Vec<TrackState>,
+    can_undo: bool,
+    can_redo: bool,
+    /// A compile/audio problem worth surfacing, if any.
+    error: Option<String>,
+}
+
+/// Rebuild the view model and push the recompiled loop to the audio deck.
+fn refresh(app: &App) -> StudioState {
+    let station = app.station.lock().unwrap_or_else(|p| p.into_inner());
+    let project = &station.project;
+    let mut error = None;
+
+    match project.loop_doc() {
+        Ok(doc) => {
+            if let Ok(slot) = app.audio.lock()
+                && let Some(deck) = slot.as_ref()
+            {
+                deck.set_doc(doc);
+            }
+        }
+        Err(e) => error = Some(e),
+    }
+
+    let steps = project.steps();
+    let (undo_depth, redo_depth) = station.depths();
+    StudioState {
+        bpm: project.song.bpm,
+        swing: project.song.swing,
+        steps,
+        steps_per_beat: project.song.steps_per_beat,
+        rows: project
+            .rows
+            .iter()
+            .map(|r| RowState {
+                label: r.label.clone(),
+                track: r.track.clone(),
+                pitch: r.pitch.clone(),
+                steps: (0..steps).map(|s| project.cell(r, s)).collect(),
+            })
+            .collect(),
+        tracks: project
+            .song
+            .tracks
+            .iter()
+            .map(|t| TrackState {
+                name: t.name.clone(),
+                gain: t.gain,
+                pan: t.pan,
+                muted: project.muted.contains(&t.name),
+            })
+            .collect(),
+        can_undo: undo_depth > 0,
+        can_redo: redo_depth > 0,
+        error,
+    }
+}
+
+/// Run an undoable edit, then rebuild the view.
+fn edit(app: &App, change: impl FnOnce(&mut studio::Project)) -> StudioState {
+    {
+        let mut station = app.station.lock().unwrap_or_else(|p| p.into_inner());
+        station.edit(change);
+    }
+    refresh(app)
+}
+
+/// The full current view model (the frontend's initial render).
+#[tauri::command]
+fn state(app: State<App>) -> StudioState {
+    refresh(&app)
+}
+
+/// Flip a grid cell.
+#[tauri::command]
+fn toggle_step(row: usize, step: u32, app: State<App>) -> StudioState {
+    edit(&app, |p| p.toggle(row, step))
+}
+
+/// Re-pitch a melodic lane (its notes move with it).
+#[tauri::command]
+fn set_row_pitch(row: usize, pitch: String, app: State<App>) -> StudioState {
+    edit(&app, |p| {
+        p.set_row_pitch(row, pitch.trim());
+    })
+}
+
+/// Set the tempo.
+#[tauri::command]
+fn set_bpm(bpm: f32, app: State<App>) -> StudioState {
+    edit(&app, |p| p.song.bpm = bpm.clamp(30.0, 300.0))
+}
+
+/// Set the song-wide swing (0 = straight).
+#[tauri::command]
+fn set_swing(swing: f32, app: State<App>) -> StudioState {
+    edit(&app, |p| p.song.swing = swing.clamp(0.0, 1.0))
+}
+
+/// Mixer move: a track's fader, pan, and mute in one call.
+#[tauri::command]
+fn set_track(name: String, gain: f32, pan: f32, muted: bool, app: State<App>) -> StudioState {
+    edit(&app, |p| {
+        if let Some(t) = p.song.tracks.iter_mut().find(|t| t.name == name) {
+            t.gain = gain.clamp(0.0, 2.0);
+            t.pan = pan.clamp(-1.0, 1.0);
+        }
+        match muted {
+            true => p.muted.insert(name.clone()),
+            false => p.muted.remove(&name),
+        };
+    })
+}
+
+/// Step back / forward through the edit history.
+#[tauri::command]
+fn undo(app: State<App>) -> StudioState {
+    {
+        let mut station = app.station.lock().unwrap_or_else(|p| p.into_inner());
+        station.undo();
+    }
+    refresh(&app)
+}
+
+/// See [`undo`].
+#[tauri::command]
+fn redo(app: State<App>) -> StudioState {
+    {
+        let mut station = app.station.lock().unwrap_or_else(|p| p.into_inner());
+        station.redo();
+    }
+    refresh(&app)
+}
+
+/// Save the project (Song + grid rows) as JSON.
+#[tauri::command]
+fn save_project(path: String, app: State<App>) -> Result<(), String> {
+    let station = app.station.lock().unwrap_or_else(|p| p.into_inner());
+    station.save(&path)
+}
+
+/// Load a project, replacing the current one (undoable).
+#[tauri::command]
+fn load_project(path: String, app: State<App>) -> Result<StudioState, String> {
+    {
+        let mut station = app.station.lock().unwrap_or_else(|p| p.into_inner());
+        station.load(&path)?;
+    }
+    Ok(refresh(&app))
+}
+
+/// Transport: `"play"` (spins the audio deck up on first use), `"pause"`,
+/// `"stop"`. Returns an error string when no output device is available.
+#[tauri::command]
+fn transport(action: String, app: State<App>) -> Result<(), String> {
+    let mut slot = app.audio.lock().unwrap_or_else(|p| p.into_inner());
+    if slot.is_none() && action == "play" {
+        match audio::spawn() {
+            Ok(deck) => *slot = Some(deck),
+            Err(e) => return Err(format!("audio unavailable: {e}")),
+        }
+        drop(slot);
+        refresh(&app); // push the current loop to the fresh deck
+        slot = app.audio.lock().unwrap_or_else(|p| p.into_inner());
+    }
+    if let Some(deck) = slot.as_ref() {
+        deck.transport(&action);
+    }
+    Ok(())
+}
+
+/// The playhead for the grid highlight: `(playing, current step)`.
+#[derive(Serialize)]
+struct Playhead {
+    playing: bool,
+    step: u32,
+}
+
+/// Where the loop currently is (polled by the UI at ~20 Hz).
+#[tauri::command]
+fn playhead(app: State<App>) -> Playhead {
+    let steps = {
+        let station = app.station.lock().unwrap_or_else(|p| p.into_inner());
+        station.project.steps().max(1)
+    };
+    let slot = app.audio.lock().unwrap_or_else(|p| p.into_inner());
+    let (playing, pos, len) = slot.as_ref().map(|d| d.playhead()).unwrap_or((false, 0, 0));
+    let step = match len {
+        0 => 0,
+        _ => ((pos as f64 / len as f64) * steps as f64) as u32 % steps,
+    };
+    Playhead { playing, step }
+}
+
+/// The analysis strip: level numbers plus the two feedback images for the
+/// current loop (rendered offline — the same bytes the deck plays).
+#[derive(Serialize)]
+struct AnalysisResult {
     ok: bool,
     error: Option<String>,
-    sample_rate: u32,
+    lufs: f32,
+    true_peak_dbtp: f32,
+    peak_dbfs: f32,
     duration: f32,
     spectrogram_png: String,
     waveform_png: String,
-    stats_json: String,
-    layers_json: String,
 }
 
-fn render_error(msg: String) -> RenderResult {
-    RenderResult {
+/// Analyze the current pattern (the UI debounces this behind edits).
+#[tauri::command]
+fn analyze(app: State<App>) -> AnalysisResult {
+    let empty = |error: Option<String>| AnalysisResult {
         ok: false,
-        error: Some(msg),
-        sample_rate: 0,
+        error,
+        lufs: -120.0,
+        true_peak_dbtp: -120.0,
+        peak_dbfs: -120.0,
         duration: 0.0,
         spectrogram_png: String::new(),
         waveform_png: String::new(),
-        stats_json: "{}".to_string(),
-        layers_json: "[]".to_string(),
-    }
-}
-
-/// Validate + render a graph: push it to the live audio engine and return the
-/// spectrogram / waveform (base64 PNG) + analysis for the UI.
-#[tauri::command]
-fn render_graph(graph: String, studio: State<Studio>) -> RenderResult {
-    let mut doc: SoundDoc = match serde_json::from_str(&graph) {
-        Ok(d) => d,
-        Err(e) => return render_error(format!("JSON parse error: {e}")),
     };
-    doc.ensure_track_ids();
-    if let Err(e) = doc.validate() {
-        return render_error(e);
-    }
-
-    // Update (or create) the live audio engine. A missing audio device is
-    // non-fatal — the visuals still render — but never silently: an
-    // unsupported device would otherwise leave the studio mute with no clue.
-    if let Ok(mut slot) = studio.engine.lock() {
-        match slot.as_ref() {
-            Some(engine) => engine.set_doc(doc.clone()),
-            None => match audio::spawn(doc.clone()) {
-                Ok(engine) => *slot = Some(engine),
-                Err(e) => {
-                    eprintln!("tono-desktop: audio unavailable ({e}); rendering visuals only")
-                }
-            },
+    let doc = {
+        let station = app.station.lock().unwrap_or_else(|p| p.into_inner());
+        match station.project.loop_doc() {
+            Ok(Some(doc)) => doc,
+            Ok(None) => return empty(None),
+            Err(e) => return empty(Some(e)),
         }
-    }
-
+    };
     let product = render::render_product(&doc);
-    // Level metrics measure the stereo pair when there is one; the images
-    // read the mono mid.
     let stats = match &product.stereo {
         Some((l, r)) => analysis::stats_stereo(l, r, doc.sample_rate),
         None => analysis::stats(&product.mono, doc.sample_rate),
     };
     let b64 = |bytes: Vec<u8>| base64::engine::general_purpose::STANDARD.encode(bytes);
-    RenderResult {
+    AnalysisResult {
         ok: true,
         error: None,
-        sample_rate: doc.sample_rate,
+        lufs: stats.loudness_lufs,
+        true_peak_dbtp: stats.true_peak_dbfs,
+        peak_dbfs: stats.peak_dbfs,
         duration: stats.duration_secs,
         spectrogram_png: b64(analysis::spectrogram_png(&product.mono).unwrap_or_default()),
         waveform_png: b64(analysis::waveform_png(&product.mono).unwrap_or_default()),
-        stats_json: serde_json::to_string(&stats).unwrap_or_else(|_| "{}".to_string()),
-        layers_json: serde_json::to_string(&product.layers).unwrap_or_else(|_| "[]".to_string()),
     }
 }
 
-/// Transport control for the patch preview.
-#[tauri::command]
-fn transport(action: String, studio: State<Studio>) {
-    if let Ok(slot) = studio.engine.lock()
-        && let Some(engine) = slot.as_ref()
-    {
-        match action.as_str() {
-            "play" => engine.play(),
-            "stop" => engine.stop(),
-            _ => {}
-        }
-    }
-}
-
-/// Set the keyboard amplitude envelope (the gated ADSR applied per note).
-#[tauri::command]
-fn set_amp(a: f32, d: f32, s: f32, r: f32, studio: State<Studio>) {
-    let env = Adsr {
-        a,
-        d,
-        s,
-        r,
-        punch: 0.0,
-    };
-    if let Ok(slot) = studio.engine.lock()
-        && let Some(engine) = slot.as_ref()
-    {
-        engine.set_amp(env);
-    }
-}
-
-/// Strike a live note (`key` is the MIDI note number; `velocity` in `[0, 1]`).
-#[tauri::command]
-fn note_on(key: u32, velocity: f32, studio: State<Studio>) {
-    if let Ok(slot) = studio.engine.lock()
-        && let Some(engine) = slot.as_ref()
-    {
-        engine.note_on(key as u8, velocity);
-    }
-}
-
-/// Release a live note.
-#[tauri::command]
-fn note_off(key: u32, studio: State<Studio>) {
-    if let Ok(slot) = studio.engine.lock()
-        && let Some(engine) = slot.as_ref()
-    {
-        engine.note_off(key as u8);
-    }
-}
-
-/// Bend the sounding keyboard voices by `semitones` (the pitch wheel).
-#[tauri::command]
-fn set_bend(semitones: f32, studio: State<Studio>) {
-    if let Ok(slot) = studio.engine.lock()
-        && let Some(engine) = slot.as_ref()
-    {
-        engine.set_bend(semitones);
-    }
-}
-
-/// Sweep the keyboard filter brightness (`scale` multiplies the cutoff, 1.0 = as
-/// designed).
-#[tauri::command]
-fn set_brightness(scale: f32, studio: State<Studio>) {
-    if let Ok(slot) = studio.engine.lock()
-        && let Some(engine) = slot.as_ref()
-    {
-        engine.set_brightness(scale);
-    }
-}
-
-/// A factory preset's metadata for the UI picker.
-#[derive(Serialize)]
-struct PresetInfo {
-    name: String,
-    category: String,
-    description: String,
-}
-
-/// List the built-in instrument presets.
-#[tauri::command]
-fn list_presets() -> Vec<PresetInfo> {
-    presets::PRESETS
-        .iter()
-        .map(|p| PresetInfo {
-            name: p.name.to_string(),
-            category: format!("{:?}", p.category),
-            description: p.description.to_string(),
-        })
-        .collect()
-}
-
-/// Load a factory preset onto the keyboard, spinning up the audio engine first
-/// if nothing has been rendered yet.
-#[tauri::command]
-fn load_preset(name: String, studio: State<Studio>) {
-    if let Ok(mut slot) = studio.engine.lock() {
-        if slot.is_none()
-            && let Ok(doc) = serde_json::from_str::<SoundDoc>(INIT_DOC)
-        {
-            *slot = audio::spawn(doc).ok();
-        }
-        if let Some(engine) = slot.as_ref() {
-            engine.load_preset(&name);
-        }
-    }
-}
-
-const HELP: &str = "tono-desktop — native tono studio.
+const HELP: &str = "tono-desktop — the tono pattern station.
 
 USAGE:
-    tono-desktop                         launch the studio window (real-time audio)
-    tono-desktop play FILE.json [SECS]   headless: play a graph through the default device";
+    tono-desktop                         launch the station window (real-time audio)
+    tono-desktop play FILE.json [SECS]   headless: loop a graph through the default device";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -233,42 +335,43 @@ fn main() {
     }
 }
 
-/// Launch the Tauri window with the node-patcher frontend.
+/// Launch the Tauri window with the pattern-station frontend.
 fn run_studio() {
     tauri::Builder::default()
-        .manage(Studio::default())
+        .manage(App::default())
         .invoke_handler(tauri::generate_handler![
-            render_graph,
+            state,
+            toggle_step,
+            set_row_pitch,
+            set_bpm,
+            set_swing,
+            set_track,
+            undo,
+            redo,
+            save_project,
+            load_project,
             transport,
-            set_amp,
-            note_on,
-            note_off,
-            set_bend,
-            set_brightness,
-            list_presets,
-            load_preset
+            playhead,
+            analyze
         ])
         .run(tauri::generate_context!())
         .expect("failed to launch the tono studio window");
 }
 
-/// `tono-desktop play FILE [SECS]` — audition a graph natively via cpal.
+/// `tono-desktop play FILE [SECS]` — loop a graph natively via cpal.
 fn play_cli(args: &[String]) -> anyhow::Result<()> {
     let path = args
         .first()
         .ok_or_else(|| anyhow::anyhow!("usage: tono-desktop play FILE.json [SECS]"))?;
-    let doc: SoundDoc = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+    let doc: tono_core::dsl::SoundDoc = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+    doc.validate().map_err(|e| anyhow::anyhow!(e))?;
     let secs = args
         .get(1)
         .and_then(|s| s.parse::<f32>().ok())
         .unwrap_or_else(|| doc.duration.max(0.5));
-
-    let engine = audio::spawn(doc)?;
-    println!(
-        "playing for {secs:.2}s at {} Hz — Ctrl-C to stop",
-        engine.device_sample_rate()
-    );
-    engine.play();
+    let deck = audio::spawn()?;
+    deck.set_doc(Some(doc));
+    deck.transport("play");
     std::thread::sleep(std::time::Duration::from_secs_f32(secs));
     Ok(())
 }
