@@ -258,6 +258,7 @@ pub struct SoundDoc {
 }
 
 /// How the rendered sound is meant to be played back.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum Playback {
@@ -299,6 +300,7 @@ pub struct Normalize {
 }
 
 /// Stereo treatment for the final render.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum Stereo {
@@ -414,6 +416,7 @@ pub enum Shape {
 }
 
 /// A time-varying parameter value. Externally tagged: `{ "slide": {...} }`.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum Modulator {
     /// Glide from `from` to `to` over `secs`, then hold at `to`.
@@ -487,6 +490,7 @@ pub enum Modulator {
 }
 
 /// A node in the synthesis graph. Every node evaluates to a mono signal.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Node {
@@ -997,6 +1001,7 @@ pub enum SuperWave {
 }
 
 /// Oscillator choice for a [`Node::Seq`] note.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum SeqWave {
@@ -1064,6 +1069,7 @@ pub enum SeqWave {
 /// the same General MIDI note map; they differ only in how each drum is
 /// synthesized. `Classic` is the original kit — omitting `kit` (or setting it to
 /// `classic`) renders byte-identically to before this field existed.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum KitStyle {
@@ -1141,6 +1147,7 @@ pub struct Track {
 }
 
 /// What a track automation lane controls.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum AutoTarget {

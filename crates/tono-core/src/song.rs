@@ -27,6 +27,7 @@ use crate::dsl::{Adsr, ENGINE_VERSION, Node, SeqNote, SeqWave, SoundDoc, Track, 
 
 /// One instrument track: an instrument voice plus its mixer settings. Notes come
 /// from the patterns arranged onto it.
+#[non_exhaustive]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SongTrack {
     /// Stable track name — patterns are arranged onto it and it becomes the
@@ -91,6 +92,7 @@ pub struct Placement {
 
 /// A full song: tracks (instruments), patterns (phrases), and an arrangement
 /// (where each pattern plays). Serializable, so a song is a saveable project.
+#[non_exhaustive]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Song {
     pub name: String,

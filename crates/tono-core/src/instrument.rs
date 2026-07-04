@@ -174,6 +174,7 @@ impl Modulation {
 
 /// The recipe that makes a [`Patch`] playable. Serializable, so an instrument is
 /// a saveable/recallable preset (patch + envelope + pitch map + master).
+#[non_exhaustive]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InstrumentDesign {
     /// The sound: a graph + its named params (authored as a sustaining voice).

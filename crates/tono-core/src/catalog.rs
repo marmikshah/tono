@@ -1,6 +1,6 @@
 //! catalog — a library of ready-to-play instruments.
 //!
-//! Each constructor returns an [`Voice`]: a synthesized voice with a tuned
+//! Each constructor returns a [`Voice`]: a synthesized voice with a tuned
 //! envelope, mixer defaults, and voice parameters — no soundfonts, no files,
 //! generated entirely from the graph and byte-identical every render. Hand one
 //! to [`Song::add`](crate::song::Song::add) and write its notes on the shared
@@ -91,6 +91,7 @@ pub struct VoiceParams {
 /// [`InstrumentDesign`](crate::instrument::InstrumentDesign) (what the live
 /// keyboard plays), and the playable
 /// [`Instrument`](crate::instrument::Instrument) engine itself.
+#[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Voice {
     /// Display name — becomes the song track / rendered layer id.

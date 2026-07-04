@@ -16,6 +16,7 @@ use crate::dsl::{Playback, SoundDoc};
 
 /// The SFX/music archetype a sound is judged against. Omit it to run only the
 /// universal checks (clipping, silence, loop seam, onset count).
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Archetype {

@@ -21,6 +21,7 @@ use crate::instrument::{InstrumentDesign, PlayMode};
 use crate::patch::Patch;
 
 /// What a preset is for — a coarse grouping for browsing.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Category {
     Lead,
