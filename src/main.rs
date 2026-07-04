@@ -43,19 +43,50 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
-/// The value after `flag` (e.g. `-o DIR`).
-fn opt<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
-    args.iter()
-        .position(|a| a == flag)
-        .and_then(|i| args.get(i + 1))
-        .map(String::as_str)
+/// Parsed command arguments: every flag consumes the value after it, so a
+/// flag's value is never mistaken for the input file, and anything unexpected
+/// is a loud error instead of a silent default.
+struct Cli {
+    flags: std::collections::BTreeMap<String, String>,
+    positionals: Vec<String>,
 }
 
-/// The first non-flag argument.
-fn positional(args: &[String]) -> Option<&str> {
-    args.iter()
-        .find(|a| !a.starts_with('-'))
-        .map(String::as_str)
+impl Cli {
+    fn parse(args: &[String], allowed_flags: &[&str]) -> anyhow::Result<Cli> {
+        let mut flags = std::collections::BTreeMap::new();
+        let mut positionals = Vec::new();
+        let mut it = args.iter();
+        while let Some(a) = it.next() {
+            if a.starts_with('-') {
+                if !allowed_flags.contains(&a.as_str()) {
+                    anyhow::bail!("unknown option '{a}'\n\n{HELP}");
+                }
+                let value = it
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("option '{a}' needs a value"))?;
+                flags.insert(a.clone(), value.clone());
+            } else {
+                positionals.push(a.clone());
+            }
+        }
+        Ok(Cli { flags, positionals })
+    }
+
+    fn flag(&self, names: &[&str]) -> Option<&str> {
+        names
+            .iter()
+            .find_map(|n| self.flags.get(*n))
+            .map(String::as_str)
+    }
+
+    /// The single expected positional (the input file).
+    fn input(&self, usage: &str) -> anyhow::Result<&str> {
+        match self.positionals.as_slice() {
+            [one] => Ok(one),
+            [] => anyhow::bail!("usage: {usage}"),
+            more => anyhow::bail!("unexpected argument '{}'\nusage: {usage}", more[1]),
+        }
+    }
 }
 
 fn load_doc(path: &str) -> anyhow::Result<SoundDoc> {
@@ -66,15 +97,13 @@ fn load_doc(path: &str) -> anyhow::Result<SoundDoc> {
 }
 
 fn render_cmd(args: &[String]) -> anyhow::Result<()> {
-    let file = positional(args).ok_or_else(|| {
-        anyhow::anyhow!("usage: tono render FILE.json [-o DIR] [--format wav|flac|ogg]")
-    })?;
-    let out_dir = PathBuf::from(
-        opt(args, "-o")
-            .or_else(|| opt(args, "--out"))
-            .unwrap_or("."),
-    );
-    let format = opt(args, "--format").unwrap_or("wav");
+    let cli = Cli::parse(args, &["-o", "--out", "--format"])?;
+    let file = cli.input("tono render FILE.json [-o DIR] [--format wav|flac|ogg]")?;
+    let out_dir = PathBuf::from(cli.flag(&["-o", "--out"]).unwrap_or("."));
+    let format = cli.flag(&["--format"]).unwrap_or("wav");
+    if !["wav", "flac", "ogg"].contains(&format) {
+        anyhow::bail!("--format must be wav, flac, or ogg, got '{format}'");
+    }
 
     let doc = load_doc(file)?;
     fs::create_dir_all(&out_dir)?;
@@ -133,13 +162,9 @@ fn audio_ext(format: &str) -> &str {
 }
 
 fn midi_cmd(args: &[String]) -> anyhow::Result<()> {
-    let file = positional(args)
-        .ok_or_else(|| anyhow::anyhow!("usage: tono midi FILE.json [-o FILE.mid]"))?;
-    let out = PathBuf::from(
-        opt(args, "-o")
-            .or_else(|| opt(args, "--out"))
-            .unwrap_or("out.mid"),
-    );
+    let cli = Cli::parse(args, &["-o", "--out"])?;
+    let file = cli.input("tono midi FILE.json [-o FILE.mid]")?;
+    let out = PathBuf::from(cli.flag(&["-o", "--out"]).unwrap_or("out.mid"));
     let doc = load_doc(file)?;
     tono::midi::export_midi(&doc, &out)?;
     println!("{}", out.display());
