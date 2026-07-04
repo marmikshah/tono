@@ -114,6 +114,13 @@ impl EnvGen {
         }
     }
 
+    /// Steal declick: cap the release at ~5 ms and gate off, so a stolen voice
+    /// ramps out instead of being cut mid-sample (an audible click).
+    pub fn kill(&mut self) {
+        self.r = self.r.min(0.005);
+        self.gate_off();
+    }
+
     /// True until the release has fully decayed to silence.
     pub fn active(&self) -> bool {
         self.stage != Stage::Idle

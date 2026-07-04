@@ -30,14 +30,20 @@ pub struct DrumKit {
     /// note → mono samples (shared so a voice is a cheap cursor).
     pieces: BTreeMap<u8, Arc<Vec<f32>>>,
     voices: Vec<DrumVoice>,
-    /// Cap on simultaneous hits (oldest stolen).
+    /// Cap on simultaneous hits (oldest stolen with a short fade).
     max_voices: usize,
+    /// Steal-declick ramp decrement per sample (≈ 5 ms at the kit's rate).
+    fade_step: f32,
 }
 
 struct DrumVoice {
     samples: Arc<Vec<f32>>,
     pos: usize,
     gain: f32,
+    /// Steal declick: remaining ramp gain (1 = sounding normally) and its
+    /// per-sample decrement (0 = not stolen). Culled once silent.
+    fade: f32,
+    fade_step: f32,
 }
 
 /// Render one GM drum to mono samples via the deterministic `kit` voice, trimmed
@@ -76,6 +82,7 @@ impl DrumKit {
             pieces,
             voices: Vec::new(),
             max_voices: 32,
+            fade_step: 1.0 / (sample_rate as f32 * 0.005),
         }
     }
 
@@ -83,13 +90,25 @@ impl DrumKit {
     /// mapped piece are ignored.
     pub fn note_on(&mut self, note: Note, velocity: f32) {
         if let Some(samples) = self.pieces.get(&note.midi()) {
-            if self.voices.len() >= self.max_voices {
+            // Steal the oldest still-sounding hit with a ~5 ms fade — a full
+            // pool means it is guaranteed audible, so a hard cut would click
+            // (a booming 808 kick truncated mid-sample). A hit flood faster
+            // than the fade window falls back to hard removal for the bound.
+            let sounding = self.voices.iter().filter(|v| v.fade_step == 0.0).count();
+            if sounding >= self.max_voices
+                && let Some(oldest) = self.voices.iter_mut().find(|v| v.fade_step == 0.0)
+            {
+                oldest.fade_step = self.fade_step;
+            }
+            if self.voices.len() >= self.max_voices * 2 {
                 self.voices.remove(0);
             }
             self.voices.push(DrumVoice {
                 samples: samples.clone(),
                 pos: 0,
                 gain: velocity.clamp(0.0, 1.0),
+                fade: 1.0,
+                fade_step: 0.0,
             });
         }
     }
@@ -114,7 +133,14 @@ impl AudioSource for DrumKit {
                 let Some(&s) = v.samples.get(v.pos) else {
                     break;
                 };
-                let x = s * v.gain;
+                if v.fade_step > 0.0 {
+                    v.fade = (v.fade - v.fade_step).max(0.0);
+                    if v.fade == 0.0 {
+                        v.pos = v.samples.len(); // fully declicked — cull below
+                        break;
+                    }
+                }
+                let x = s * v.gain * v.fade;
                 out[f * 2] += x;
                 out[f * 2 + 1] += x;
                 v.pos += 1;
@@ -163,5 +189,49 @@ mod tests {
         let mut kit = DrumKit::general_midi(48_000);
         kit.note_on(Note(0), 1.0); // nothing at MIDI 0
         assert_eq!(kit.active_voices(), 0);
+    }
+
+    #[test]
+    fn stealing_fades_the_oldest_hit_instead_of_cutting() {
+        // Baseline: the kick's own natural sample-to-sample slope.
+        let max_jump = |kit: &mut DrumKit, prev: f32| {
+            let mut buf = vec![0.0f32; 512 * 2];
+            kit.fill(&mut buf);
+            let mut m = 0.0f32;
+            let mut p = prev;
+            for f in 0..512 {
+                m = m.max((buf[f * 2] - p).abs());
+                p = buf[f * 2];
+            }
+            m
+        };
+        let warmup = |kit: &mut DrumKit| {
+            kit.note_on(Note(36), 1.0); // kick — long, booming
+            let mut out = vec![0.0f32; 64 * 2];
+            kit.fill(&mut out);
+            out[out.len() - 2]
+        };
+        let mut natural = DrumKit::general_midi(48_000);
+        let prev = warmup(&mut natural);
+        let natural_jump = max_jump(&mut natural, prev);
+
+        // Stolen: velocity-0 strikes occupy the pool without adding their own
+        // transients, so the mix isolates the stolen kick's ramp-out.
+        let mut kit = DrumKit::general_midi(48_000);
+        kit.max_voices = 2;
+        let prev = warmup(&mut kit);
+        kit.note_on(Note(38), 0.0);
+        kit.note_on(Note(42), 0.0); // pool full: steals the kick
+        let stolen_jump = max_jump(&mut kit, prev);
+
+        // A hard cut steps by the kick's full instantaneous level on top of
+        // its natural slope; the 5 ms ramp must add almost nothing.
+        assert!(
+            stolen_jump <= natural_jump + 0.05,
+            "steal clicked: jump {stolen_jump} vs natural {natural_jump}"
+        );
+        // The stolen voice drains within the declick window.
+        kit.fill(&mut vec![0.0f32; 512 * 2]);
+        assert_eq!(kit.active_voices(), 2, "faded voice culled after steal");
     }
 }
