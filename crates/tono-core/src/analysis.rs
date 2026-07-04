@@ -10,6 +10,7 @@ use crate::dsp::{dbfs, loudness_lufs_gated, true_peak_oversampled};
 use rustfft::{FftPlanner, num_complex::Complex};
 
 /// Numeric + visual summary of a rendered sound.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Analysis {
     /// Length of the sound in seconds.

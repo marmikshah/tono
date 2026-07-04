@@ -1,0 +1,646 @@
+//! Range and structure validation for a [`SoundDoc`] beyond what serde
+//! enforces. Every message is human-readable so an agent can act on it.
+
+use super::{
+    Adsr, AutoTarget, ENGINE_VERSION, Modulator, Node, Playback, SCHEMA_VERSION, SeqWave, SoundDoc,
+    Stereo, Value, note_to_hz,
+};
+
+impl Adsr {
+    /// Range-check the envelope shape. `what` prefixes error messages
+    /// (e.g. `"env"` ⇒ `"env.a must be >= 0"`).
+    fn validate(&self, what: &str) -> Result<(), String> {
+        for (n, v) in [("a", self.a), ("d", self.d), ("r", self.r)] {
+            if v < 0.0 {
+                return Err(format!("{what}.{n} must be >= 0, got {v}"));
+            }
+        }
+        in_unit(&format!("{what}.s"), self.s)?;
+        in_unit(&format!("{what}.punch"), self.punch)
+    }
+}
+
+impl SoundDoc {
+    /// Validate ranges and structure beyond what serde already enforces.
+    /// Returns a human-readable message the agent can act on.
+    pub fn validate(&self) -> Result<(), String> {
+        let v = self.effective_version();
+        if v == 0 || v > SCHEMA_VERSION {
+            return Err(format!(
+                "version must be in [1, {SCHEMA_VERSION}], got {v} — a document from a newer \
+                 tono cannot render correctly here; upgrade tono"
+            ));
+        }
+        let e = self.effective_engine();
+        if e > ENGINE_VERSION {
+            return Err(format!(
+                "engine must be in [0, {ENGINE_VERSION}], got {e} — a document authored against \
+                 a newer DSP kernel cannot render correctly here; upgrade tono"
+            ));
+        }
+        // 600 s covers full songs; the cap exists only to bound render memory.
+        if !(self.duration > 0.0 && self.duration <= 600.0) {
+            return Err(format!(
+                "duration must be in (0, 600] seconds, got {}",
+                self.duration
+            ));
+        }
+        if !(8_000..=192_000).contains(&self.sample_rate) {
+            return Err(format!(
+                "sample_rate must be in [8000, 192000] Hz, got {}",
+                self.sample_rate
+            ));
+        }
+        match self.stereo {
+            Stereo::Mono => {}
+            Stereo::Haas { ms, pan } => {
+                if !(0.5..=40.0).contains(&ms) {
+                    return Err(format!("stereo.haas.ms must be in [0.5, 40], got {ms}"));
+                }
+                if !(-1.0..=1.0).contains(&pan) {
+                    return Err(format!("stereo.haas.pan must be in [-1, 1], got {pan}"));
+                }
+            }
+            Stereo::Wide { amount } => in_unit("stereo.wide.amount", amount)?,
+        }
+        if let Some(nz) = &self.normalize {
+            if let Some(t) = nz.target_lufs
+                && !(-60.0..=0.0).contains(&t)
+            {
+                return Err(format!(
+                    "normalize.target_lufs must be in [-60, 0] LUFS, got {t}"
+                ));
+            }
+            if !(-12.0..=0.0).contains(&nz.ceiling_dbtp) {
+                return Err(format!(
+                    "normalize.ceiling_dbtp must be in [-12, 0] dBTP, got {}",
+                    nz.ceiling_dbtp
+                ));
+            }
+        }
+        if let Playback::Loop {
+            start_secs,
+            end_secs,
+            crossfade_secs,
+        } = self.playback
+        {
+            if start_secs < 0.0 || start_secs >= self.duration {
+                return Err(format!(
+                    "playback.loop.start_secs must be in [0, duration), got {start_secs}"
+                ));
+            }
+            if let Some(end) = end_secs {
+                if end <= start_secs {
+                    return Err(format!(
+                        "playback.loop.end_secs ({end}) must be > start_secs ({start_secs})"
+                    ));
+                }
+                if end > self.duration {
+                    return Err(format!(
+                        "playback.loop.end_secs ({end}) must be <= duration ({})",
+                        self.duration
+                    ));
+                }
+            }
+            if crossfade_secs < 0.0 {
+                return Err(format!(
+                    "playback.loop.crossfade_secs must be >= 0, got {crossfade_secs}"
+                ));
+            }
+        }
+        if let Node::Tracks { tracks, master } = &self.root {
+            if tracks.is_empty() {
+                return Err("tracks must be non-empty".into());
+            }
+            // A mixer document builds its stereo image from per-layer pan; a
+            // doc-level Haas/Wide treatment would be silently dropped by the
+            // renderer. v1 documents keep the historical silent-ignore so old
+            // libraries still load.
+            if self.effective_version() >= 2 && !matches!(self.stereo, Stereo::Mono) {
+                return Err(
+                    "a tracks document builds its stereo image from per-layer pan — remove the \
+                     doc-level stereo treatment (set stereo mode 'mono') and pan the layers \
+                     instead"
+                        .into(),
+                );
+            }
+            let mut seen_ids = std::collections::HashSet::new();
+            let mut seen_streams = std::collections::HashMap::new();
+            for (i, t) in tracks.iter().enumerate() {
+                // Errors name the layer by id when it has one — that is the
+                // address the agent used.
+                let who = match &t.id {
+                    Some(id) => format!("layer '{id}'"),
+                    None => format!("tracks[{i}]"),
+                };
+                if let Some(id) = &t.id {
+                    if id.is_empty()
+                        || !id
+                            .chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                    {
+                        return Err(format!(
+                            "{who}: layer ids are short slugs (a-z, 0-9, _), got '{id}'"
+                        ));
+                    }
+                    if id == "master" {
+                        return Err(
+                            "'master' is reserved for the master chain; pick another layer id"
+                                .into(),
+                        );
+                    }
+                    if !seen_ids.insert(id.clone()) {
+                        return Err(format!("duplicate layer id '{id}' — ids must be unique"));
+                    }
+                    // Stream keys must be collision-free or two layers would
+                    // silently share one noise stream (and u64::MAX is the
+                    // master bus's stream).
+                    let key = crate::dsp::layer_stream_key(id);
+                    if key == u64::MAX {
+                        return Err(format!(
+                            "{who}: this id collides with the master bus's RNG stream — rename \
+                             the layer"
+                        ));
+                    }
+                    if let Some(other) = seen_streams.insert(key, id.clone()) {
+                        return Err(format!(
+                            "layer ids '{other}' and '{id}' hash to the same RNG stream — \
+                             rename one of them"
+                        ));
+                    }
+                }
+                if !(-1.0..=1.0).contains(&t.pan) {
+                    return Err(format!("{who}: pan must be in [-1, 1], got {}", t.pan));
+                }
+                if !(0.0..=2.0).contains(&t.gain) {
+                    return Err(format!("{who}: gain must be in [0, 2], got {}", t.gain));
+                }
+                if !(0.0..self.duration).contains(&t.at) {
+                    return Err(format!(
+                        "{who}: at must be in [0, duration {}), got {} — the layer would be \
+                         entirely outside the render window",
+                        self.duration, t.at
+                    ));
+                }
+                for lane in &t.automation {
+                    let (lname, lo, hi) = match lane.target {
+                        AutoTarget::Gain => ("gain", 0.0, 2.0),
+                        AutoTarget::Pan => ("pan", -1.0, 1.0),
+                    };
+                    for (pi, p) in lane.points.iter().enumerate() {
+                        if !p.t.is_finite() || p.t < 0.0 {
+                            return Err(format!(
+                                "{who}: automation[{lname}].points[{pi}].t must be >= 0 \
+                                 seconds, got {}",
+                                p.t
+                            ));
+                        }
+                        if !(lo..=hi).contains(&p.v) {
+                            return Err(format!(
+                                "{who}: automation[{lname}].points[{pi}].v must be in \
+                                 [{lo}, {hi}], got {}",
+                                p.v
+                            ));
+                        }
+                    }
+                }
+                if contains_tracks(&t.node) {
+                    return Err("tracks cannot nest inside a track".into());
+                }
+                validate_node(&t.node)?;
+            }
+            for (i, m) in master.iter().enumerate() {
+                if !m.is_processor() {
+                    return Err(format!(
+                        "master[{i}] must be a processor (filter/eq/dynamics/fx)"
+                    ));
+                }
+                validate_node(m)?;
+            }
+            return Ok(());
+        }
+        if contains_tracks(&self.root) {
+            return Err("tracks is the mixing console: it must be the document's root node".into());
+        }
+        validate_node(&self.root)
+    }
+}
+
+/// True if a `tracks` node appears anywhere in this subtree.
+fn contains_tracks(node: &Node) -> bool {
+    match node {
+        Node::Tracks { .. } => true,
+        Node::Mix { inputs } | Node::Mul { inputs } => inputs.iter().any(contains_tracks),
+        Node::Chain { stages } => stages.iter().any(contains_tracks),
+        Node::Duck { trigger, .. } => contains_tracks(trigger),
+        _ => false,
+    }
+}
+
+/// A finite value (rejects NaN/±inf — they would render NaN audio).
+fn finite(name: &str, v: f32) -> Result<(), String> {
+    if !v.is_finite() {
+        return Err(format!("{name} must be a finite number, got {v}"));
+    }
+    Ok(())
+}
+
+/// A finite, strictly positive value.
+fn positive(name: &str, v: f32) -> Result<(), String> {
+    finite(name, v)?;
+    if v <= 0.0 {
+        return Err(format!("{name} must be > 0, got {v}"));
+    }
+    Ok(())
+}
+
+/// A finite, non-negative value.
+fn non_negative(name: &str, v: f32) -> Result<(), String> {
+    finite(name, v)?;
+    if v < 0.0 {
+        return Err(format!("{name} must be >= 0, got {v}"));
+    }
+    Ok(())
+}
+
+fn validate_value(v: &Value, what: &str) -> Result<(), String> {
+    match v {
+        Value::Const(c) => finite(what, *c),
+        Value::Note(s) => note_to_hz(s).map(|_| ()).ok_or_else(|| {
+            format!("{what}: '{s}' is not a valid note (e.g. \"A4\", \"C#3\", \"midi:69\")")
+        }),
+        Value::Modulated(m) => match m {
+            Modulator::Slide { from, to, secs, .. } => {
+                finite(&format!("{what}: slide.from"), *from)?;
+                finite(&format!("{what}: slide.to"), *to)?;
+                positive(&format!("{what}: slide.secs"), *secs)
+            }
+            Modulator::Lfo {
+                rate,
+                depth,
+                center,
+                ..
+            } => {
+                positive(&format!("{what}: lfo.rate"), *rate)?;
+                finite(&format!("{what}: lfo.depth"), *depth)?;
+                finite(&format!("{what}: lfo.center"), *center)
+            }
+            Modulator::Arp { steps, rate } => {
+                if steps.is_empty() {
+                    return Err(format!("{what}: arp.steps must be non-empty"));
+                }
+                for (i, s) in steps.iter().enumerate() {
+                    finite(&format!("{what}: arp.steps[{i}]"), *s)?;
+                }
+                positive(&format!("{what}: arp.rate"), *rate)
+            }
+            Modulator::EnvMod { adsr, from, to } => {
+                finite(&format!("{what}: env.from"), *from)?;
+                finite(&format!("{what}: env.to"), *to)?;
+                adsr.validate(&format!("{what}: env"))
+            }
+            Modulator::Rand { from, to, rate, .. } => {
+                finite(&format!("{what}: rand.from"), *from)?;
+                finite(&format!("{what}: rand.to"), *to)?;
+                positive(&format!("{what}: rand.rate"), *rate)
+            }
+        },
+    }
+}
+
+/// Validate a `Value` that names a frequency: a constant must be finite and
+/// strictly positive (a modulated form is clamped per-sample at render time).
+fn validate_freq_value(v: &Value, what: &str) -> Result<(), String> {
+    if let Value::Const(c) = v {
+        positive(what, *c)?;
+    }
+    validate_value(v, what)
+}
+
+fn in_unit(name: &str, v: f32) -> Result<(), String> {
+    if !(0.0..=1.0).contains(&v) {
+        return Err(format!("{name} must be in [0, 1], got {v}"));
+    }
+    Ok(())
+}
+
+/// EQ gain bound: ±24 dB covers any musical boost/cut; far beyond that the
+/// biquad coefficients overflow to inf/NaN and render silent garbage.
+fn validate_gain_db(name: &str, v: f32) -> Result<(), String> {
+    if !(-24.0..=24.0).contains(&v) {
+        return Err(format!("{name} must be in [-24, 24] dB, got {v}"));
+    }
+    Ok(())
+}
+
+/// Validate a `Value` whose constant form must lie in [0, 1] (modulated forms
+/// are clamped at render time).
+fn validate_unit_value(v: &Value, what: &str) -> Result<(), String> {
+    if let Value::Const(c) = v {
+        in_unit(what, *c)?;
+    }
+    validate_value(v, what)
+}
+
+fn validate_node(node: &Node) -> Result<(), String> {
+    match node {
+        Node::Square { freq, duty } => {
+            validate_freq_value(freq, "square.freq")?;
+            validate_unit_value(duty, "square.duty")
+        }
+        Node::Triangle { freq } => validate_freq_value(freq, "triangle.freq"),
+        Node::Sawtooth { freq } => validate_freq_value(freq, "sawtooth.freq"),
+        Node::Sine { freq } => validate_freq_value(freq, "sine.freq"),
+        Node::Noise { .. } => Ok(()),
+        Node::Impact { hardness, velocity } => {
+            in_unit("impact.hardness", *hardness)?;
+            in_unit("impact.velocity", *velocity)
+        }
+        Node::Dust { density, decay } => {
+            if *density <= 0.0 {
+                return Err(format!("dust.density must be > 0, got {density}"));
+            }
+            if *decay < 0.0 {
+                return Err(format!("dust.decay must be >= 0, got {decay}"));
+            }
+            Ok(())
+        }
+        Node::Fm { freq, ratio, index } => {
+            validate_freq_value(freq, "fm.freq")?;
+            positive("fm.ratio", *ratio)?;
+            validate_value(index, "fm.index")
+        }
+        // Bound exhaustively (no `..`): the compiler then forces a validation
+        // decision for every knob this variant grows.
+        Node::Seq {
+            bpm,
+            steps_per_beat,
+            wave,
+            duty,
+            fm_ratio,
+            fm_index,
+            fm_strike,
+            pluck_decay,
+            pluck_body,
+            pluck_pick,
+            pluck_tone,
+            piano_hammer,
+            piano_strike,
+            piano_inharm,
+            piano_detune,
+            piano_decay,
+            kit: _,
+            bass_cutoff,
+            bass_env,
+            bass_env_vel,
+            bass_decay,
+            bass_click,
+            bass_body,
+            bass_sub,
+            bass_sub_ratio,
+            bass_drive,
+            bass_body_decay,
+            sf2,
+            sf2_preset,
+            sf2_bank: _,
+            swing,
+            humanize,
+            env,
+            notes,
+        } => {
+            positive("seq.bpm", *bpm)?;
+            if *steps_per_beat < 1 {
+                return Err("seq.steps_per_beat must be >= 1".into());
+            }
+            if notes.is_empty() {
+                return Err("seq.notes must be non-empty".into());
+            }
+            validate_unit_value(duty, "seq.duty")?;
+            positive("seq.fm_ratio", *fm_ratio)?;
+            if !(0.0..=20.0).contains(fm_index) {
+                return Err(format!("seq.fm_index must be in [0, 20], got {fm_index}"));
+            }
+            positive("seq.fm_strike", *fm_strike)?;
+            if !(0.8..1.0).contains(pluck_decay) {
+                return Err(format!(
+                    "seq.pluck_decay must be in [0.8, 1), got {pluck_decay}"
+                ));
+            }
+            in_unit("seq.pluck_body", *pluck_body)?;
+            in_unit("seq.pluck_pick", *pluck_pick)?;
+            if !(-1.0..=1.0).contains(pluck_tone) {
+                return Err(format!(
+                    "seq.pluck_tone must be in [-1, 1], got {pluck_tone}"
+                ));
+            }
+            positive("seq.piano_hammer", *piano_hammer)?;
+            positive("seq.piano_strike", *piano_strike)?;
+            positive("seq.piano_inharm", *piano_inharm)?;
+            non_negative("seq.piano_detune", *piano_detune)?;
+            positive("seq.piano_decay", *piano_decay)?;
+            positive("seq.bass_cutoff", *bass_cutoff)?;
+            non_negative("seq.bass_env", *bass_env)?;
+            non_negative("seq.bass_env_vel", *bass_env_vel)?;
+            positive("seq.bass_decay", *bass_decay)?;
+            non_negative("seq.bass_click", *bass_click)?;
+            non_negative("seq.bass_body", *bass_body)?;
+            non_negative("seq.bass_sub", *bass_sub)?;
+            positive("seq.bass_sub_ratio", *bass_sub_ratio)?;
+            in_unit("seq.bass_drive", *bass_drive)?;
+            positive("seq.bass_body_decay", *bass_body_decay)?;
+            in_unit("seq.swing", *swing)?;
+            in_unit("seq.humanize", *humanize)?;
+            if *wave == SeqWave::Sampler {
+                if sf2.is_empty() {
+                    return Err(
+                        "seq.sf2 must point at a SoundFont (.sf2) file when wave is 'sampler'"
+                            .into(),
+                    );
+                }
+                if !std::path::Path::new(sf2).exists() {
+                    return Err(format!("seq.sf2: no such file '{sf2}'"));
+                }
+                if *sf2_preset > 127 {
+                    return Err(format!(
+                        "seq.sf2_preset must be in 0..=127, got {sf2_preset}"
+                    ));
+                }
+            }
+            env.validate("seq.env")?;
+            for note in notes {
+                if note.len < 1 {
+                    return Err("seq note.len must be >= 1".into());
+                }
+                in_unit("seq note.gain", note.gain)?;
+                validate_freq_value(&note.pitch, "seq note.pitch")?;
+            }
+            Ok(())
+        }
+        Node::Env { adsr } => {
+            adsr.validate("env")?;
+            // An all-zero envelope is always silent — never intended. It's also
+            // the tell-tale of the flatten footgun: the env's a/d/s/r are inlined
+            // (`{"type":"env","a":..,"d":..}`), so wrapping them in an `"adsr"`
+            // object silently drops them all to 0. Reject it with that hint.
+            if adsr.a == 0.0 && adsr.d == 0.0 && adsr.s == 0.0 && adsr.r == 0.0 {
+                return Err("env is silent — a/d/s/r are all 0. The envelope fields \
+                    are inlined on the node (e.g. {\"type\":\"env\",\"a\":0.01,\"d\":0.1,\
+                    \"s\":0.7,\"r\":0.2}); don't nest them under \"adsr\""
+                    .into());
+            }
+            Ok(())
+        }
+        // Nested mixers are rejected earlier; this guards direct calls.
+        Node::Tracks { .. } => Err("tracks must be the document's root node".into()),
+        Node::Mix { inputs } | Node::Mul { inputs } => {
+            if inputs.is_empty() {
+                return Err("mix/mul requires at least one input".into());
+            }
+            inputs.iter().try_for_each(validate_node)
+        }
+        Node::Chain { stages } => {
+            if stages.is_empty() {
+                return Err("chain requires at least one stage".into());
+            }
+            stages.iter().try_for_each(validate_node)
+        }
+        Node::Lowpass { cutoff, q }
+        | Node::Highpass { cutoff, q }
+        | Node::Bandpass { cutoff, q }
+        | Node::Notch { cutoff, q } => {
+            validate_freq_value(cutoff, "filter.cutoff")?;
+            positive("filter.q", *q)
+        }
+        Node::Peak { cutoff, q, gain_db } => {
+            validate_freq_value(cutoff, "peak.cutoff")?;
+            positive("peak.q", *q)?;
+            validate_gain_db("peak.gain_db", *gain_db)
+        }
+        Node::Lowshelf { cutoff, gain_db } | Node::Highshelf { cutoff, gain_db } => {
+            validate_freq_value(cutoff, "shelf.cutoff")?;
+            validate_gain_db("shelf.gain_db", *gain_db)
+        }
+        Node::Super {
+            freq,
+            voices,
+            detune_cents,
+            ..
+        } => {
+            validate_value(freq, "super.freq")?;
+            if !(1..=16).contains(voices) {
+                return Err(format!("super.voices must be in [1, 16], got {voices}"));
+            }
+            if *detune_cents < 0.0 {
+                return Err(format!(
+                    "super.detune_cents must be >= 0, got {detune_cents}"
+                ));
+            }
+            Ok(())
+        }
+        Node::Gain { amount } => validate_value(amount, "gain.amount"),
+        Node::Bitcrush { bits } => {
+            if !(1..=16).contains(bits) {
+                return Err(format!("bitcrush.bits must be in [1, 16], got {bits}"));
+            }
+            Ok(())
+        }
+        Node::Downsample { factor } => {
+            if *factor < 1 {
+                return Err("downsample.factor must be >= 1".into());
+            }
+            Ok(())
+        }
+        Node::Delay { secs, feedback } => {
+            // The upper bound caps the delay-line allocation: an unbounded
+            // `secs` would let a validated document request a buffer of
+            // arbitrary size and abort the process.
+            positive("delay.secs", *secs)?;
+            if *secs > 30.0 {
+                return Err(format!("delay.secs must be in (0, 30] seconds, got {secs}"));
+            }
+            in_unit("delay.feedback", *feedback)
+        }
+        Node::Reverb { room, mix } => {
+            in_unit("reverb.room", *room)?;
+            in_unit("reverb.mix", *mix)
+        }
+        Node::Modal { modes, mix } => {
+            if modes.is_empty() {
+                return Err("modal.modes must be non-empty".into());
+            }
+            if modes.len() > 64 {
+                return Err(format!(
+                    "modal.modes must have at most 64 modes, got {}",
+                    modes.len()
+                ));
+            }
+            for (i, m) in modes.iter().enumerate() {
+                if m.freq <= 0.0 {
+                    return Err(format!("modal.modes[{i}].freq must be > 0, got {}", m.freq));
+                }
+                if m.decay <= 0.0 {
+                    return Err(format!(
+                        "modal.modes[{i}].decay must be > 0, got {}",
+                        m.decay
+                    ));
+                }
+                in_unit(&format!("modal.modes[{i}].gain"), m.gain)?;
+            }
+            in_unit("modal.mix", *mix)
+        }
+        Node::Drive { amount, .. } => validate_value(amount, "drive.amount"),
+        Node::RingMod { freq } => validate_freq_value(freq, "ringmod.freq"),
+        Node::Chorus { rate, depth, mix } => {
+            if *rate <= 0.0 {
+                return Err(format!("chorus.rate must be > 0, got {rate}"));
+            }
+            in_unit("chorus.depth", *depth)?;
+            in_unit("chorus.mix", *mix)
+        }
+        Node::Flanger {
+            rate,
+            depth,
+            feedback,
+            mix,
+        }
+        | Node::Phaser {
+            rate,
+            depth,
+            feedback,
+            mix,
+        } => {
+            if *rate <= 0.0 {
+                return Err(format!("flanger/phaser.rate must be > 0, got {rate}"));
+            }
+            in_unit("flanger/phaser.depth", *depth)?;
+            in_unit("flanger/phaser.feedback", *feedback)?;
+            in_unit("flanger/phaser.mix", *mix)
+        }
+        Node::Duck {
+            trigger,
+            amount,
+            attack,
+            release,
+        } => {
+            in_unit("duck.amount", *amount)?;
+            if *attack < 0.0 || *release < 0.0 {
+                return Err("duck.attack/release must be >= 0".into());
+            }
+            validate_node(trigger)
+        }
+        Node::Compress {
+            ratio,
+            attack,
+            release,
+            ..
+        } => {
+            if *ratio < 1.0 {
+                return Err(format!("compress.ratio must be >= 1, got {ratio}"));
+            }
+            if *attack < 0.0 || *release < 0.0 {
+                return Err("compress.attack/release must be >= 0".into());
+            }
+            Ok(())
+        }
+    }
+}

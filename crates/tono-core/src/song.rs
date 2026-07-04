@@ -22,11 +22,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::{Instrument, VoiceParams};
+use crate::catalog::{Voice, VoiceParams};
 use crate::dsl::{Adsr, ENGINE_VERSION, Node, SeqNote, SeqWave, SoundDoc, Track, Value};
 
 /// One instrument track: an instrument voice plus its mixer settings. Notes come
 /// from the patterns arranged onto it.
+#[non_exhaustive]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SongTrack {
     /// Stable track name — patterns are arranged onto it and it becomes the
@@ -74,6 +75,7 @@ pub struct SongTrack {
 /// relative to the pattern's start, so the same pattern drops in at any bar.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Pattern {
+    /// Pattern name — placements reference it.
     pub name: String,
     /// Length in bars (how far the next pattern on the same track is pushed).
     pub bars: u32,
@@ -84,15 +86,20 @@ pub struct Pattern {
 /// Place `pattern` on `track` starting at bar `bar` (0-based).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Placement {
+    /// The track the pattern plays on.
     pub track: String,
+    /// The pattern to play.
     pub pattern: String,
+    /// The bar it starts at (0-based).
     pub bar: u32,
 }
 
 /// A full song: tracks (instruments), patterns (phrases), and an arrangement
 /// (where each pattern plays). Serializable, so a song is a saveable project.
+#[non_exhaustive]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Song {
+    /// Project name.
     pub name: String,
     /// Tempo in beats per minute.
     pub bpm: f32,
@@ -108,8 +115,11 @@ pub struct Song {
     /// Humanize, 0..1 (deterministic timing/velocity jitter), applied to every track.
     #[serde(default)]
     pub humanize: f32,
+    /// The instrument tracks.
     pub tracks: Vec<SongTrack>,
+    /// The reusable phrases.
     pub patterns: Vec<Pattern>,
+    /// Where each pattern plays.
     pub arrangement: Vec<Placement>,
     /// A master effect chain over the whole mix.
     #[serde(default)]
@@ -183,7 +193,7 @@ impl Song {
         self
     }
 
-    /// Add a catalog [`Instrument`] and write its notes on the shared beat
+    /// Add a catalog [`Voice`] and write its notes on the shared beat
     /// timeline, in one fluent call — the ergonomic way to build a song.
     ///
     /// The closure gets a [`Phrase`]: place notes with `.at(beat).note(pitch,
@@ -193,7 +203,7 @@ impl Song {
     ///
     /// Beats map to the grid at the song's `steps_per_beat`; a duplicate
     /// instrument name is disambiguated automatically.
-    pub fn add(mut self, instrument: Instrument, write: impl FnOnce(&mut Phrase)) -> Self {
+    pub fn add(mut self, instrument: Voice, write: impl FnOnce(&mut Phrase)) -> Self {
         let mut phrase = Phrase::new(self.steps_per_beat);
         write(&mut phrase);
         // The track name becomes the rendered layer id, which must be a slug

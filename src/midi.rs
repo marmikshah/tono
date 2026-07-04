@@ -18,7 +18,9 @@ const PPQ: u16 = 480;
 
 /// What [`export_midi`] wrote.
 pub struct MidiSummary {
+    /// MIDI tracks written (one per seq).
     pub tracks: usize,
+    /// Total notes written.
     pub notes: usize,
 }
 
@@ -169,6 +171,9 @@ fn representative_hz(m: &Modulator) -> f32 {
         Modulator::Arp { steps, .. } => steps.first().copied().unwrap_or(440.0),
         Modulator::EnvMod { from, .. } => *from,
         Modulator::Rand { from, to, .. } => 0.5 * (from + to),
+        // Modulator is non_exhaustive: a future modulator exports as A4 until
+        // a representative is chosen for it.
+        _ => 440.0,
     }
 }
 

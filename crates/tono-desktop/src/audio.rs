@@ -18,9 +18,9 @@ use midir::{MidiInput, MidiInputConnection};
 use tono_core::dsl::{Adsr, SoundDoc};
 use tono_core::instrument::{Instrument, InstrumentDesign, Note};
 use tono_core::patch::Patch;
+use tono_core::player::Player;
 use tono_core::presets;
 use tono_core::runtime::AudioSource;
-use tono_core::stream::Player;
 
 /// Pitch-wheel range in semitones each way (the common ±2 default).
 const BEND_RANGE_SEMITONES: f32 = 2.0;

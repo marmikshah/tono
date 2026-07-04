@@ -16,6 +16,7 @@ use crate::dsl::{Playback, SoundDoc};
 
 /// The SFX/music archetype a sound is judged against. Omit it to run only the
 /// universal checks (clipping, silence, loop seam, onset count).
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Archetype {
@@ -74,7 +75,9 @@ pub struct Review {
     pub grade: Status,
     /// How many findings landed at each status.
     pub pass: u32,
+    /// Number of WARN findings.
     pub warn: u32,
+    /// Number of FAIL findings.
     pub fail: u32,
     /// Every graded criterion, worst first.
     pub findings: Vec<Finding>,

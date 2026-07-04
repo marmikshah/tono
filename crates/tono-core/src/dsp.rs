@@ -3,6 +3,24 @@
 //! determinism contract (same graph + seed ⇒ identical bytes), so they must
 //! never fork per module.
 
+/// The SplitMix64 golden-gamma increment — the seed-spacing constant every
+/// deterministic stream derivation shares.
+pub(crate) const GOLDEN_GAMMA: u64 = 0x9E37_79B9_7F4A_7C15;
+
+/// FNV-1a offset basis and prime — the hashing primitives behind stable
+/// layer/node stream keys.
+pub(crate) const FNV_OFFSET: u64 = 0xCBF2_9CE4_8422_2325;
+pub(crate) const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
+
+/// The SplitMix64 finalizer — THE bit mixer behind every seed derivation
+/// (`Rng`, `node_seed`, the per-track streams). One copy: a re-typed variant
+/// that drifted by one constant would silently fork the determinism contract.
+pub(crate) fn splitmix_mix(mut z: u64) -> u64 {
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 /// Deterministic PRNG (SplitMix64). Seeded from a sound's seed so the same
 /// graph + seed renders identical audio every time. `Clone` lets a stereo
 /// master bus run the same processor on both channels with identical draws.
@@ -10,16 +28,15 @@
 pub struct Rng(u64);
 
 impl Rng {
+    /// A stream seeded at `seed` — the same seed replays the same draws.
     pub fn new(seed: u64) -> Self {
         Rng(seed)
     }
 
+    /// The next 64 raw bits of the stream.
     pub fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
+        self.0 = self.0.wrapping_add(GOLDEN_GAMMA);
+        splitmix_mix(self.0)
     }
 
     /// Uniform in [0, 1) with 24-bit resolution (a full f32 mantissa).
@@ -43,10 +60,10 @@ impl Rng {
 /// uses it to reject the rare id pair whose hashes collide — a collision would
 /// silently give two layers identical noise.
 pub fn layer_stream_key(id: &str) -> u64 {
-    let mut h: u64 = 0xCBF2_9CE4_8422_2325;
+    let mut h = FNV_OFFSET;
     for b in id.as_bytes() {
         h ^= *b as u64;
-        h = h.wrapping_mul(0x0000_0100_0000_01B3);
+        h = h.wrapping_mul(FNV_PRIME);
     }
     h
 }
@@ -56,17 +73,51 @@ pub fn layer_stream_key(id: &str) -> u64 {
 /// graph (not of evaluation order), so under `engine >= 2` a per-sample streaming
 /// render draws the same randomness as the offline whole-buffer render.
 pub(crate) fn node_path(parent: u64, child: usize) -> u64 {
-    (parent ^ (child as u64).wrapping_add(1)).wrapping_mul(0x0000_0100_0000_01B3)
+    (parent ^ (child as u64).wrapping_add(1)).wrapping_mul(FNV_PRIME)
 }
 
 /// Finalize a structural path (seeded from `doc.seed` at the root) into a per-node
 /// RNG seed (SplitMix64 mix).
 pub(crate) fn node_seed(path: u64) -> u64 {
-    let mut z = path.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
+    splitmix_mix(path.wrapping_add(GOLDEN_GAMMA))
 }
+
+/// The ADSR envelope value at time `t` seconds — the ONE copy of the envelope
+/// math shared by the offline `adsr` buffer, the streaming per-sample
+/// evaluator, and `EnvMod`. `rel_start` anchors the release (offline renders
+/// anchor it to the end of the buffer).
+pub(crate) fn adsr_env(t: f32, a: f32, d: f32, s: f32, r: f32, punch: f32, rel_start: f32) -> f32 {
+    let mut v = if t < a {
+        if a > 0.0 { t / a } else { 1.0 }
+    } else if t < a + d {
+        let p = if d > 0.0 { (t - a) / d } else { 1.0 };
+        1.0 - (1.0 - s) * p
+    } else if t < rel_start {
+        s
+    } else if r > 0.0 {
+        let p = ((t - rel_start) / r).clamp(0.0, 1.0);
+        s * (1.0 - p)
+    } else {
+        0.0
+    };
+    let punch_win = a + d;
+    if punch > 0.0 && punch_win > 0.0 && t < punch_win {
+        v *= 1.0 + punch * (1.0 - t / punch_win);
+    }
+    v
+}
+
+/// Classic Freeverb tunings (samples at the 44.1 kHz reference) and damping —
+/// shared verbatim by the offline and streaming reverbs so they cannot drift.
+pub(crate) const FREEVERB_COMB_TUNINGS: [usize; 6] = [1116, 1188, 1277, 1356, 1422, 1491];
+pub(crate) const FREEVERB_ALLPASS_TUNINGS: [usize; 4] = [556, 441, 341, 225];
+pub(crate) const FREEVERB_DAMP: f32 = 0.2;
+
+/// Modulated-delay effect tunings shared by both renderers.
+pub(crate) const CHORUS_BASE_SECS: f32 = 0.015;
+pub(crate) const CHORUS_SWING_SECS: f32 = 0.010;
+pub(crate) const FLANGER_BASE_SECS: f32 = 0.0025;
+pub(crate) const FLANGER_SWING_SECS: f32 = 0.002;
 
 /// Linear amplitude → dBFS (floored at −180 dB so silence stays finite).
 pub fn dbfs(x: f32) -> f32 {
