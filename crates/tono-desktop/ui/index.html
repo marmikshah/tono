@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>tono — studio</title>
+    <title>tono — pattern station</title>
     <style>
       :root {
         --bg: #14131a;
@@ -12,7 +12,10 @@
         --ink: #e9e6f2;
         --dim: #8f8aa6;
         --accent: #8c6ee6;
-        --key: #2a2735;
+        --accent-dim: #5d4a9e;
+        --cell: #262233;
+        --cell-beat: #2c2839;
+        --good: #6ee6a8;
       }
       * { box-sizing: border-box; }
       body {
@@ -23,267 +26,273 @@
         height: 100vh;
         display: flex;
         flex-direction: column;
+        user-select: none;
       }
       header {
         padding: 10px 16px;
         border-bottom: 1px solid var(--line);
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 14px;
+        flex-wrap: wrap;
       }
-      header b { color: var(--accent); letter-spacing: 0.5px; }
-      header span { color: var(--dim); }
-      main { flex: 1; display: flex; min-height: 0; }
-      .col { padding: 14px; overflow: auto; }
-      .left { width: 44%; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
-      .right { flex: 1; display: flex; flex-direction: column; gap: 12px; }
-      textarea {
-        flex: 1;
-        min-height: 220px;
+      header h1 { font-size: 14px; margin: 0 8px 0 0; font-weight: 600; }
+      header h1 span { color: var(--accent); }
+      .tbtn {
         background: var(--panel);
+        border: 1px solid var(--line);
         color: var(--ink);
+        border-radius: 6px;
+        padding: 5px 12px;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      .tbtn:hover { border-color: var(--accent); }
+      .tbtn:disabled { opacity: 0.35; cursor: default; }
+      .tbtn.active { background: var(--accent-dim); border-color: var(--accent); }
+      label.knob { color: var(--dim); display: flex; align-items: center; gap: 6px; }
+      input[type="number"], input[type="text"] {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        color: var(--ink);
+        border-radius: 6px;
+        padding: 4px 8px;
+        width: 64px;
+      }
+      input[type="range"] { accent-color: var(--accent); }
+      main { flex: 1; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+      .grid { border-collapse: separate; border-spacing: 3px; }
+      .grid td.label {
+        color: var(--dim);
+        padding-right: 8px;
+        text-align: right;
+        white-space: nowrap;
+        font-size: 12px;
+      }
+      .grid td.pitch input { width: 52px; font-size: 11px; padding: 2px 6px; text-align: center; }
+      .cell {
+        width: 34px;
+        height: 26px;
+        border-radius: 5px;
+        background: var(--cell);
+        cursor: pointer;
+        border: 1px solid transparent;
+      }
+      .cell.beat { background: var(--cell-beat); }
+      .cell:hover { border-color: var(--accent-dim); }
+      .cell.on { background: var(--accent); }
+      .cell.on:hover { border-color: var(--ink); }
+      .cell.head { border-color: var(--good); }
+      .row-gap td { height: 6px; padding: 0; }
+      #mixer { display: flex; gap: 24px; flex-wrap: wrap; }
+      .chan {
+        background: var(--panel);
         border: 1px solid var(--line);
         border-radius: 8px;
-        padding: 10px;
-        font: 12px/1.5 ui-monospace, Menlo, monospace;
-        resize: none;
+        padding: 10px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 180px;
       }
-      button {
-        background: var(--key);
-        color: var(--ink);
-        border: 1px solid var(--line);
-        border-radius: 7px;
-        padding: 7px 12px;
-        cursor: pointer;
+      .chan .name { font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+      .chan label { color: var(--dim); font-size: 11px; display: flex; align-items: center; gap: 8px; }
+      .chan input[type="range"] { flex: 1; }
+      footer {
+        border-top: 1px solid var(--line);
+        padding: 10px 16px;
+        display: flex;
+        gap: 20px;
+        align-items: center;
+        flex-wrap: wrap;
       }
-      button:hover { border-color: var(--accent); }
-      button.primary { background: var(--accent); border-color: var(--accent); color: #120f1c; font-weight: 600; }
-      .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-      img { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; display: block; }
-      .stats { color: var(--dim); font: 12px/1.6 ui-monospace, monospace; white-space: pre-wrap; }
-      .err { color: #e46b6b; }
-      label { color: var(--dim); display: inline-flex; gap: 6px; align-items: center; }
-      select, input[type="range"] { accent-color: var(--accent); }
-      .kbd { border-top: 1px solid var(--line); padding: 12px 14px; background: var(--panel); }
-      .keys { position: relative; height: 120px; user-select: none; }
-      .wkey, .bkey {
-        position: absolute;
-        border: 1px solid #0c0b12;
-        border-radius: 0 0 5px 5px;
-        cursor: pointer;
-      }
-      .wkey { top: 0; height: 120px; background: #e9e6f2; }
-      .wkey.down { background: var(--accent); }
-      .bkey { top: 0; height: 76px; background: #201d2b; z-index: 2; }
-      .bkey.down { background: var(--accent); }
+      footer .stat { color: var(--dim); font-size: 12px; }
+      footer .stat b { color: var(--ink); font-weight: 600; }
+      footer img { height: 56px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); }
+      #error { color: #e66e8a; font-size: 12px; }
+      .spacer { flex: 1; }
     </style>
   </head>
   <body>
     <header>
-      <b>tono</b><span>studio · design a sound, hear it, play it</span>
+      <h1><span>tono</span> pattern station</h1>
+      <button class="tbtn" id="play" title="space">▶</button>
+      <button class="tbtn" id="pause">⏸</button>
+      <button class="tbtn" id="stop">⏹</button>
+      <label class="knob">bpm <input type="number" id="bpm" min="30" max="300" step="1" /></label>
+      <label class="knob">swing <input type="range" id="swing" min="0" max="0.7" step="0.01" style="width:90px" /></label>
+      <button class="tbtn" id="undo" title="cmd+z">undo</button>
+      <button class="tbtn" id="redo" title="shift+cmd+z">redo</button>
+      <span class="spacer"></span>
+      <input type="text" id="path" style="width:220px" value="~/tono-pattern.json" spellcheck="false" />
+      <button class="tbtn" id="save">save</button>
+      <button class="tbtn" id="load">load</button>
     </header>
+
     <main>
-      <div class="col left">
-        <div class="row">
-          <button class="primary" id="render">Render + preview</button>
-          <button id="play">▶ Play</button>
-          <button id="stop">■ Stop</button>
-        </div>
-        <textarea id="graph" spellcheck="false"></textarea>
-        <div class="stats" id="err"></div>
-      </div>
-      <div class="col right">
-        <img id="spec" alt="spectrogram" />
-        <img id="wave" alt="waveform" />
-        <div class="stats" id="stats"></div>
-      </div>
+      <table class="grid" id="grid"></table>
+      <div id="mixer"></div>
+      <div id="error"></div>
     </main>
-    <div class="kbd">
-      <div class="row" style="margin-bottom: 10px">
-        <span style="color: var(--dim)">the keys play the sound above · amp env:</span>
-        <label>A <input type="range" id="a" min="0" max="0.5" step="0.005" value="0.01" /></label>
-        <label>D <input type="range" id="d" min="0" max="0.6" step="0.005" value="0.12" /></label>
-        <label>S <input type="range" id="s" min="0" max="1" step="0.01" value="0.6" /></label>
-        <label>R <input type="range" id="r" min="0" max="1" step="0.01" value="0.2" /></label>
-        <span style="color: var(--dim)">· mouse or computer keys (A–K)</span>
-      </div>
-      <div class="row" style="margin-bottom: 10px">
-        <label>preset
-          <select id="preset"><option value="">— designed graph —</option></select>
-        </label>
-        <label>bend <input type="range" id="bend" min="-1" max="1" step="0.01" value="0" /></label>
-        <label>brightness <input type="range" id="brightness" min="-2" max="2" step="0.02" value="0" /></label>
-        <span style="color: var(--dim)">· pitch wheel springs back to center</span>
-      </div>
-      <div class="keys" id="keys"></div>
-    </div>
+
+    <footer>
+      <span class="stat">loudness <b id="lufs">—</b></span>
+      <span class="stat">true peak <b id="tp">—</b></span>
+      <span class="stat">loop <b id="dur">—</b></span>
+      <span class="spacer"></span>
+      <img id="wave" alt="" title="waveform" />
+      <img id="spec" alt="" title="spectrogram" />
+    </footer>
 
     <script>
       const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
       const $ = (id) => document.getElementById(id);
+      let state = null;
 
-      const STARTER = {
-        name: "lead",
-        duration: 1.5,
-        engine: 2,
-        root: {
-          type: "chain",
-          stages: [
-            { type: "super", wave: "sawtooth", freq: 220, voices: 5, detune_cents: 14 },
-            { type: "lowpass", cutoff: 2400, q: 0.9 },
-          ],
-        },
-      };
-      $("graph").value = JSON.stringify(STARTER, null, 2);
-
-      async function render() {
-        $("err").textContent = "";
-        let res;
-        try {
-          res = await invoke("render_graph", { graph: $("graph").value });
-        } catch (e) {
-          $("err").innerHTML = `<span class="err">${e}</span>`;
-          return;
-        }
-        if (!res.ok) {
-          $("err").innerHTML = `<span class="err">${res.error}</span>`;
-          return;
-        }
-        const preset = $("preset");
-        if (preset) preset.value = ""; // rendering plays the designed graph
-        $("spec").src = "data:image/png;base64," + res.spectrogram_png;
-        $("wave").src = "data:image/png;base64," + res.waveform_png;
-        const s = JSON.parse(res.stats_json);
-        $("stats").textContent =
-          `${res.duration.toFixed(2)}s @ ${res.sample_rate} Hz\n` +
-          `peak ${s.peak_dbfs?.toFixed(1)} dB · rms ${s.rms_dbfs?.toFixed(1)} dB · ` +
-          `centroid ${Math.round(s.spectral_centroid_hz)} Hz · LUFS ${s.loudness_lufs?.toFixed(1)}`;
+      // ---- render: the webview is a pure view of StudioState -------------
+      function render(s) {
+        state = s;
+        $("bpm").value = Math.round(s.bpm);
+        $("swing").value = s.swing;
+        $("undo").disabled = !s.can_undo;
+        $("redo").disabled = !s.can_redo;
+        $("error").textContent = s.error || "";
+        renderGrid(s);
+        renderMixer(s);
+        scheduleAnalysis();
       }
 
-      $("render").onclick = render;
-      $("play").onclick = () => invoke("transport", { action: "play" });
-      $("stop").onclick = () => invoke("transport", { action: "stop" });
-
-      // --- live keyboard (plays the designed sound) -----------------------
-      function pushAmp() {
-        invoke("set_amp", { a: +$("a").value, d: +$("d").value, s: +$("s").value, r: +$("r").value });
+      function renderGrid(s) {
+        const grid = $("grid");
+        grid.textContent = "";
+        let lastTrack = null;
+        s.rows.forEach((row, ri) => {
+          if (lastTrack !== null && row.track !== lastTrack) {
+            const gap = grid.insertRow();
+            gap.className = "row-gap";
+            gap.insertCell().colSpan = s.steps + 2;
+          }
+          lastTrack = row.track;
+          const tr = grid.insertRow();
+          const label = tr.insertCell();
+          label.className = "label";
+          label.textContent = row.label;
+          const pitch = tr.insertCell();
+          pitch.className = "pitch";
+          if (!row.pitch.startsWith("midi:")) {
+            const input = document.createElement("input");
+            input.value = row.pitch;
+            input.onchange = () => act("set_row_pitch", { row: ri, pitch: input.value });
+            pitch.appendChild(input);
+          }
+          for (let step = 0; step < s.steps; step++) {
+            const td = tr.insertCell();
+            td.className = "cell" + (Math.floor(step / s.steps_per_beat) % 2 ? " beat" : "") + (row.steps[step] ? " on" : "");
+            td.dataset.step = step;
+            td.onpointerdown = () => act("toggle_step", { row: ri, step });
+          }
+        });
       }
-      ["a", "d", "s", "r"].forEach((id) => $(id).addEventListener("input", pushAmp));
 
-      // --- factory presets --------------------------------------------------
-      (async () => {
-        const list = await invoke("list_presets");
-        const sel = $("preset");
-        for (const p of list) {
-          const o = document.createElement("option");
-          o.value = p.name;
-          o.textContent = `${p.category.toLowerCase()} · ${p.name} — ${p.description}`;
-          sel.appendChild(o);
+      function renderMixer(s) {
+        const mixer = $("mixer");
+        mixer.textContent = "";
+        for (const t of s.tracks) {
+          const chan = document.createElement("div");
+          chan.className = "chan";
+          const name = document.createElement("div");
+          name.className = "name";
+          name.textContent = t.name;
+          const mute = document.createElement("button");
+          mute.className = "tbtn" + (t.muted ? " active" : "");
+          mute.textContent = "M";
+          mute.onclick = () => act("set_track", { name: t.name, gain: t.gain, pan: t.pan, muted: !t.muted });
+          name.appendChild(mute);
+          chan.appendChild(name);
+          const slider = (label, min, max, value, oninput) => {
+            const wrap = document.createElement("label");
+            wrap.textContent = label;
+            const input = document.createElement("input");
+            input.type = "range";
+            input.min = min;
+            input.max = max;
+            input.step = 0.01;
+            input.value = value;
+            input.onchange = oninput; // commit on release: one undo step per move
+            wrap.appendChild(input);
+            chan.appendChild(wrap);
+            return input;
+          };
+          const gain = slider("vol", 0, 1.5, t.gain, () =>
+            act("set_track", { name: t.name, gain: +gain.value, pan: +pan.value, muted: t.muted }));
+          const pan = slider("pan", -1, 1, t.pan, () =>
+            act("set_track", { name: t.name, gain: +gain.value, pan: +pan.value, muted: t.muted }));
         }
-      })();
-      $("preset").addEventListener("change", (e) => {
-        const name = e.target.value;
-        if (name) invoke("load_preset", { name });
-        else render(); // "— designed graph —" reverts to the editor's sound
-      });
-
-      // --- pitch wheel (±2 semitones, springs back to center) ---------------
-      const bend = $("bend");
-      const sendBend = () => invoke("set_bend", { semitones: +bend.value * 2 });
-      bend.addEventListener("input", sendBend);
-      const centerBend = () => {
-        bend.value = 0;
-        sendBend();
-      };
-      bend.addEventListener("pointerup", centerBend);
-      bend.addEventListener("pointerleave", centerBend);
-
-      // --- brightness (filter cutoff, octaves around the designed sound) -----
-      const brightness = $("brightness");
-      brightness.addEventListener("input", () =>
-        invoke("set_brightness", { scale: 2 ** +brightness.value }),
-      );
-
-      const held = new Set();
-      const on = (midi) => {
-        if (held.has(midi)) return;
-        held.add(midi);
-        invoke("note_on", { key: midi, velocity: 0.85 });
-        document.querySelector(`[data-midi="${midi}"]`)?.classList.add("down");
-      };
-      const off = (midi) => {
-        if (!held.has(midi)) return;
-        held.delete(midi);
-        invoke("note_off", { key: midi });
-        document.querySelector(`[data-midi="${midi}"]`)?.classList.remove("down");
-      };
-
-      // Draw two octaves from C4.
-      const base = 60, octaves = 2;
-      const isBlack = (n) => [1, 3, 6, 8, 10].includes(n % 12);
-      const keys = $("keys");
-      const whites = [];
-      for (let i = 0; i < octaves * 12; i++) if (!isBlack(base + i)) whites.push(base + i);
-      const w = 100 / whites.length;
-      whites.forEach((midi, i) => {
-        const el = document.createElement("div");
-        el.className = "wkey";
-        el.dataset.midi = midi;
-        el.style.left = i * w + "%";
-        el.style.width = w + "%";
-        keys.appendChild(el);
-      });
-      // Black keys sit between the whites.
-      let wi = 0;
-      for (let i = 0; i < octaves * 12; i++) {
-        const midi = base + i;
-        if (isBlack(midi)) {
-          const el = document.createElement("div");
-          el.className = "bkey";
-          el.dataset.midi = midi;
-          el.style.left = wi * w - w * 0.3 + "%";
-          el.style.width = w * 0.6 + "%";
-          keys.appendChild(el);
-        } else wi++;
       }
-      keys.addEventListener("pointerdown", (e) => {
-        const m = e.target.dataset.midi;
-        if (!m) return;
-        // Capture the pointer so the release fires on this key even when the
-        // mouse drags off it — otherwise the note sticks on forever.
-        e.target.setPointerCapture(e.pointerId);
-        on(+m);
-      });
-      keys.addEventListener("pointerup", (e) => {
-        const m = e.target.dataset.midi;
-        if (m) off(+m);
-      });
-      keys.addEventListener("pointercancel", (e) => {
-        const m = e.target.dataset.midi;
-        if (m) off(+m);
-      });
 
-      // Computer-keyboard mapping (one octave from C4). Ignored while typing
-      // in the editor — keystrokes there are text, not notes.
-      const typing = (e) => /^(input|textarea|select)$/i.test(e.target.tagName);
-      const map = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12 };
+      // ---- commands -------------------------------------------------------
+      async function act(cmd, args) {
+        render(await invoke(cmd, args));
+      }
+
+      $("bpm").onchange = () => act("set_bpm", { bpm: +$("bpm").value });
+      $("swing").onchange = () => act("set_swing", { swing: +$("swing").value });
+      $("undo").onclick = () => act("undo");
+      $("redo").onclick = () => act("redo");
+      $("save").onclick = async () => {
+        try { await invoke("save_project", { path: $("path").value }); flashError(""); }
+        catch (e) { flashError("save failed: " + e); }
+      };
+      $("load").onclick = async () => {
+        try { render(await invoke("load_project", { path: $("path").value })); }
+        catch (e) { flashError("load failed: " + e); }
+      };
+      const flashError = (msg) => { $("error").textContent = msg; };
+
+      const transport = async (action) => {
+        try { await invoke("transport", { action }); flashError(""); }
+        catch (e) { flashError(e); }
+      };
+      $("play").onclick = () => transport("play");
+      $("pause").onclick = () => transport("pause");
+      $("stop").onclick = () => transport("stop");
+
       addEventListener("keydown", (e) => {
-        if (e.repeat || typing(e) || e.metaKey || e.ctrlKey || e.altKey) return;
-        const n = map[e.key];
-        if (n !== undefined) on(base + n);
+        if (/^(input|textarea|select)$/i.test(e.target.tagName)) return;
+        if (e.key === " ") { e.preventDefault(); transport("play"); }
+        if (e.key === "z" && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          act(e.shiftKey ? "redo" : "undo");
+        }
       });
-      // No typing guard on release: off() is a no-op unless the note is held,
-      // and releasing must work even if focus moved into the editor mid-hold.
-      addEventListener("keyup", (e) => {
-        const n = map[e.key];
-        if (n !== undefined) off(base + n);
-      });
-      // Whatever happens (focus loss, key-up swallowed by the OS), never
-      // leave a voice droning: release everything on blur.
-      addEventListener("blur", () => [...held].forEach(off));
 
-      pushAmp();
-      render();
+      // ---- playhead: poll at 20 Hz, highlight the current column ----------
+      let lastHead = -1;
+      setInterval(async () => {
+        const { playing, step } = await invoke("playhead");
+        const head = playing ? step : -1;
+        if (head === lastHead) return;
+        lastHead = head;
+        document.querySelectorAll(".cell.head").forEach((c) => c.classList.remove("head"));
+        if (head >= 0)
+          document.querySelectorAll(`.cell[data-step="${head}"]`).forEach((c) => c.classList.add("head"));
+      }, 50);
+
+      // ---- analysis strip: debounced behind edits --------------------------
+      let analysisTimer = null;
+      function scheduleAnalysis() {
+        clearTimeout(analysisTimer);
+        analysisTimer = setTimeout(async () => {
+          const a = await invoke("analyze");
+          $("lufs").textContent = a.ok ? a.lufs.toFixed(1) + " LUFS" : "—";
+          $("tp").textContent = a.ok ? a.true_peak_dbtp.toFixed(1) + " dBTP" : "—";
+          $("dur").textContent = a.ok ? a.duration.toFixed(2) + " s" : "—";
+          $("spec").src = a.ok ? "data:image/png;base64," + a.spectrogram_png : "";
+          $("wave").src = a.ok ? "data:image/png;base64," + a.waveform_png : "";
+        }, 350);
+      }
+
+      act("state");
     </script>
   </body>
 </html>
