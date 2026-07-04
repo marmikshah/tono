@@ -1717,6 +1717,18 @@ struct SeqVoice<'a> {
     engine: u32,
 }
 
+/// A stable identity for a note's pitch, mixed into the engine ≥ 4 humanize
+/// seed so chord notes (same step, same length) jitter independently.
+fn pitch_identity(v: &Value) -> u64 {
+    match v {
+        Value::Const(c) => c.to_bits() as u64,
+        Value::Note(s) => crate::dsp::layer_stream_key(s),
+        // A per-note modulated pitch (a slide) is already unique enough by
+        // its step/len in practice; all share one tag.
+        Value::Modulated(_) => 0x4D4F_4455,
+    }
+}
+
 /// Groove placement for one note: its start sample (swing + humanize timing)
 /// and its humanized gain.
 fn groove_note(note: &SeqNote, voice: &SeqVoice, step_dur: f32) -> (usize, f32) {
@@ -1730,7 +1742,15 @@ fn groove_note(note: &SeqNote, voice: &SeqVoice, step_dur: f32) -> (usize, f32) 
     };
     let (human_delay, gain) = if voice.humanize > 0.0 {
         // Seed from the note's identity so the jitter is stable per note.
-        let mut hr = Rng::new((note.step as u64) << 32 ^ (note.len as u64) << 8 ^ 0x6A09_E667);
+        let mut seed = (note.step as u64) << 32 ^ (note.len as u64) << 8 ^ 0x6A09_E667;
+        if voice.engine >= 4 {
+            // Chord-aware: seeded from (step, len) alone, every note of a
+            // chord shared one timing/velocity offset and moved as a block —
+            // a human never does that. Engine ≤ 3 keeps the shared seed
+            // bit-for-bit.
+            seed ^= pitch_identity(&note.pitch).rotate_left(17);
+        }
+        let mut hr = Rng::new(seed);
         (
             voice.humanize * 0.12 * step_dur * hr.bi(),
             note.gain * (1.0 + voice.humanize * 0.15 * hr.bi()),
@@ -3365,6 +3385,30 @@ mod tests {
         assert!((lufs + 20.0).abs() < 1.5, "got {lufs} LUFS");
         // True peak respects the −1 dBTP ceiling (small estimation slack).
         assert!(crate::dsp::dbfs(true_peak(&s)) <= -0.9);
+    }
+
+    #[test]
+    fn engine4_humanize_jitters_chord_notes_independently() {
+        // One note per doc, same slot, different pitch: under engine ≤ 3 the
+        // jitter seed is (step, len) only, so both land on the same offset;
+        // under engine 4 the pitch joins the seed and they separate.
+        let mk = |engine: u32, pitch: &str| {
+            doc(&format!(
+                r#"{{ "name":"h", "duration":2.0, "engine":{engine},
+                    "root": {{ "type":"seq", "bpm":120, "wave":"sine", "humanize": 1.0,
+                    "env": {{ "a":0.001, "d":0.1, "s":0.5, "r":0.05 }},
+                    "notes": [ {{ "step":4, "len":4, "pitch":"{pitch}" }} ] }} }}"#
+            ))
+        };
+        let onset = |d: &SoundDoc| render(d).iter().position(|x| x.abs() > 1e-5).unwrap();
+        let legacy = onset(&mk(3, "C4")) as i64 - onset(&mk(3, "E4")) as i64;
+        assert!(legacy.abs() < 8, "legacy shared-seed jitter is pinned");
+        // Everything is deterministic: this pair separates by 19 samples.
+        let v4 = onset(&mk(4, "C4")) as i64 - onset(&mk(4, "E4")) as i64;
+        assert!(
+            v4.abs() > legacy.abs() + 8,
+            "engine 4 separates chord-note timing: {v4} vs legacy {legacy}"
+        );
     }
 
     #[test]
