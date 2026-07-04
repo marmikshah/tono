@@ -99,9 +99,11 @@ pub fn peak_limit(channels: &mut [&mut [f32]]) {
     }
 }
 
-/// Estimate the inter-sample (true) peak by 4× linear-interpolation oversampling.
-/// Returns linear amplitude (use [`dbfs`] for dBTP). Exposed so the renderer's
-/// output stage can limit to a true-peak ceiling.
+/// LEGACY (engine ≤ 3) inter-sample peak estimate by 4× *linear* interpolation.
+/// Linear interpolation is bounded by the adjacent samples, so this can never
+/// exceed the sample peak — it under-reads true peaks by up to ~3 dB. Kept
+/// bit-exact because the engine ≤ 3 normalize output stage limited against it;
+/// everything else should use [`true_peak_oversampled`].
 pub fn true_peak(samples: &[f32]) -> f32 {
     if samples.len() < 2 {
         return samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
@@ -119,11 +121,84 @@ pub fn true_peak(samples: &[f32]) -> f32 {
     peak
 }
 
-/// Approximate ITU-R BS.1770 K-weighted integrated loudness (ungated). The
-/// K-weighting biquads use the standard 48 kHz coefficients, so this is an
-/// approximation at other sample rates — fine for relative level matching.
-/// Exposed so the renderer's output stage can gain-match to a LUFS target.
-/// Returns −120 for silence.
+// The three intermediate phases of a 4× polyphase windowed-sinc interpolator
+// (12 taps each, Hann window, per-phase unity DC gain). Precomputed constants
+// so the estimate is bit-identical across platforms (no libm at runtime).
+const TP_PHASES: [[f32; 12]; 3] = [
+    [
+        -0.001_630_944,
+        0.010_354_987,
+        -0.030_093_31,
+        0.069_125_3,
+        -0.161_381_1,
+        0.896_035_25,
+        0.288_544_92,
+        -0.103_407_112,
+        0.046_242_866,
+        -0.018_517_122,
+        0.004_893_635,
+        -0.000_167_362,
+    ],
+    [
+        -0.000_985_122,
+        0.010_349_617,
+        -0.033_673_15,
+        0.080_066_491,
+        -0.180_965_97,
+        0.625_208_14,
+        0.625_208_14,
+        -0.180_965_97,
+        0.080_066_491,
+        -0.033_673_15,
+        0.010_349_617,
+        -0.000_985_122,
+    ],
+    [
+        -0.000_167_362,
+        0.004_893_635,
+        -0.018_517_122,
+        0.046_242_866,
+        -0.103_407_112,
+        0.288_544_92,
+        0.896_035_25,
+        -0.161_381_1,
+        0.069_125_3,
+        -0.030_093_31,
+        0.010_354_987,
+        -0.001_630_944,
+    ],
+];
+
+/// Estimate the inter-sample (true) peak by 4× polyphase windowed-sinc
+/// oversampling (BS.1770-style). Returns linear amplitude (use [`dbfs`] for
+/// dBTP). Unlike linear interpolation, this genuinely reconstructs peaks that
+/// land between samples — a sine sampled at its zero crossings still reads ~1.
+pub fn true_peak_oversampled(samples: &[f32]) -> f32 {
+    let mut peak = samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+    let at = |i: isize| -> f32 {
+        if i < 0 || i as usize >= samples.len() {
+            0.0
+        } else {
+            samples[i as usize]
+        }
+    };
+    for i in 0..samples.len() as isize {
+        for phase in &TP_PHASES {
+            let mut v = 0.0f32;
+            for (t, c) in phase.iter().enumerate() {
+                v += c * at(i + t as isize - 5);
+            }
+            peak = peak.max(v.abs());
+        }
+    }
+    peak
+}
+
+/// LEGACY (engine ≤ 3) K-weighted integrated loudness: ungated, mono, and
+/// pinned to the standard 48 kHz coefficient table at every sample rate. Kept
+/// bit-exact because the engine ≤ 3 normalize output stage gain-matched
+/// against it; everything else should use [`loudness_lufs_gated`]. Returns
+/// −120 for silence.
 pub fn loudness_lufs(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return -120.0;
@@ -137,6 +212,96 @@ pub fn loudness_lufs(samples: &[f32]) -> f32 {
     let weighted = biquad_df1(&shelf, [1.0, -2.0, 1.0], [-1.990_047_5, 0.990_072_3]);
     let ms = weighted.iter().map(|x| x * x).sum::<f32>() / weighted.len() as f32;
     -0.691 + 10.0 * ms.max(1e-12).log10()
+}
+
+/// The BS.1770 K-weighting biquad coefficients for `sr`, derived from the
+/// analog prototype (a +4 dB spherical-head high shelf at ~1.68 kHz and the
+/// RLB rumble high-pass at ~38 Hz) via the bilinear transform. At 48 kHz this
+/// reproduces the standard's coefficient table.
+/// Returns `(shelf_b, shelf_a, highpass_b, highpass_a)`.
+fn k_weighting_coeffs(sr: u32) -> ([f32; 3], [f32; 2], [f32; 3], [f32; 2]) {
+    let fs = sr as f64;
+    let (f0, gain_db, q) = (
+        1_681.974_450_955_533,
+        3.999_843_853_973_347,
+        0.707_175_236_955_419_6,
+    );
+    let k = (std::f64::consts::PI * f0 / fs).tan();
+    let vh = 10f64.powf(gain_db / 20.0);
+    let vb = vh.powf(0.499_666_774_154_541_6);
+    let d = 1.0 + k / q + k * k;
+    let shelf_b = [
+        ((vh + vb * k / q + k * k) / d) as f32,
+        ((2.0 * (k * k - vh)) / d) as f32,
+        ((vh - vb * k / q + k * k) / d) as f32,
+    ];
+    let shelf_a = [
+        ((2.0 * (k * k - 1.0)) / d) as f32,
+        ((1.0 - k / q + k * k) / d) as f32,
+    ];
+    let (f0, q) = (38.135_470_876_024_44, 0.500_327_037_323_877_3);
+    let k = (std::f64::consts::PI * f0 / fs).tan();
+    let d = 1.0 + k / q + k * k;
+    let hp_b = [1.0, -2.0, 1.0];
+    let hp_a = [
+        ((2.0 * (k * k - 1.0)) / d) as f32,
+        ((1.0 - k / q + k * k) / d) as f32,
+    ];
+    (shelf_b, shelf_a, hp_b, hp_a)
+}
+
+/// K-weight one channel at its actual sample rate.
+fn k_weight(samples: &[f32], sr: u32) -> Vec<f32> {
+    let (sb, sa, hb, ha) = k_weighting_coeffs(sr);
+    biquad_df1(&biquad_df1(samples, sb, sa), hb, ha)
+}
+
+/// ITU-R BS.1770-4 gated integrated loudness over one or more channels (pass
+/// `[mono]` or `[left, right]`): K-weighting at the actual sample rate,
+/// 400 ms blocks at 75% overlap, the −70 LUFS absolute gate, then the −10 LU
+/// relative gate; channel energies sum per the spec. Accumulates in f64, so
+/// long renders don't stall an f32 accumulator. Returns −120 for silence.
+pub fn loudness_lufs_gated(channels: &[&[f32]], sr: u32) -> f32 {
+    let n = channels.first().map_or(0, |c| c.len());
+    if n == 0 {
+        return -120.0;
+    }
+    let weighted: Vec<Vec<f32>> = channels.iter().map(|c| k_weight(c, sr)).collect();
+    let sum_ms = |range: std::ops::Range<usize>| -> f64 {
+        weighted
+            .iter()
+            .map(|w| {
+                w[range.clone()]
+                    .iter()
+                    .map(|x| *x as f64 * *x as f64)
+                    .sum::<f64>()
+                    / range.len() as f64
+            })
+            .sum()
+    };
+    let lufs = |ms: f64| -0.691 + 10.0 * ms.max(1e-12).log10();
+    let block = (sr as usize * 2) / 5; // 400 ms
+    if n < block || block == 0 {
+        // Too short to gate: integrate over the whole signal.
+        return lufs(sum_ms(0..n)) as f32;
+    }
+    let hop = (block / 4).max(1); // 75% overlap
+    let blocks: Vec<f64> = (0..=(n - block))
+        .step_by(hop)
+        .map(|s| sum_ms(s..s + block))
+        .collect();
+    // Absolute gate at −70 LUFS.
+    let above: Vec<f64> = blocks.into_iter().filter(|&ms| lufs(ms) > -70.0).collect();
+    if above.is_empty() {
+        return -120.0;
+    }
+    // Relative gate 10 LU below the mean of the absolute-gated blocks.
+    let rel = lufs(above.iter().sum::<f64>() / above.len() as f64) - 10.0;
+    let gated: Vec<f64> = above.into_iter().filter(|&ms| lufs(ms) > rel).collect();
+    if gated.is_empty() {
+        return -120.0;
+    }
+    lufs(gated.iter().sum::<f64>() / gated.len() as f64) as f32
 }
 
 /// Direct-Form I biquad over a buffer. `b` = feed-forward, `a` = the two
@@ -190,6 +355,71 @@ mod tests {
         assert!((dbfs(0.5) + 6.0206).abs() < 0.001);
         assert!((db_to_lin(-6.0206) - 0.5).abs() < 0.001);
         assert_eq!(dbfs(0.0), -180.0); // silence floor
+    }
+
+    #[test]
+    fn k_weighting_at_48k_matches_the_standard_table() {
+        let (sb, sa, hb, ha) = k_weighting_coeffs(48_000);
+        let expect = |got: f32, want: f32| {
+            assert!((got - want).abs() < 1e-4, "got {got}, want {want}");
+        };
+        expect(sb[0], 1.535_124_9);
+        expect(sb[1], -2.691_696_2);
+        expect(sb[2], 1.198_392_8);
+        expect(sa[0], -1.690_659_3);
+        expect(sa[1], 0.732_480_8);
+        assert_eq!(hb, [1.0, -2.0, 1.0]);
+        expect(ha[0], -1.990_047_5);
+        expect(ha[1], 0.990_072_3);
+    }
+
+    #[test]
+    fn oversampled_true_peak_sees_between_the_samples() {
+        // A sine at fs/4 with phase π/4 samples at ±0.7071 while its real
+        // peak is 1.0 — the classic inter-sample-over test. The legacy linear
+        // estimate is mathematically bounded by the sample peak.
+        let x: Vec<f32> = (0..1024)
+            .map(|i| (std::f32::consts::FRAC_PI_2 * i as f32 + std::f32::consts::FRAC_PI_4).sin())
+            .collect();
+        let sample_peak = x.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+        assert!((sample_peak - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-3);
+        assert!(true_peak(&x) <= sample_peak + 1e-6, "legacy: bounded");
+        let tp = true_peak_oversampled(&x);
+        assert!(
+            (0.98..=1.05).contains(&tp),
+            "oversampled estimate {tp} should recover the hidden 1.0 peak"
+        );
+    }
+
+    #[test]
+    fn gated_loudness_ignores_silence_and_sums_channels() {
+        let sr = 48_000u32;
+        let tau = std::f32::consts::TAU;
+        let tone: Vec<f32> = (0..4 * sr as usize)
+            .map(|i| 0.25 * (tau * 440.0 * i as f32 / sr as f32).sin())
+            .collect();
+        let solo = loudness_lufs_gated(&[&tone], sr);
+        // Pad with 8 s of silence: gating must hold the reading near-steady
+        // (only the tone/silence boundary blocks dilute it slightly) while an
+        // ungated integration drops by ~5 dB.
+        let mut padded = tone.clone();
+        padded.extend(std::iter::repeat_n(0.0f32, 8 * sr as usize));
+        let gated = loudness_lufs_gated(&[&padded], sr);
+        assert!(
+            (gated - solo).abs() < 0.35,
+            "gated {gated} vs solo {solo}: silence must not drag the reading"
+        );
+        assert!(
+            loudness_lufs(&padded) < solo - 4.0,
+            "the ungated legacy reading is dragged down by the padding"
+        );
+        // Stereo: the same program in both channels reads +3 LU (energy sum).
+        let stereo = loudness_lufs_gated(&[&tone, &tone], sr);
+        assert!(
+            (stereo - solo - 3.01).abs() < 0.1,
+            "stereo {stereo} vs mono {solo}: channels sum per BS.1770"
+        );
+        assert_eq!(loudness_lufs_gated(&[], sr), -120.0);
     }
 
     #[test]

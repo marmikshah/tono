@@ -19,17 +19,23 @@ fn waveform_path(png_path: &Path) -> PathBuf {
 
 /// Compute the stats and write the spectrogram + waveform PNGs to disk, returning
 /// the [`Analysis`] with both paths filled. The waveform lands at the `<stem>_wave`
-/// sibling of `png_path`.
+/// sibling of `png_path`. Pass the stereo pair when the render has one, so the
+/// level metrics measure the audio that actually ships (the images always read
+/// the mono mid).
 pub fn analyze_to_disk(
-    samples: &[f32],
+    mono: &[f32],
+    stereo: Option<(&[f32], &[f32])>,
     sample_rate: u32,
     png_path: &Path,
 ) -> anyhow::Result<Analysis> {
-    std::fs::write(png_path, analysis::spectrogram_png(samples)?)?;
+    std::fs::write(png_path, analysis::spectrogram_png(mono)?)?;
     let wave_path = waveform_path(png_path);
-    std::fs::write(&wave_path, analysis::waveform_png(samples)?)?;
+    std::fs::write(&wave_path, analysis::waveform_png(mono)?)?;
 
-    let mut a = analysis::stats(samples, sample_rate);
+    let mut a = match stereo {
+        Some((l, r)) => analysis::stats_stereo(l, r, sample_rate),
+        None => analysis::stats(mono, sample_rate),
+    };
     a.spectrogram_png_path = png_path.to_string_lossy().into_owned();
     a.waveform_png_path = wave_path.to_string_lossy().into_owned();
     Ok(a)
@@ -49,7 +55,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let png = dir.join("sine.png");
 
-        let a = analyze_to_disk(&samples, sr, &png).unwrap();
+        let a = analyze_to_disk(&samples, None, sr, &png).unwrap();
 
         assert!(Path::new(&a.spectrogram_png_path).exists());
         assert!(a.waveform_png_path.ends_with("sine_wave.png"));

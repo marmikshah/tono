@@ -6,7 +6,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::dsp::{dbfs, loudness_lufs, true_peak};
+use crate::dsp::{dbfs, loudness_lufs_gated, true_peak_oversampled};
 use rustfft::{FftPlanner, num_complex::Complex};
 
 /// Numeric + visual summary of a rendered sound.
@@ -105,9 +105,12 @@ pub fn stats(samples: &[f32], sample_rate: u32) -> Analysis {
         spectral_centroid_hz: spectral_centroid(&frames, srf),
         spectral_flatness: spectral_flatness(&frames),
         inharmonicity: inharmonicity(&frames, srf),
-        true_peak_dbfs: dbfs(true_peak(samples)),
+        // Metering uses the honest kernels: a real oversampled true-peak
+        // (linear interpolation could never read above the sample peak) and
+        // gated, rate-correct BS.1770 loudness.
+        true_peak_dbfs: dbfs(true_peak_oversampled(samples)),
         crest_factor_db: peak_dbfs - rms_dbfs,
-        loudness_lufs: loudness_lufs(samples),
+        loudness_lufs: loudness_lufs_gated(&[samples], sample_rate),
         attack_time_ms: t.attack_ms,
         attack_slope_db_per_ms: t.attack_slope,
         decay_time_ms: t.decay_ms,
@@ -118,6 +121,39 @@ pub fn stats(samples: &[f32], sample_rate: u32) -> Analysis {
         spectrogram_png_path: String::new(),
         waveform_png_path: String::new(),
     }
+}
+
+/// [`stats`] over a stereo pair: the level metrics (peak, RMS, true peak,
+/// LUFS) measure the actual two-channel program — BS.1770 channel-energy sum
+/// for loudness, max across channels for peaks — while the spectral/transient
+/// descriptors read the mid, which is what they describe best. Metering a
+/// stereo export on its mono mid under-reads hard-panned peaks by up to 6 dB
+/// and wide material by ~3 LU.
+pub fn stats_stereo(left: &[f32], right: &[f32], sample_rate: u32) -> Analysis {
+    let n = left.len().min(right.len());
+    let (left, right) = (&left[..n], &right[..n]);
+    let mid: Vec<f32> = (0..n).map(|i| 0.5 * (left[i] + right[i])).collect();
+    let mut a = stats(&mid, sample_rate);
+    let peak = left
+        .iter()
+        .chain(right.iter())
+        .fold(0.0f32, |m, &x| m.max(x.abs()));
+    let energy: f64 = left
+        .iter()
+        .chain(right.iter())
+        .map(|x| *x as f64 * *x as f64)
+        .sum();
+    let rms = if n == 0 {
+        0.0
+    } else {
+        ((energy / (2 * n) as f64) as f32).sqrt()
+    };
+    a.peak_dbfs = dbfs(peak);
+    a.rms_dbfs = dbfs(rms);
+    a.crest_factor_db = a.peak_dbfs - a.rms_dbfs;
+    a.true_peak_dbfs = dbfs(true_peak_oversampled(left).max(true_peak_oversampled(right)));
+    a.loudness_lufs = loudness_lufs_gated(&[left, right], sample_rate);
+    a
 }
 
 /// Time-domain transient descriptors derived from a one-pole amplitude envelope.
@@ -518,9 +554,30 @@ mod tests {
     }
 
     #[test]
+    fn stereo_stats_measure_the_pair_not_the_mid() {
+        // A hard-panned signal: the 0.5·(L+R) mid halves it, so metering the
+        // mid under-reads the shipped audio by 6 dB.
+        let sr = 44_100u32;
+        let left: Vec<f32> = (0..sr as usize / 2)
+            .map(|i| 0.8 * (std::f32::consts::TAU * 440.0 * i as f32 / sr as f32).sin())
+            .collect();
+        let right = vec![0.0f32; left.len()];
+        let s = stats_stereo(&left, &right, sr);
+        let mid: Vec<f32> = left.iter().map(|x| 0.5 * x).collect();
+        let m = stats(&mid, sr);
+        assert!(
+            (s.peak_dbfs - (m.peak_dbfs + 6.02)).abs() < 0.1,
+            "pair peak {} must read ~6 dB above the mid's {}",
+            s.peak_dbfs,
+            m.peak_dbfs
+        );
+        assert!(s.loudness_lufs > m.loudness_lufs + 2.0);
+    }
+
+    #[test]
     fn silence_hits_the_lufs_sentinel() {
-        assert_eq!(loudness_lufs(&[]), -120.0);
-        let quiet = loudness_lufs(&vec![0.0f32; 4410]);
+        assert_eq!(loudness_lufs_gated(&[&[]], 44_100), -120.0);
+        let quiet = loudness_lufs_gated(&[&vec![0.0f32; 4410]], 44_100);
         assert!(quiet <= -120.0);
     }
 
