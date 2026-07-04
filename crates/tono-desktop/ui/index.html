@@ -248,28 +248,39 @@
       }
       keys.addEventListener("pointerdown", (e) => {
         const m = e.target.dataset.midi;
-        if (m) on(+m);
+        if (!m) return;
+        // Capture the pointer so the release fires on this key even when the
+        // mouse drags off it — otherwise the note sticks on forever.
+        e.target.setPointerCapture(e.pointerId);
+        on(+m);
       });
       keys.addEventListener("pointerup", (e) => {
         const m = e.target.dataset.midi;
         if (m) off(+m);
       });
-      keys.addEventListener("pointerleave", (e) => {
+      keys.addEventListener("pointercancel", (e) => {
         const m = e.target.dataset.midi;
         if (m) off(+m);
       });
 
-      // Computer-keyboard mapping (one octave from C4).
+      // Computer-keyboard mapping (one octave from C4). Ignored while typing
+      // in the editor — keystrokes there are text, not notes.
+      const typing = (e) => /^(input|textarea|select)$/i.test(e.target.tagName);
       const map = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12 };
       addEventListener("keydown", (e) => {
-        if (e.repeat) return;
+        if (e.repeat || typing(e) || e.metaKey || e.ctrlKey || e.altKey) return;
         const n = map[e.key];
         if (n !== undefined) on(base + n);
       });
+      // No typing guard on release: off() is a no-op unless the note is held,
+      // and releasing must work even if focus moved into the editor mid-hold.
       addEventListener("keyup", (e) => {
         const n = map[e.key];
         if (n !== undefined) off(base + n);
       });
+      // Whatever happens (focus loss, key-up swallowed by the OS), never
+      // leave a voice droning: release everything on blur.
+      addEventListener("blur", () => [...held].forEach(off));
 
       pushAmp();
       render();

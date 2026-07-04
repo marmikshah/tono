@@ -70,11 +70,17 @@ fn render_graph(graph: String, studio: State<Studio>) -> RenderResult {
     }
 
     // Update (or create) the live audio engine. A missing audio device is
-    // non-fatal — the visuals still render.
+    // non-fatal — the visuals still render — but never silently: an
+    // unsupported device would otherwise leave the studio mute with no clue.
     if let Ok(mut slot) = studio.engine.lock() {
         match slot.as_ref() {
             Some(engine) => engine.set_doc(doc.clone()),
-            None => *slot = audio::spawn(doc.clone()).ok(),
+            None => match audio::spawn(doc.clone()) {
+                Ok(engine) => *slot = Some(engine),
+                Err(e) => {
+                    eprintln!("tono-desktop: audio unavailable ({e}); rendering visuals only")
+                }
+            },
         }
     }
 
