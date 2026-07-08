@@ -68,6 +68,10 @@ impl AudioSource for LoopBuffer {
         }
         frames
     }
+
+    fn reset(&mut self) {
+        self.pos = 0;
+    }
 }
 
 struct Layer {
@@ -92,6 +96,16 @@ pub struct AdaptiveMusic {
     /// Per-sample one-pole coefficient for the layer cross-fades.
     fade_coeff: f32,
     scratch: Vec<f32>,
+    sample_rate: u32,
+    /// Frozen: `fill` outputs silence and holds the position clock + layers.
+    paused: bool,
+    /// Frames rendered while playing since construction or the last `reset` —
+    /// the musical clock a beat-locked game derives its beat position from.
+    position: u64,
+    /// Current master duck multiplier (1.0 = no duck), recovering per sample.
+    duck_gain: f32,
+    /// Per-sample one-pole coefficient for the duck recovery.
+    duck_coeff: f32,
 }
 
 impl AdaptiveMusic {
@@ -104,6 +118,11 @@ impl AdaptiveMusic {
             intensity: 0.0,
             fade_coeff,
             scratch: Vec::new(),
+            sample_rate,
+            paused: false,
+            position: 0,
+            duck_gain: 1.0,
+            duck_coeff: 0.0,
         }
     }
 
@@ -156,12 +175,65 @@ impl AdaptiveMusic {
     pub fn active_stingers(&self) -> usize {
         self.stingers.len()
     }
+
+    // ---- Transport ----
+
+    /// Freeze the bed: [`fill`](AudioSource::fill) outputs silence and both the
+    /// position clock and every layer hold their place, so [`resume`](Self::resume)
+    /// continues seamlessly.
+    pub fn pause(&mut self) {
+        self.paused = true;
+    }
+
+    /// Resume from a [`pause`](Self::pause).
+    pub fn resume(&mut self) {
+        self.paused = false;
+    }
+
+    /// Whether the bed is currently paused.
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Restart the bed from the top: the position clock returns to 0, every
+    /// layer rewinds to its loop head, and ringing stingers are cleared. The
+    /// intensity and layer target gains are left as they are — call this to line
+    /// the music up with a beat clock at sample 0.
+    pub fn reset(&mut self) {
+        self.position = 0;
+        self.stingers.clear();
+        for l in &mut self.layers {
+            l.source.reset();
+        }
+    }
+
+    /// Frames rendered while playing since construction or the last
+    /// [`reset`](Self::reset) — the musical clock. Beats derive from it exactly
+    /// (`beats = position / (sample_rate * 60 / bpm)`), so a game's beat-locked
+    /// schedule stays phase-aligned with what is sounding. Holds while paused.
+    pub fn position_frames(&self) -> u64 {
+        self.position
+    }
+
+    /// Duck the whole bed now — drop its gain to `1.0 - depth` and recover to
+    /// unity over `release`. A fast sidechain for stingers or SFX, independent of
+    /// the (slower) intensity cross-fade. `depth` clamps to `0..=1`; a stinger
+    /// duck is typically shallow and short (e.g. `0.4`, ~180 ms).
+    pub fn duck(&mut self, depth: f32, release: std::time::Duration) {
+        self.duck_gain = (1.0 - depth).clamp(0.0, 1.0);
+        let secs = release.as_secs_f32().max(1.0 / self.sample_rate as f32);
+        self.duck_coeff = 1.0 - (-1.0 / (secs * self.sample_rate as f32)).exp();
+    }
 }
 
 impl AudioSource for AdaptiveMusic {
     fn fill(&mut self, out: &mut [f32]) -> usize {
         let frames = out.len() / 2;
         out.fill(0.0);
+        // Paused: silence, and hold the clock + every layer where they are.
+        if self.paused {
+            return frames;
+        }
         if self.scratch.len() < frames * 2 {
             self.scratch.resize(frames * 2, 0.0);
         }
@@ -186,6 +258,15 @@ impl AudioSource for AdaptiveMusic {
             }
         }
         self.stingers.retain(|s| s.pos < s.left.len());
+        // Master duck recovery (skip entirely when at unity and idle).
+        if self.duck_gain < 1.0 {
+            for f in 0..frames {
+                self.duck_gain += (1.0 - self.duck_gain) * self.duck_coeff;
+                out[f * 2] *= self.duck_gain;
+                out[f * 2 + 1] *= self.duck_gain;
+            }
+        }
+        self.position += frames as u64;
         frames
     }
 }
@@ -245,6 +326,98 @@ mod tests {
             music.active_stingers(),
             0,
             "stinger finished and was culled"
+        );
+    }
+
+    #[test]
+    fn loop_buffer_reset_rewinds_to_head() {
+        let base = doc(r#"{ "name":"b", "duration":0.2, "root": { "type":"sine", "freq":220 } }"#);
+        let mut buf = LoopBuffer::from_doc(&base);
+
+        let mut first = vec![0.0f32; 64 * 2];
+        buf.fill(&mut first);
+        buf.fill(&mut vec![0.0f32; 512 * 2]); // advance somewhere else in the loop
+        buf.reset();
+        let mut again = vec![0.0f32; 64 * 2];
+        buf.fill(&mut again);
+
+        assert_eq!(
+            first, again,
+            "reset replays from the loop head, sample-identical"
+        );
+    }
+
+    #[test]
+    fn position_advances_while_playing_and_holds_when_paused() {
+        let base = doc(r#"{ "name":"b", "duration":0.2, "root": { "type":"sine", "freq":220 } }"#);
+        let mut music = AdaptiveMusic::new(48_000);
+        music.add_layer(LoopBuffer::from_doc(&base), 0.0);
+
+        assert_eq!(music.position_frames(), 0);
+        music.fill(&mut vec![0.0f32; 512 * 2]);
+        assert_eq!(music.position_frames(), 512, "the clock advances by frames");
+
+        music.pause();
+        assert!(music.is_paused());
+        let mut out = vec![0.1f32; 512 * 2];
+        music.fill(&mut out);
+        assert_eq!(peak(&out), 0.0, "paused output is silent");
+        assert_eq!(music.position_frames(), 512, "the clock holds while paused");
+
+        music.resume();
+        music.fill(&mut vec![0.0f32; 512 * 2]);
+        assert_eq!(music.position_frames(), 1024, "resumes advancing");
+    }
+
+    #[test]
+    fn reset_zeroes_the_clock_and_restarts_layers() {
+        let base = doc(r#"{ "name":"b", "duration":0.2, "root": { "type":"sine", "freq":220 } }"#);
+        let mut music = AdaptiveMusic::new(48_000);
+        music.add_layer(LoopBuffer::from_doc(&base), 0.0);
+        music.set_intensity(1.0);
+
+        music.fill(&mut vec![0.0f32; 512 * 2]);
+        assert!(music.position_frames() > 0);
+        music.reset();
+        assert_eq!(music.position_frames(), 0, "the clock is back at sample 0");
+
+        let mut out = vec![0.0f32; 512 * 2];
+        music.fill(&mut out);
+        assert!(peak(&out) > 0.0, "the bed plays again from the top");
+    }
+
+    #[test]
+    fn duck_attenuates_then_recovers() {
+        use std::time::Duration;
+        let base = doc(r#"{ "name":"b", "duration":0.2, "root": { "type":"sine", "freq":220 } }"#);
+
+        // Undicked reference peak over one block.
+        let mut plain = AdaptiveMusic::new(48_000);
+        plain.add_layer(LoopBuffer::from_doc(&base), 0.0);
+        let mut plain_out = vec![0.0f32; 512 * 2];
+        plain.fill(&mut plain_out);
+        let reference = peak(&plain_out);
+
+        // A fresh, identical bed, ducked hard just before the same block.
+        let mut music = AdaptiveMusic::new(48_000);
+        music.add_layer(LoopBuffer::from_doc(&base), 0.0);
+        music.duck(0.9, Duration::from_millis(180));
+        let mut ducked = vec![0.0f32; 512 * 2];
+        music.fill(&mut ducked);
+        assert!(
+            peak(&ducked) < reference,
+            "ducked block is quieter than the undicked reference"
+        );
+
+        // Recover well past the release, then the gain is back near unity.
+        for _ in 0..64 {
+            music.fill(&mut vec![0.0f32; 512 * 2]);
+        }
+        let mut recovered = vec![0.0f32; 512 * 2];
+        music.fill(&mut recovered);
+        assert!(
+            peak(&recovered) > 0.9 * reference,
+            "the duck recovered toward unity"
         );
     }
 }
