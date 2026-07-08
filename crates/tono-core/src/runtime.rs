@@ -1125,6 +1125,14 @@ impl AudioSource for Mixer {
         self.fx_in = fx_in;
         frames
     }
+
+    /// Rewind every source so a transport restart replays the mix from the top.
+    /// Bus insert/send state (reverb tails, delay lines) is left ringing.
+    fn reset(&mut self) {
+        for s in self.sources.iter_mut() {
+            s.source.reset();
+        }
+    }
 }
 
 #[cfg(test)]
