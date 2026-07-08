@@ -22,6 +22,8 @@ use pyo3::prelude::*;
 use tono_core::dsl::SoundDoc;
 use tono_core::patch::Patch as CorePatch;
 
+mod stream;
+
 /// Parse a `SoundDoc` from JSON, mapping serde/validation failures to a Python
 /// `ValueError`.
 fn parse_doc(json: &str) -> PyResult<SoundDoc> {
@@ -95,5 +97,6 @@ impl Patch {
 fn tono(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render, m)?)?;
     m.add_class::<Patch>()?;
+    stream::register(m)?;
     Ok(())
 }
