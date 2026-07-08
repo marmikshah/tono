@@ -1,0 +1,71 @@
+name: Python
+
+# The PyO3 bindings (crates/tono-py) are off the default build/CI (a non-default
+# workspace member), so this is their own gate: a determinism smoke test plus abi3
+# wheels for every platform. It does not touch the main `CI` workflow.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "crates/tono-py/**"
+      - "crates/tono-core/**"
+      - ".github/workflows/python.yml"
+  pull_request:
+    paths:
+      - "crates/tono-py/**"
+      - "crates/tono-core/**"
+      - ".github/workflows/python.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Smoke test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Install ALSA headers (cpal build dep)
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: Build + install the extension
+        run: |
+          python -m pip install --upgrade pip maturin numpy
+          maturin develop -m crates/tono-py/Cargo.toml
+      - name: Smoke test
+        run: python crates/tono-py/tests/smoke.py
+
+  wheels:
+    name: Wheels (${{ matrix.platform.os }})
+    needs: test
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os: ubuntu-latest
+            args: --release --manylinux 2014
+          - os: macos-latest
+            args: --release --target universal2-apple-darwin
+          - os: windows-latest
+            args: --release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          # abi3-py39: one wheel per platform covers every CPython 3.9+.
+          args: ${{ matrix.platform.args }} --out dist -m crates/tono-py/Cargo.toml
+          # cpal needs ALSA headers inside the manylinux container.
+          before-script-linux: |
+            if command -v yum >/dev/null; then yum install -y alsa-lib-devel; fi
+            if command -v apt-get >/dev/null; then apt-get update && apt-get install -y libasound2-dev; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform.os }}
+          path: dist
