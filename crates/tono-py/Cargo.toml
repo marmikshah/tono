@@ -1,0 +1,24 @@
+[package]
+name = "tono-py"
+description = "Python bindings for tono — live procedural audio, adaptive music, and zero-asset SFX for Pygame / Ren'Py / any Python game, deterministic enough to test in CI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "tono"
+# cdylib for the Python extension module; rlib so the seam is unit-testable.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+tono-core = { workspace = true }
+cpal = { workspace = true }
+serde_json = { workspace = true }
+# abi3-py39: one wheel per platform covers every CPython 3.9+. `extension-module`
+# is enabled only for the wheel build (see pyproject [tool.maturin].features), so
+# a plain `cargo build`/`test` still links dev libpython and runs the seam tests.
+pyo3 = { version = "0.28", features = ["abi3-py39"] }
+numpy = "0.28"

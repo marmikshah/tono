@@ -6,7 +6,7 @@ BIN     := target/release/tono
 RELEASE_BRANCH ?= master
 
 .DEFAULT_GOAL := help
-.PHONY: help run build build-release install desktop play test fmt lint check pre-commit-checks verify release hooks clean
+.PHONY: help run build build-release install desktop play python wheel test fmt lint check pre-commit-checks verify release hooks clean
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -30,6 +30,12 @@ desktop: ## Build the native desktop studio (Tauri + cpal + MIDI) — NOT in the
 
 play: ## Run the programmatic playground (cpal speaker output) — NOT in the default build/CI
 	cargo run -p tono-play --example playground
+
+python: ## Build the Python extension into the active venv (maturin develop) — NOT in the default build/CI
+	maturin develop -m crates/tono-py/Cargo.toml
+
+wheel: ## Build a release abi3 wheel for the Python bindings → target/wheels/
+	maturin build --release -m crates/tono-py/Cargo.toml
 
 test: ## Run the test suite
 	cargo test
