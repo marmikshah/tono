@@ -54,6 +54,12 @@ use crate::streaming::StreamGraph;
 pub trait AudioSource {
     /// Fill `out` with the next block of interleaved-stereo audio.
     fn fill(&mut self, out: &mut [f32]) -> usize;
+
+    /// Rewind the source to its start (playback position / phase to zero).
+    /// Defaults to a no-op; a looping source overrides it so a transport can
+    /// restart it from the top. [`AdaptiveMusic::reset`](crate::adaptive::AdaptiveMusic::reset)
+    /// calls this on each layer.
+    fn reset(&mut self) {}
 }
 
 /// Handle to a loaded patch — an immutable, shareable resource. Cheap to copy;

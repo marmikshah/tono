@@ -7,6 +7,15 @@ organization/API pass. Every pre-existing document still renders byte-for-byte
 (a golden corpus now pins this in CI); the 2.0 major is for the API surface,
 not the audio.
 
+### Added
+- `AdaptiveMusic` transport for beat-locked games: `pause`/`resume`/`is_paused`,
+  `reset` (rewinds the position clock to 0 and every layer to its loop head),
+  and `position_frames()` — the musical clock a game derives its beat position
+  from. Plus `duck(depth, release)`, a fast master sidechain for stingers/SFX
+  independent of the slower intensity cross-fade.
+- `AudioSource::reset()` (default no-op; `LoopBuffer` overrides it) so a
+  transport can rewind a looping source to its head.
+
 ### Fixed (no rendered bytes change)
 - `delay.secs` is bounded — an unbounded value passed `validate()` then aborted
   the process on an arbitrary allocation; constants/modulator endpoints must be
