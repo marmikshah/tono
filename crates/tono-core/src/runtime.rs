@@ -87,6 +87,30 @@ pub struct LayerId {
     index: usize,
 }
 
+/// A voice's importance under a polyphony cap: when the [`Engine`] is at its
+/// [`max_voices`](Engine::set_max_voices) budget, a new voice steals the
+/// lowest-priority sounding one (oldest first on a tie), and is itself denied if
+/// every voice outranks it. Higher wins. Use the named tiers or any `u8`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct Priority(pub u8);
+
+impl Priority {
+    /// Ambient, interruptible one-shots (footsteps, UI ticks). `0`.
+    pub const LOW: Priority = Priority(0);
+    /// The default for [`Engine::play`]. `64`.
+    pub const NORMAL: Priority = Priority(64);
+    /// Salient events that should win a voice (impacts, pickups). `128`.
+    pub const HIGH: Priority = Priority(128);
+    /// Never stolen while anything lower is sounding (music, stingers). `255`.
+    pub const CRITICAL: Priority = Priority(255);
+}
+
+impl Default for Priority {
+    fn default() -> Self {
+        Priority::NORMAL
+    }
+}
+
 /// Control-rate linear smoothing over a fixed duration. `Tween::default()` /
 /// [`Tween::IMMEDIATE`] jumps instantly; [`Tween::ms`] ramps over a wall-clock time.
 #[derive(Clone, Copy, Debug)]
@@ -197,6 +221,8 @@ struct Instance {
     pan: Ramp,
     /// Fading out to be culled once silent.
     stopping: bool,
+    /// Importance under a polyphony cap (higher survives a steal).
+    priority: Priority,
 }
 
 /// The runtime mixer: owns patch resources and their live instances, and serves
@@ -206,6 +232,8 @@ pub struct Engine {
     patches: Vec<Patch>,
     instances: Vec<Instance>,
     next_id: u64,
+    /// Optional polyphony budget; `None` = unlimited (the default).
+    max_voices: Option<usize>,
     buf_a: Vec<f32>,
     buf_b: Vec<f32>,
 }
@@ -218,9 +246,23 @@ impl Engine {
             patches: Vec::new(),
             instances: Vec::new(),
             next_id: 1,
+            max_voices: None,
             buf_a: Vec::new(),
             buf_b: Vec::new(),
         }
+    }
+
+    /// Cap the number of concurrently sounding instances. Once at the budget, a
+    /// new [`play`](Self::play) steals the lowest-[`Priority`] sounding instance
+    /// (declicked, not hard-cut) — or is denied if every instance outranks it.
+    /// Unset by default (unlimited). A `max` of 0 is treated as 1.
+    pub fn set_max_voices(&mut self, max: usize) {
+        self.max_voices = Some(max.max(1));
+    }
+
+    /// The current polyphony budget, or `None` if unlimited.
+    pub fn max_voices(&self) -> Option<usize> {
+        self.max_voices
     }
 
     /// The engine's sample rate.
@@ -268,17 +310,51 @@ impl Engine {
             })
     }
 
-    /// Spawn a one-shot instance of a patch (plays once, then culls itself).
+    /// Spawn a one-shot instance of a patch (plays once, then culls itself) at
+    /// [`Priority::NORMAL`].
     pub fn play(&mut self, patch: PatchId) -> InstanceHandle {
-        self.spawn(patch, false)
+        self.spawn(patch, false, Priority::NORMAL)
     }
 
-    /// Spawn a looping instance of a patch (plays until [`stop`](Self::stop)ped).
+    /// Spawn a looping instance of a patch (plays until [`stop`](Self::stop)ped)
+    /// at [`Priority::NORMAL`].
     pub fn play_looping(&mut self, patch: PatchId) -> InstanceHandle {
-        self.spawn(patch, true)
+        self.spawn(patch, true, Priority::NORMAL)
     }
 
-    fn spawn(&mut self, patch: PatchId, looping: bool) -> InstanceHandle {
+    /// Spawn a one-shot instance with an explicit [`Priority`]. Under a voice cap,
+    /// a higher priority survives a steal; a voice outranked by every sounding
+    /// instance is denied (returns an inert handle — [`is_active`](Self::is_active)
+    /// is `false`).
+    pub fn play_prioritized(&mut self, patch: PatchId, priority: Priority) -> InstanceHandle {
+        self.spawn(patch, false, priority)
+    }
+
+    /// Spawn a looping instance with an explicit [`Priority`] — e.g. music at
+    /// [`Priority::CRITICAL`] so it is never stolen by lower one-shots.
+    pub fn play_looping_prioritized(
+        &mut self,
+        patch: PatchId,
+        priority: Priority,
+    ) -> InstanceHandle {
+        self.spawn(patch, true, priority)
+    }
+
+    /// Change a live instance's [`Priority`] (no-op for an unknown handle).
+    pub fn set_priority(&mut self, h: InstanceHandle, priority: Priority) {
+        if let Some(i) = self.instance_mut(h) {
+            i.priority = priority;
+        }
+    }
+
+    fn spawn(&mut self, patch: PatchId, looping: bool, priority: Priority) -> InstanceHandle {
+        // Enforce the polyphony budget (if any) before adding a voice.
+        if let Some(max) = self.max_voices
+            && !self.make_room(max, priority)
+        {
+            // Outranked by every sounding voice — deny (virtualize to silence).
+            return InstanceHandle(0);
+        }
         let values = self.patches[patch.0].defaults();
         let doc = self.build_doc(patch.0, &values, &BTreeMap::new());
         let mut player = self.new_player(doc, looping, 0);
@@ -295,8 +371,49 @@ impl Engine {
             gain: Ramp::new(1.0),
             pan: Ramp::new(0.0),
             stopping: false,
+            priority,
         });
         InstanceHandle(id)
+    }
+
+    /// Make room for a new voice of `priority` under a `max` budget. Returns
+    /// `false` (deny the new voice) if every sounding instance outranks it.
+    /// Mirrors the instrument's two-stage bound: a soft steal declicks the victim
+    /// (so it briefly rides on top during the fade), and a hard bound at `2*max`
+    /// drops a voice outright so a flood faster than the declick can't grow.
+    fn make_room(&mut self, max: usize, priority: Priority) -> bool {
+        let sounding = self.instances.iter().filter(|i| !i.stopping).count();
+        if sounding >= max {
+            // Victim = lowest priority, oldest (lowest id) on a tie.
+            let victim = self
+                .instances
+                .iter()
+                .filter(|i| !i.stopping)
+                .min_by(|a, b| a.priority.cmp(&b.priority).then(a.id.cmp(&b.id)))
+                .map(|i| (i.id, i.priority));
+            match victim {
+                Some((id, vp)) if vp <= priority => {
+                    let fade = Tween::ms(5.0, self.sample_rate);
+                    if let Some(v) = self.instances.iter_mut().find(|i| i.id == id) {
+                        v.gain.set(0.0, fade);
+                        v.stopping = true;
+                    }
+                }
+                _ => return false,
+            }
+        }
+        // Hard cap so declicking victims can't grow the Vec without bound.
+        if self.instances.len() >= max * 2
+            && let Some(pos) = self
+                .instances
+                .iter()
+                .enumerate()
+                .min_by(|(_, a), (_, b)| a.priority.cmp(&b.priority).then(a.id.cmp(&b.id)))
+                .map(|(pos, _)| pos)
+        {
+            self.instances.remove(pos);
+        }
+        true
     }
 
     /// Instantiate the patch with `values` and apply per-layer gain overrides;
@@ -1180,6 +1297,90 @@ mod tests {
 
     fn peak(buf: &[f32]) -> f32 {
         buf.iter().fold(0.0f32, |m, &x| m.max(x.abs()))
+    }
+
+    #[test]
+    fn no_cap_spawns_unbounded() {
+        // Default (unlimited) preserves the old behavior: every play() lives.
+        let mut e = Engine::new(44_100);
+        let p = e.load(&doc(1.0));
+        for _ in 0..100 {
+            e.play(p);
+        }
+        assert_eq!(e.active(), 100, "no cap → unbounded voices");
+        assert_eq!(e.max_voices(), None);
+    }
+
+    #[test]
+    fn cap_bounds_the_sounding_voices() {
+        let mut e = Engine::new(44_100);
+        e.set_max_voices(4);
+        let p = e.load(&doc(1.0));
+        for _ in 0..12 {
+            e.play(p); // equal priority — each steals the oldest sounding voice
+        }
+        let sounding = e.instances.iter().filter(|i| !i.stopping).count();
+        assert!(
+            sounding <= 4,
+            "sounding voices exceeded the cap: {sounding}"
+        );
+        assert!(e.active() <= 8, "hard bound is 2×max: {}", e.active());
+    }
+
+    #[test]
+    fn higher_priority_steals_a_lower_one() {
+        let mut e = Engine::new(44_100);
+        e.set_max_voices(2);
+        let p = e.load(&doc(1.0));
+        let a = e.play_looping_prioritized(p, Priority::LOW);
+        let b = e.play_looping_prioritized(p, Priority::LOW);
+        let hi = e.play_prioritized(p, Priority::HIGH);
+        assert!(e.is_active(hi), "the high-priority voice got in");
+        // Exactly one low voice was declicked (stopping), not hard-cut.
+        let stopping: Vec<u64> = e
+            .instances
+            .iter()
+            .filter(|i| i.stopping)
+            .map(|i| i.id)
+            .collect();
+        assert_eq!(stopping.len(), 1, "one low voice is fading out");
+        assert!(
+            stopping == vec![a.0] || stopping == vec![b.0],
+            "the stolen voice is one of the two low loops"
+        );
+    }
+
+    #[test]
+    fn outranked_voice_is_denied() {
+        let mut e = Engine::new(44_100);
+        e.set_max_voices(2);
+        let p = e.load(&doc(1.0));
+        e.play_looping_prioritized(p, Priority::HIGH);
+        e.play_looping_prioritized(p, Priority::HIGH);
+        let low = e.play_prioritized(p, Priority::LOW);
+        assert!(!e.is_active(low), "a fully-outranked voice is denied");
+        assert_eq!(
+            e.instances.iter().filter(|i| !i.stopping).count(),
+            2,
+            "the high voices are untouched"
+        );
+    }
+
+    #[test]
+    fn stealing_is_deterministic() {
+        let run = || {
+            let mut e = Engine::new(44_100);
+            e.set_max_voices(3);
+            let p = e.load(&doc(1.0));
+            for i in 0..15 {
+                let prio = Priority((i % 3) as u8 * 64);
+                e.play_prioritized(p, prio);
+            }
+            let mut ids: Vec<u64> = e.instances.iter().map(|i| i.id).collect();
+            ids.sort_unstable();
+            ids
+        };
+        assert_eq!(run(), run(), "the same sequence yields the same survivors");
     }
 
     #[test]
