@@ -37,11 +37,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
-use crate::dsl::{Node, SoundDoc};
+use crate::dsl::{ENGINE_VERSION, Node, SoundDoc};
 use crate::edit::{EditOp, apply_ops};
 use crate::patch::Patch;
 use crate::player::Player;
-use crate::streaming::StreamGraph;
+use crate::streaming::{EffectChain, StreamGraph};
 
 /// A block-serving audio source: fill `out` (interleaved stereo L,R,L,R…) and
 /// return the number of frames written. Runs indefinitely. This is the single
@@ -701,16 +701,92 @@ struct MixedSource {
     id: u64,
     source: Box<dyn AnySource + Send>,
     gain: f32,
+    /// The bus this source feeds ([`BusId::MASTER`] by default).
+    bus: BusId,
 }
 
-/// A simple additive stereo mixer of audio sources — instruments, the SFX
-/// [`Engine`], [`StreamSource`]s — each with its own gain. It is itself an
-/// [`AudioSource`], so it feeds one output callback (or nests). This is the
-/// top-level bus of an arrangement: one instrument per part, plus SFX.
+/// Handle to a bus in a [`Mixer`] — an input group or an FX/return bus. The
+/// master bus is always [`BusId::MASTER`]. The handle's value is the bus's index
+/// in the mixer, so it is stable for the mixer's life.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct BusId(u32);
+
+impl BusId {
+    /// The always-present master bus. Every source, dry bus output, and FX
+    /// return sums here, and the master insert chain is the final stage.
+    pub const MASTER: BusId = BusId(0);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BusKind {
+    Master,
+    Input,
+    Fx,
+}
+
+/// Why a [`Mixer`] bus operation failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MixerError {
+    /// An effect node is outside the real-time-streamable subset.
+    NotStreamable,
+    /// The mixer was built without a sample rate ([`Mixer::new`]); effect chains
+    /// need [`Mixer::new_at`].
+    NoSampleRate,
+}
+
+impl std::fmt::Display for MixerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MixerError::NotStreamable => {
+                write!(f, "effect chain contains a non-streamable node")
+            }
+            MixerError::NoSampleRate => {
+                write!(f, "mixer has no sample rate; build it with Mixer::new_at")
+            }
+        }
+    }
+}
+
+impl std::error::Error for MixerError {}
+
+/// One bus: a summing point with an optional insert chain, a fader, post-fader
+/// sends to FX buses, and a dry level into master.
+struct Bus {
+    id: u32,
+    name: String,
+    kind: BusKind,
+    gain: f32,
+    /// Dry level into master (0 = send-only). Unused by the master bus.
+    to_master: f32,
+    /// A stereo insert chain (identical coefficients, independent L/R state).
+    inserts: Option<(EffectChain, EffectChain)>,
+    /// Post-fader sends into FX buses, as `(target bus index, level)`.
+    sends: Vec<(u32, f32)>,
+}
+
+/// A routing stereo mixer of audio sources — instruments, the SFX [`Engine`],
+/// [`StreamSource`]s. Each source feeds a **bus**; buses carry live insert
+/// chains (reverb / EQ / compressor / …) and post-fader **sends** into shared
+/// FX/return buses, all summing through a **master** insert chain. It is itself
+/// an [`AudioSource`], so it feeds one output callback (or nests).
+///
+/// With no buses or effects created, every source sits on the master bus at unity
+/// and the output is a plain additive sum — byte-identical to a bare mixer. Live
+/// effects need a sample rate: build with [`Mixer::new_at`].
 pub struct Mixer {
     sources: Vec<MixedSource>,
+    /// `buses[0]` is always the master bus; a bus's index equals its [`BusId`].
+    buses: Vec<Bus>,
     next_id: u64,
+    sample_rate: Option<u32>,
+    // Reused planar scratch (grown lazily, never shrunk).
     scratch: Vec<f32>,
+    master_l: Vec<f32>,
+    master_r: Vec<f32>,
+    bus_l: Vec<f32>,
+    bus_r: Vec<f32>,
+    /// Per-bus FX input accumulators (indexed by bus index; only FX slots used).
+    fx_in: Vec<(Vec<f32>, Vec<f32>)>,
 }
 
 impl Default for Mixer {
@@ -720,25 +796,176 @@ impl Default for Mixer {
 }
 
 impl Mixer {
-    /// An empty mixer.
+    /// An empty mixer with no sample rate. Sources sum additively; adding effect
+    /// chains returns [`MixerError::NoSampleRate`] — use [`Mixer::new_at`] for FX.
     pub fn new() -> Self {
+        Mixer::build(None)
+    }
+
+    /// An empty mixer that renders at `sample_rate`, so buses can carry live
+    /// effect chains.
+    pub fn new_at(sample_rate: u32) -> Self {
+        Mixer::build(Some(sample_rate))
+    }
+
+    fn build(sample_rate: Option<u32>) -> Self {
+        let master = Bus {
+            id: 0,
+            name: "master".into(),
+            kind: BusKind::Master,
+            gain: 1.0,
+            to_master: 1.0,
+            inserts: None,
+            sends: Vec::new(),
+        };
         Mixer {
             sources: Vec::new(),
+            buses: vec![master],
             next_id: 1,
+            sample_rate,
             scratch: Vec::new(),
+            master_l: Vec::new(),
+            master_r: Vec::new(),
+            bus_l: Vec::new(),
+            bus_r: Vec::new(),
+            fx_in: Vec::new(),
         }
     }
 
-    /// Add a source at unity gain; returns its handle.
+    /// Add a source to the master bus at unity gain; returns its handle.
     pub fn add(&mut self, source: impl AudioSource + Send + 'static) -> SourceId {
+        self.add_to(BusId::MASTER, source)
+    }
+
+    /// Add a source to a specific bus at unity gain; returns its handle. An
+    /// unknown bus falls back to master.
+    pub fn add_to(&mut self, bus: BusId, source: impl AudioSource + Send + 'static) -> SourceId {
+        let bus = if (bus.0 as usize) < self.buses.len() {
+            bus
+        } else {
+            BusId::MASTER
+        };
         let id = self.next_id;
         self.next_id += 1;
         self.sources.push(MixedSource {
             id,
             source: Box::new(source),
             gain: 1.0,
+            bus,
         });
         SourceId(id)
+    }
+
+    /// Create an input bus (sources → inserts → master, with optional sends).
+    pub fn bus(&mut self, name: impl Into<String>) -> BusId {
+        self.push_bus(name.into(), BusKind::Input, None)
+    }
+
+    /// Create an FX/return bus with an insert chain fed only by sends. Returns
+    /// [`MixerError`] if the effects aren't streamable or the mixer has no rate.
+    pub fn fx_bus(
+        &mut self,
+        name: impl Into<String>,
+        effects: Vec<Node>,
+    ) -> Result<BusId, MixerError> {
+        let inserts = self.build_chain(&effects)?;
+        Ok(self.push_bus(name.into(), BusKind::Fx, inserts))
+    }
+
+    fn push_bus(
+        &mut self,
+        name: String,
+        kind: BusKind,
+        inserts: Option<(EffectChain, EffectChain)>,
+    ) -> BusId {
+        // A bus's index is its id, so pushing in id order keeps them equal.
+        let id = self.buses.len() as u32;
+        self.buses.push(Bus {
+            id,
+            name,
+            kind,
+            gain: 1.0,
+            to_master: 1.0,
+            inserts,
+            sends: Vec::new(),
+        });
+        BusId(id)
+    }
+
+    /// Look up a bus by name.
+    pub fn bus_named(&self, name: &str) -> Option<BusId> {
+        self.buses
+            .iter()
+            .find(|b| b.name == name)
+            .map(|b| BusId(b.id))
+    }
+
+    /// Set (or clear, with an empty list) a bus's insert chain. Works on any bus,
+    /// including master.
+    pub fn set_bus_effects(&mut self, bus: BusId, effects: Vec<Node>) -> Result<(), MixerError> {
+        let inserts = self.build_chain(&effects)?;
+        if let Some(b) = self.buses.get_mut(bus.0 as usize) {
+            b.inserts = inserts;
+        }
+        Ok(())
+    }
+
+    /// Set the master insert chain (a convenience for `set_bus_effects(MASTER, …)`).
+    pub fn master_effects(&mut self, effects: Vec<Node>) -> Result<(), MixerError> {
+        self.set_bus_effects(BusId::MASTER, effects)
+    }
+
+    /// Set a post-fader send from an input bus into an FX bus. A no-op unless
+    /// `from` is an input bus and `to_fx` is an FX bus.
+    pub fn set_send(&mut self, from: BusId, to_fx: BusId, level: f32) {
+        let valid = matches!(
+            self.buses.get(from.0 as usize).map(|b| b.kind),
+            Some(BusKind::Input)
+        ) && matches!(
+            self.buses.get(to_fx.0 as usize).map(|b| b.kind),
+            Some(BusKind::Fx)
+        );
+        if !valid {
+            return;
+        }
+        let level = level.max(0.0);
+        let bus = &mut self.buses[from.0 as usize];
+        if let Some(s) = bus.sends.iter_mut().find(|s| s.0 == to_fx.0) {
+            s.1 = level;
+        } else {
+            bus.sends.push((to_fx.0, level));
+        }
+    }
+
+    /// Set a bus fader (0 = silent). Applies to the bus's dry output and its sends.
+    pub fn set_bus_gain(&mut self, bus: BusId, gain: f32) {
+        if let Some(b) = self.buses.get_mut(bus.0 as usize) {
+            b.gain = gain.max(0.0);
+        }
+    }
+
+    /// Set a bus's dry level into master (0 = send-only). No-op for master.
+    pub fn set_bus_dry(&mut self, bus: BusId, level: f32) {
+        if bus != BusId::MASTER
+            && let Some(b) = self.buses.get_mut(bus.0 as usize)
+        {
+            b.to_master = level.max(0.0);
+        }
+    }
+
+    /// Build a paired L/R insert chain from effect nodes (empty → `None`).
+    fn build_chain(
+        &self,
+        effects: &[Node],
+    ) -> Result<Option<(EffectChain, EffectChain)>, MixerError> {
+        if effects.is_empty() {
+            return Ok(None);
+        }
+        let sr = self.sample_rate.ok_or(MixerError::NoSampleRate)?;
+        let build = || EffectChain::try_new(effects, sr, ENGINE_VERSION);
+        let l = build().ok_or(MixerError::NotStreamable)?;
+        let r = build().ok_or(MixerError::NotStreamable)?;
+        Ok(Some((l, r)))
     }
 
     /// Set a source's gain (no-op for an unknown handle).
@@ -772,20 +999,130 @@ impl Mixer {
     }
 }
 
+/// Grow `v` to at least `n` samples (never shrinks).
+fn grow(v: &mut Vec<f32>, n: usize) {
+    if v.len() < n {
+        v.resize(n, 0.0);
+    }
+}
+
 impl AudioSource for Mixer {
     fn fill(&mut self, out: &mut [f32]) -> usize {
         let frames = out.len() / 2;
-        out.fill(0.0);
-        if self.scratch.len() < out.len() {
-            self.scratch.resize(out.len(), 0.0);
+
+        // Take the reusable planar buffers out so we can also borrow
+        // self.sources / self.buses mutably during routing.
+        let mut scratch = std::mem::take(&mut self.scratch);
+        let mut master_l = std::mem::take(&mut self.master_l);
+        let mut master_r = std::mem::take(&mut self.master_r);
+        let mut bus_l = std::mem::take(&mut self.bus_l);
+        let mut bus_r = std::mem::take(&mut self.bus_r);
+        let mut fx_in = std::mem::take(&mut self.fx_in);
+
+        grow(&mut scratch, frames * 2);
+        grow(&mut master_l, frames);
+        grow(&mut master_r, frames);
+        grow(&mut bus_l, frames);
+        grow(&mut bus_r, frames);
+        if fx_in.len() < self.buses.len() {
+            fx_in.resize_with(self.buses.len(), || (Vec::new(), Vec::new()));
         }
-        let scratch = &mut self.scratch[..out.len()];
-        for s in self.sources.iter_mut() {
-            s.source.fill(scratch);
-            for (o, &x) in out.iter_mut().zip(scratch.iter()) {
-                *o += x * s.gain;
+        for (l, r) in fx_in.iter_mut() {
+            grow(l, frames);
+            grow(r, frames);
+        }
+
+        master_l[..frames].fill(0.0);
+        master_r[..frames].fill(0.0);
+        for (l, r) in fx_in.iter_mut() {
+            l[..frames].fill(0.0);
+            r[..frames].fill(0.0);
+        }
+
+        let scr = &mut scratch[..frames * 2];
+
+        // 1a. Master-direct sources sum straight into the master accumulator.
+        for s in self.sources.iter_mut().filter(|s| s.bus == BusId::MASTER) {
+            s.source.fill(scr);
+            for f in 0..frames {
+                master_l[f] += scr[f * 2] * s.gain;
+                master_r[f] += scr[f * 2 + 1] * s.gain;
             }
         }
+
+        // 1b. Input buses: sum sources → inserts → dry to master + post-fader sends.
+        for bi in 1..self.buses.len() {
+            if self.buses[bi].kind != BusKind::Input {
+                continue;
+            }
+            bus_l[..frames].fill(0.0);
+            bus_r[..frames].fill(0.0);
+            let bus_id = self.buses[bi].id;
+            for s in self.sources.iter_mut().filter(|s| s.bus.0 == bus_id) {
+                s.source.fill(scr);
+                for f in 0..frames {
+                    bus_l[f] += scr[f * 2] * s.gain;
+                    bus_r[f] += scr[f * 2 + 1] * s.gain;
+                }
+            }
+            if let Some((cl, cr)) = &mut self.buses[bi].inserts {
+                cl.process(&mut bus_l[..frames]);
+                cr.process(&mut bus_r[..frames]);
+            }
+            let fader = self.buses[bi].gain;
+            let dry = fader * self.buses[bi].to_master;
+            for f in 0..frames {
+                master_l[f] += bus_l[f] * dry;
+                master_r[f] += bus_r[f] * dry;
+            }
+            for &(target, level) in &self.buses[bi].sends {
+                let k = target as usize;
+                if k < fx_in.len() {
+                    let g = fader * level;
+                    let (fl, fr) = &mut fx_in[k];
+                    for f in 0..frames {
+                        fl[f] += bus_l[f] * g;
+                        fr[f] += bus_r[f] * g;
+                    }
+                }
+            }
+        }
+
+        // 2. FX buses: run inserts on the accumulated sends, return to master.
+        // `bi` indexes both self.buses and fx_in, so a range loop is clearest.
+        #[allow(clippy::needless_range_loop)]
+        for bi in 1..self.buses.len() {
+            if self.buses[bi].kind != BusKind::Fx {
+                continue;
+            }
+            let (fl, fr) = &mut fx_in[bi];
+            if let Some((cl, cr)) = &mut self.buses[bi].inserts {
+                cl.process(&mut fl[..frames]);
+                cr.process(&mut fr[..frames]);
+            }
+            let ret = self.buses[bi].gain * self.buses[bi].to_master;
+            for f in 0..frames {
+                master_l[f] += fl[f] * ret;
+                master_r[f] += fr[f] * ret;
+            }
+        }
+
+        // 3. Master insert chain, then interleave to the output.
+        if let Some((cl, cr)) = &mut self.buses[0].inserts {
+            cl.process(&mut master_l[..frames]);
+            cr.process(&mut master_r[..frames]);
+        }
+        for f in 0..frames {
+            out[f * 2] = master_l[f];
+            out[f * 2 + 1] = master_r[f];
+        }
+
+        self.scratch = scratch;
+        self.master_l = master_l;
+        self.master_r = master_r;
+        self.bus_l = bus_l;
+        self.bus_r = bus_r;
+        self.fx_in = fx_in;
         frames
     }
 }
@@ -1085,5 +1422,124 @@ mod tests {
         assert!(peak(&out) > 0.0, "mixer sums its sources");
         mixer.remove(id);
         assert_eq!(mixer.source_count(), 0);
+    }
+
+    /// A fixed stereo source: every frame is `(l, r)`, forever. Deterministic.
+    struct Const {
+        l: f32,
+        r: f32,
+    }
+    impl AudioSource for Const {
+        fn fill(&mut self, out: &mut [f32]) -> usize {
+            for frame in out.chunks_mut(2) {
+                frame[0] = self.l;
+                frame[1] = self.r;
+            }
+            out.len() / 2
+        }
+    }
+
+    /// Sounds one full block, then silence — to test that a reverb tail outlives it.
+    struct Burst {
+        fired: bool,
+    }
+    impl AudioSource for Burst {
+        fn fill(&mut self, out: &mut [f32]) -> usize {
+            let v = if self.fired { 0.0 } else { 1.0 };
+            out.fill(v);
+            self.fired = true;
+            out.len() / 2
+        }
+    }
+
+    #[test]
+    fn no_bus_mix_is_the_plain_additive_sum() {
+        // With no buses/effects, the routing mixer must be byte-identical to a
+        // bare additive sum (back-compat for existing callers like tono-py).
+        let mut mixer = Mixer::new();
+        mixer.add(Const { l: 0.3, r: -0.2 });
+        let b = mixer.add(Const { l: 0.1, r: 0.4 });
+        mixer.set_gain(b, 0.5);
+        let mut out = vec![0.0f32; 64 * 2];
+        mixer.fill(&mut out);
+        for frame in out.chunks(2) {
+            assert_eq!(frame[0], 0.3 + 0.1 * 0.5);
+            assert_eq!(frame[1], -0.2 + 0.4 * 0.5);
+        }
+    }
+
+    #[test]
+    fn bus_insert_scales_only_its_bus() {
+        // A gain insert on one bus halves it; a source on master is untouched.
+        let mut mixer = Mixer::new_at(44_100);
+        mixer.add(Const { l: 0.4, r: 0.4 }); // master, dry
+        let music = mixer.bus("music");
+        mixer.add_to(music, Const { l: 0.4, r: 0.4 });
+        mixer.set_bus_effects(music, vec![gain_node(0.5)]).unwrap();
+        let mut out = vec![0.0f32; 32 * 2];
+        mixer.fill(&mut out);
+        // master 0.4 (dry) + music 0.4 * 0.5 (halved) = 0.6
+        for frame in out.chunks(2) {
+            assert!((frame[0] - 0.6).abs() < 1e-6, "got {}", frame[0]);
+        }
+    }
+
+    #[test]
+    fn reverb_send_tail_outlives_the_source() {
+        let mut mixer = Mixer::new_at(44_100);
+        let sfx = mixer.bus("sfx");
+        mixer.add_to(sfx, Burst { fired: false });
+        let rev = mixer.fx_bus("rev", vec![reverb_node()]).unwrap();
+        mixer.set_send(sfx, rev, 0.9);
+        // First block: the burst sounds.
+        let mut out = vec![0.0f32; 128 * 2];
+        mixer.fill(&mut out);
+        assert!(peak(&out) > 0.0);
+        // Later blocks: the source is silent, but the reverb tail keeps ringing.
+        let mut tail = 0.0f32;
+        for _ in 0..8 {
+            mixer.fill(&mut out);
+            tail = tail.max(peak(&out));
+        }
+        assert!(
+            tail > 0.0,
+            "reverb send should ring after the source goes silent"
+        );
+    }
+
+    #[test]
+    fn bus_routing_is_deterministic() {
+        let build = || {
+            let mut mixer = Mixer::new_at(44_100);
+            let music = mixer.bus("music");
+            mixer.add_to(music, Const { l: 0.2, r: 0.1 });
+            mixer.set_bus_effects(music, vec![gain_node(0.7)]).unwrap();
+            let rev = mixer.fx_bus("rev", vec![reverb_node()]).unwrap();
+            mixer.set_send(music, rev, 0.5);
+            mixer.master_effects(vec![gain_node(0.9)]).unwrap();
+            mixer
+        };
+        let render = |mut mixer: Mixer| {
+            let mut acc = Vec::new();
+            let mut out = vec![0.0f32; 96 * 2];
+            for _ in 0..6 {
+                mixer.fill(&mut out);
+                acc.extend_from_slice(&out);
+            }
+            acc
+        };
+        assert_eq!(
+            render(build()),
+            render(build()),
+            "bus routing must be byte-identical"
+        );
+    }
+
+    fn gain_node(amount: f32) -> Node {
+        serde_json::from_str(&format!(r#"{{ "type": "gain", "amount": {amount} }}"#)).unwrap()
+    }
+
+    fn reverb_node() -> Node {
+        serde_json::from_str(r#"{ "type": "reverb", "room": 0.6, "mix": 0.5 }"#).unwrap()
     }
 }
