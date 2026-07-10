@@ -176,3 +176,79 @@ fn midi_cmd(args: &[String]) -> anyhow::Result<()> {
     println!("{}", out.display());
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn flags_consume_their_values() {
+        // "-o out" must never leave "out" behind as a positional — the exact
+        // bug class the 2.0 changelog fixed.
+        let cli = Cli::parse(&args(&["-o", "out", "doc.json"]), &["-o", "--out"]).unwrap();
+        assert_eq!(cli.flag(&["-o", "--out"]), Some("out"));
+        assert_eq!(cli.positionals, vec!["doc.json"]);
+    }
+
+    #[test]
+    fn flag_aliases_resolve_in_order() {
+        let cli = Cli::parse(&args(&["--out", "d", "f.json"]), &["-o", "--out"]).unwrap();
+        assert_eq!(cli.flag(&["-o", "--out"]), Some("d"), "long alias found");
+        assert_eq!(cli.flag(&["--missing"]), None, "absent flag is None");
+    }
+
+    #[test]
+    fn unknown_option_is_a_loud_error() {
+        let err = Cli::parse(&args(&["--bogus", "x", "f.json"]), &["-o"])
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("unknown option '--bogus'"));
+    }
+
+    #[test]
+    fn flag_missing_its_value_is_a_loud_error() {
+        let err = Cli::parse(&args(&["f.json", "-o"]), &["-o"]).err().unwrap();
+        assert!(err.to_string().contains("option '-o' needs a value"));
+    }
+
+    #[test]
+    fn input_wants_exactly_one_positional() {
+        let one = Cli::parse(&args(&["f.json"]), &[]).unwrap();
+        assert_eq!(one.input("usage").unwrap(), "f.json");
+
+        let none = Cli::parse(&args(&[]), &[]).unwrap();
+        assert!(
+            none.input("the-usage")
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("the-usage")
+        );
+
+        let extra = Cli::parse(&args(&["a.json", "b.json"]), &[]).unwrap();
+        let msg = extra.input("usage").err().unwrap().to_string();
+        assert!(
+            msg.contains("unexpected argument 'b.json'"),
+            "names the offender: {msg}"
+        );
+    }
+
+    #[test]
+    fn flag_order_does_not_matter() {
+        let before = Cli::parse(&args(&["--format", "ogg", "f.json"]), &["--format"]).unwrap();
+        let after = Cli::parse(&args(&["f.json", "--format", "ogg"]), &["--format"]).unwrap();
+        assert_eq!(before.flag(&["--format"]), after.flag(&["--format"]));
+        assert_eq!(before.positionals, after.positionals);
+    }
+
+    #[test]
+    fn audio_ext_maps_every_accepted_format() {
+        assert_eq!(audio_ext("wav"), "wav");
+        assert_eq!(audio_ext("flac"), "flac");
+        assert_eq!(audio_ext("ogg"), "ogg");
+    }
+}
