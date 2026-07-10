@@ -1,0 +1,26 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "tono"
+description = "Live procedural audio, adaptive music, and zero-asset SFX for Python games — a deterministic, Rust-grade synthesis engine."
+requires-python = ">=3.9"
+license = { text = "MIT" }
+readme = "README.md"
+keywords = ["audio", "synthesis", "dsp", "gamedev", "procedural", "pygame"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio",
+    "License :: OSI Approved :: MIT License",
+]
+dynamic = ["version"]
+dependencies = ["numpy>=1.21"]
+
+[project.urls]
+Repository = "https://github.com/marmikshah/tono"
+
+[tool.maturin]
+# abi3 wheels; the extension module is named `tono`.
+features = ["pyo3/extension-module"]

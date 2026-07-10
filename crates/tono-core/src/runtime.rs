@@ -531,25 +531,29 @@ impl SampleRing {
     }
 }
 
-/// The control side of a split engine: owns the [`Engine`] and produces audio
-/// into the shared ring. Lives on any non-audio thread — deref to call every
-/// `Engine` method (`play`, `set_gain`, `set_param`, …), then [`pump`](Self::pump)
-/// to keep the audio thread fed.
-pub struct Controller {
-    engine: Engine,
+/// The control side of a split source: owns any [`AudioSource`] and produces
+/// audio into the shared ring. Lives on any non-audio thread — deref to call
+/// every method of the wrapped source (for an [`Engine`]: `play`, `set_gain`,
+/// `set_param`, …), then [`pump`](Self::pump) to keep the audio thread fed.
+///
+/// Generic over the source so the same seam drives a bare [`Engine`], a
+/// [`Mixer`] of instruments + SFX, or any other [`AudioSource`]. [`Controller`]
+/// is the `Engine` specialization returned by [`Engine::split`].
+pub struct Pump<S: AudioSource> {
+    source: S,
     ring: Arc<SampleRing>,
     pump_buf: Vec<f32>,
 }
 
-impl Controller {
+impl<S: AudioSource> Pump<S> {
     /// Mix up to `frames` frames and hand them to the audio thread. Returns the
     /// number of frames actually pushed — fewer when the ring is full, which is
     /// the backpressure signal to stop pumping until the next tick.
     pub fn pump(&mut self, frames: usize) -> usize {
-        // Render only what the ring can take. Engine::fill advances every
-        // play head, so a frame rendered but not pushed would be audio lost
-        // forever — not deferred. As the sole producer, the space observed
-        // here can only grow before the pushes below.
+        // Render only what the ring can take. `fill` advances every play head,
+        // so a frame rendered but not pushed would be audio lost forever — not
+        // deferred. As the sole producer, the space observed here can only grow
+        // before the pushes below.
         let frames = frames.min(self.ring.free() / 2);
         if frames == 0 {
             return 0;
@@ -558,7 +562,7 @@ impl Controller {
             self.pump_buf.resize(frames * 2, 0.0);
         }
         let block = &mut self.pump_buf[..frames * 2];
-        self.engine.fill(block);
+        self.source.fill(block);
         for s in block.iter() {
             self.ring.push(*s);
         }
@@ -566,17 +570,35 @@ impl Controller {
     }
 }
 
-impl std::ops::Deref for Controller {
-    type Target = Engine;
-    fn deref(&self) -> &Engine {
-        &self.engine
+impl<S: AudioSource> std::ops::Deref for Pump<S> {
+    type Target = S;
+    fn deref(&self) -> &S {
+        &self.source
     }
 }
 
-impl std::ops::DerefMut for Controller {
-    fn deref_mut(&mut self) -> &mut Engine {
-        &mut self.engine
+impl<S: AudioSource> std::ops::DerefMut for Pump<S> {
+    fn deref_mut(&mut self) -> &mut S {
+        &mut self.source
     }
+}
+
+/// The control side of a split [`Engine`] — see [`Pump`] and [`Engine::split`].
+pub type Controller = Pump<Engine>;
+
+/// Split any [`AudioSource`] into a [`Pump`] (control thread) and a [`Renderer`]
+/// (audio thread) joined by a wait-free ring `ring_frames` deep. Pump the
+/// controller off the audio thread; the renderer drains it in the callback.
+pub fn spsc<S: AudioSource>(source: S, ring_frames: usize) -> (Pump<S>, Renderer) {
+    let ring = Arc::new(SampleRing::new(ring_frames * 2));
+    (
+        Pump {
+            source,
+            ring: ring.clone(),
+            pump_buf: Vec::new(),
+        },
+        Renderer { ring },
+    )
 }
 
 /// The audio side of a split engine: drains the ring in the output callback.
@@ -609,15 +631,7 @@ impl Engine {
     /// thread) joined by a wait-free ring `ring_frames` deep. Pump the controller
     /// off the audio thread; the renderer drains it in the callback.
     pub fn split(self, ring_frames: usize) -> (Controller, Renderer) {
-        let ring = Arc::new(SampleRing::new(ring_frames * 2));
-        (
-            Controller {
-                engine: self,
-                ring: ring.clone(),
-                pump_buf: Vec::new(),
-            },
-            Renderer { ring },
-        )
+        spsc(self, ring_frames)
     }
 }
 
@@ -1292,6 +1306,23 @@ mod tests {
         let (mut ctl, mut rend) = e.split(1024);
         ctl.play_looping(p); // Deref → Engine::play_looping
         assert!(ctl.pump(512) > 0, "controller produced frames");
+        let mut out = vec![0.0f32; 512 * 2];
+        assert_eq!(rend.fill(&mut out), 512);
+        assert!(peak(&out) > 0.0, "renderer drained real audio");
+    }
+
+    #[test]
+    fn spsc_pumps_a_mixer_across_the_seam() {
+        // The generalized seam drives a whole Mixer, not just an Engine — the
+        // shape the Python owned-stream binding pumps.
+        let mut engine = Engine::new(44_100);
+        let p = engine.load(&doc(1.0));
+        engine.play_looping(p);
+        let mut mixer = Mixer::new();
+        mixer.add(engine);
+        let (mut ctl, mut rend) = spsc(mixer, 1024);
+        assert!(ctl.pump(512) > 0, "pump produced frames");
+        assert_eq!(ctl.source_count(), 1, "deref reaches the Mixer");
         let mut out = vec![0.0f32; 512 * 2];
         assert_eq!(rend.fill(&mut out), 512);
         assert!(peak(&out) > 0.0, "renderer drained real audio");
