@@ -328,81 +328,13 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
 /// A track whose node is directly a sampler seq renders in native stereo.
 #[cfg(feature = "sampler")]
 fn track_native_stereo(node: &Node, n: usize, sr: u32) -> Option<(Signal, Signal)> {
-    if let Node::Seq {
-        bpm,
-        steps_per_beat,
-        wave: SeqWave::Sampler,
-        duty,
-        fm_ratio,
-        fm_index,
-        fm_strike,
-        pluck_decay,
-        pluck_body,
-        pluck_pick,
-        pluck_tone,
-        piano_hammer,
-        piano_strike,
-        piano_inharm,
-        piano_detune,
-        piano_decay,
-        kit,
-        bass_cutoff,
-        bass_env,
-        bass_env_vel,
-        bass_decay,
-        bass_click,
-        bass_body,
-        bass_sub,
-        bass_sub_ratio,
-        bass_drive,
-        bass_body_decay,
-        sf2,
-        sf2_preset,
-        sf2_bank,
-        swing,
-        humanize,
-        env,
-        notes,
-    } = node
-    {
-        let voice = SeqVoice {
-            wave: SeqWave::Sampler,
-            duty,
-            fm_ratio: *fm_ratio,
-            fm_index: *fm_index,
-            fm_strike: *fm_strike,
-            pluck_decay: *pluck_decay,
-            pluck_body: *pluck_body,
-            pluck_pick: *pluck_pick,
-            pluck_tone: *pluck_tone,
-            piano_hammer: *piano_hammer,
-            piano_strike: *piano_strike,
-            piano_inharm: *piano_inharm,
-            piano_detune: *piano_detune,
-            piano_decay: *piano_decay,
-            kit: *kit,
-            bass_cutoff: *bass_cutoff,
-            bass_env: *bass_env,
-            bass_env_vel: *bass_env_vel,
-            bass_decay: *bass_decay,
-            bass_click: *bass_click,
-            bass_body: *bass_body,
-            bass_sub: *bass_sub,
-            bass_sub_ratio: *bass_sub_ratio,
-            bass_drive: *bass_drive,
-            bass_body_decay: *bass_body_decay,
-            sf2,
-            sf2_preset: *sf2_preset,
-            sf2_bank: *sf2_bank,
-            swing: *swing,
-            humanize: *humanize,
-            env,
-            engine: 0, // unused by the sampler (external synth, engine-independent)
-        };
-        let step_dur = sr as f32 * 60.0 / bpm / (*steps_per_beat).max(1) as f32;
-        return sampler_seq_stereo(&voice, notes, step_dur, n, sr);
+    // Engine 0: unused by the sampler (external synth, engine-independent).
+    let (voice, bpm, steps_per_beat, notes) = SeqVoice::from_node(node, 0)?;
+    if voice.wave != SeqWave::Sampler {
+        return None;
     }
-    None
+    let step_dur = sr as f32 * 60.0 / bpm / steps_per_beat.max(1) as f32;
+    sampler_seq_stereo(&voice, notes, step_dur, n, sr)
 }
 
 /// Without the `sampler` feature there is no native-stereo SoundFont path.

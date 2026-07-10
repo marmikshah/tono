@@ -62,6 +62,30 @@ pub trait AudioSource {
     fn reset(&mut self) {}
 }
 
+/// Spread an interleaved-stereo buffer across a device's channel layout: mono
+/// devices get the mid (`0.5 * (l + r)`), stereo gets L/R, extra channels are
+/// zeroed. The one channel-adaptation every output adapter (cpal callback,
+/// AudioWorklet shim) needs — pure sample shuffling, no device dependency.
+/// `data` holds `channels` interleaved device channels; `stereo` holds the same
+/// frame count as L,R pairs.
+pub fn write_interleaved(data: &mut [f32], channels: usize, stereo: &[f32]) {
+    let channels = channels.max(1);
+    let frames = data.len() / channels;
+    for f in 0..frames {
+        let (l, r) = (stereo[f * 2], stereo[f * 2 + 1]);
+        let base = f * channels;
+        if channels == 1 {
+            data[base] = 0.5 * (l + r);
+        } else {
+            data[base] = l;
+            data[base + 1] = r;
+            for c in 2..channels {
+                data[base + c] = 0.0;
+            }
+        }
+    }
+}
+
 /// Handle to a loaded patch — an immutable, shareable resource. Cheap to copy;
 /// spawn as many instances of it as you like.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

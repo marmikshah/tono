@@ -214,15 +214,29 @@ mod tests {
     }
 
     #[test]
-    fn flac_and_ogg_write_nonempty_files() {
+    fn flac_and_ogg_write_structurally_valid_files() {
         let samples = ramp(4410);
         let flac = tmp("out.flac");
         write_flac(&flac, &[&samples], 44_100, 16).unwrap();
-        assert!(std::fs::metadata(&flac).unwrap().len() > 0);
+        let bytes = std::fs::read(&flac).unwrap();
+        assert_eq!(&bytes[0..4], b"fLaC");
+        // STREAMINFO (the mandatory first metadata block): the 20-bit sample
+        // rate starts at byte 18, the 3-bit channel count follows it — verify
+        // the encoder wrote what we asked, not just *something*.
+        let sr = ((bytes[18] as u32) << 12) | ((bytes[19] as u32) << 4) | ((bytes[20] as u32) >> 4);
+        assert_eq!(sr, 44_100, "STREAMINFO sample rate");
+        let channels = ((bytes[20] >> 1) & 0x7) + 1;
+        assert_eq!(channels, 1, "STREAMINFO channel count");
 
         let ogg = tmp("out.ogg");
         write_ogg(&ogg, &[&samples], 44_100, 0.5).unwrap();
         let bytes = std::fs::read(&ogg).unwrap();
         assert_eq!(&bytes[0..4], b"OggS");
+        // The identification header names the codec right after the first
+        // page — garbage that merely starts with OggS fails this.
+        assert!(
+            bytes.windows(6).any(|w| w == b"vorbis"),
+            "vorbis identification header present"
+        );
     }
 }
