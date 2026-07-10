@@ -379,49 +379,23 @@ impl Song {
                 "sf2_bank": t.sf2_bank,
                 "notes": serde_json::to_value(&notes).map_err(|e| e.to_string())?,
             });
-            if let Some(v) = t.voice.duty {
-                seq_json["duty"] = serde_json::json!(v);
-            }
-            if let Some(v) = t.voice.fm_ratio {
-                seq_json["fm_ratio"] = serde_json::json!(v);
-            }
-            if let Some(v) = t.voice.fm_index {
-                seq_json["fm_index"] = serde_json::json!(v);
-            }
-            if let Some(v) = t.voice.fm_strike {
-                seq_json["fm_strike"] = serde_json::json!(v);
-            }
-            if let Some(v) = t.voice.pluck_decay {
-                seq_json["pluck_decay"] = serde_json::json!(v);
-            }
-            if let Some(v) = t.voice.pluck_body {
-                seq_json["pluck_body"] = serde_json::json!(v);
-            }
-            if let Some(v) = t.voice.pluck_pick {
-                seq_json["pluck_pick"] = serde_json::json!(v);
-            }
-            if let Some(v) = t.voice.pluck_tone {
-                seq_json["pluck_tone"] = serde_json::json!(v);
-            }
-            if let Some(v) = t.voice.piano_hammer {
-                seq_json["piano_hammer"] = serde_json::json!(v);
-            }
-            if let Some(v) = t.voice.piano_strike {
-                seq_json["piano_strike"] = serde_json::json!(v);
-            }
-            if let Some(v) = t.voice.piano_inharm {
-                seq_json["piano_inharm"] = serde_json::json!(v);
-            }
-            if let Some(v) = t.voice.piano_detune {
-                seq_json["piano_detune"] = serde_json::json!(v);
-            }
-            if let Some(v) = t.voice.piano_decay {
-                seq_json["piano_decay"] = serde_json::json!(v);
-            }
             if let Some(k) = t.voice.kit {
                 seq_json["kit"] = serde_json::to_value(k).map_err(|e| e.to_string())?;
             }
             for (key, val) in [
+                ("duty", t.voice.duty),
+                ("fm_ratio", t.voice.fm_ratio),
+                ("fm_index", t.voice.fm_index),
+                ("fm_strike", t.voice.fm_strike),
+                ("pluck_decay", t.voice.pluck_decay),
+                ("pluck_body", t.voice.pluck_body),
+                ("pluck_pick", t.voice.pluck_pick),
+                ("pluck_tone", t.voice.pluck_tone),
+                ("piano_hammer", t.voice.piano_hammer),
+                ("piano_strike", t.voice.piano_strike),
+                ("piano_inharm", t.voice.piano_inharm),
+                ("piano_detune", t.voice.piano_detune),
+                ("piano_decay", t.voice.piano_decay),
                 ("bass_cutoff", t.voice.bass_cutoff),
                 ("bass_env", t.voice.bass_env),
                 ("bass_env_vel", t.voice.bass_env_vel),
