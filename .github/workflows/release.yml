@@ -39,7 +39,7 @@ jobs:
           if curl -sf "https://index.crates.io/to/no/tono-core" | grep -q "\"vers\":\"$V\""; then
             echo "tono-core $V already on crates.io — skipping"
           else
-            cargo publish --locked -p tono-core
+            cargo publish -p tono-core
           fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_API_TOKEN }}
@@ -50,7 +50,7 @@ jobs:
           if curl -sf "https://index.crates.io/to/no/tono" | grep -q "\"vers\":\"$V\""; then
             echo "tono $V already on crates.io — skipping"
           else
-            cargo publish --locked -p tono
+            cargo publish -p tono
           fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_API_TOKEN }}
