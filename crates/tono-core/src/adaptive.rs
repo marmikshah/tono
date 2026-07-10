@@ -88,6 +88,46 @@ struct Stinger {
     pos: usize,
 }
 
+/// When a scheduled change takes effect, relative to the musical clock. Anything
+/// but [`Immediate`](Quantize::Immediate) needs a tempo ([`set_tempo`](AdaptiveMusic::set_tempo));
+/// without one it degrades to `Immediate`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Quantize {
+    /// Apply on the next `fill` block (no beat alignment).
+    Immediate,
+    /// Apply on the next beat boundary.
+    Beat,
+    /// Apply on the next bar boundary.
+    Bar,
+    /// Apply on the boundary `n` bars from now (`0`/`1` = the next bar).
+    Bars(u32),
+}
+
+/// A deferred change fired when the clock reaches `fire_at` frames.
+struct Scheduled {
+    fire_at: u64,
+    action: Action,
+}
+
+enum Action {
+    SetIntensity(f32),
+    Stinger(Stinger),
+    Transition { to: usize },
+}
+
+/// A horizontal section: one looping bed swapped in on a beat boundary.
+struct Section {
+    name: String,
+    buffer: LoopBuffer,
+}
+
+/// A short declick cross-fade from the current section to `to`.
+struct SectionFade {
+    to: usize,
+    gain: f32,
+    step: f32,
+}
+
 /// A layered, intensity-driven music bed with one-shot stingers.
 pub struct AdaptiveMusic {
     layers: Vec<Layer>,
@@ -106,6 +146,20 @@ pub struct AdaptiveMusic {
     duck_gain: f32,
     /// Per-sample one-pole coefficient for the duck recovery.
     duck_coeff: f32,
+    /// Tempo for beat/bar quantization (`0` = unset → everything is immediate).
+    bpm: f32,
+    /// Beats per bar (time-signature numerator) for bar quantization.
+    beats_per_bar: u32,
+    /// Deferred changes fired when the clock reaches their frame.
+    pending: Vec<Scheduled>,
+    /// Horizontal sections; the current one plays as the base bed.
+    sections: Vec<Section>,
+    /// Index of the section currently sounding (`None` until one is added).
+    current_section: Option<usize>,
+    /// An in-flight section cross-fade.
+    section_fade: Option<SectionFade>,
+    /// Per-sample increment for a section cross-fade (~60 ms declick swap).
+    section_step: f32,
 }
 
 impl AdaptiveMusic {
@@ -123,6 +177,15 @@ impl AdaptiveMusic {
             position: 0,
             duck_gain: 1.0,
             duck_coeff: 0.0,
+            bpm: 0.0,
+            beats_per_bar: 4,
+            pending: Vec::new(),
+            sections: Vec::new(),
+            current_section: None,
+            section_fade: None,
+            // A ~60 ms declick cross-fade — the swap is already beat-aligned, so
+            // this only smooths the seam, it doesn't blur the downbeat.
+            section_step: 1.0 / (0.06 * sample_rate as f32),
         }
     }
 
@@ -202,8 +265,13 @@ impl AdaptiveMusic {
     pub fn reset(&mut self) {
         self.position = 0;
         self.stingers.clear();
+        self.pending.clear();
+        self.section_fade = None;
         for l in &mut self.layers {
             l.source.reset();
+        }
+        for s in &mut self.sections {
+            s.buffer.reset();
         }
     }
 
@@ -224,6 +292,169 @@ impl AdaptiveMusic {
         let secs = release.as_secs_f32().max(1.0 / self.sample_rate as f32);
         self.duck_coeff = 1.0 - (-1.0 / (secs * self.sample_rate as f32)).exp();
     }
+
+    // ---- Musical time & quantized scheduling ----
+
+    /// Set the tempo so transitions can align to beats and bars. Required for any
+    /// [`Quantize`] other than [`Immediate`](Quantize::Immediate).
+    pub fn set_tempo(&mut self, bpm: f32, beats_per_bar: u32) {
+        self.bpm = bpm.max(0.0);
+        self.beats_per_bar = beats_per_bar.max(1);
+    }
+
+    /// Frames per beat at the current tempo, or `None` if no tempo is set.
+    fn frames_per_beat(&self) -> Option<f64> {
+        (self.bpm > 0.0).then(|| self.sample_rate as f64 * 60.0 / self.bpm as f64)
+    }
+
+    /// The musical position in beats since the last [`reset`](Self::reset).
+    pub fn beats(&self) -> f64 {
+        self.frames_per_beat()
+            .map_or(0.0, |fpb| self.position as f64 / fpb)
+    }
+
+    /// The musical position in bars since the last [`reset`](Self::reset).
+    pub fn bars(&self) -> f64 {
+        self.beats() / self.beats_per_bar as f64
+    }
+
+    /// The frame at which quantization `q` next lands. Returns the current frame
+    /// when already on the boundary or when no tempo is set (→ immediate).
+    fn fire_frame(&self, q: Quantize) -> u64 {
+        let period = match q {
+            Quantize::Immediate => return self.position,
+            Quantize::Beat => self.frames_per_beat(),
+            Quantize::Bar => self
+                .frames_per_beat()
+                .map(|f| f * self.beats_per_bar as f64),
+            Quantize::Bars(n) => self
+                .frames_per_beat()
+                .map(|f| f * self.beats_per_bar as f64 * n.max(1) as f64),
+        };
+        let Some(period) = period.filter(|p| *p >= 1.0) else {
+            return self.position;
+        };
+        // The next boundary strictly ahead: on a boundary, "next bar" means the
+        // following one (a full period away), not right now.
+        let pos = self.position as f64;
+        let boundary = (pos / period).floor() * period + period;
+        boundary.round() as u64
+    }
+
+    /// Schedule an [`Action`] at the next `q` boundary (fired in [`fill`]).
+    fn schedule(&mut self, q: Quantize, action: Action) {
+        let fire_at = self.fire_frame(q);
+        self.pending.push(Scheduled { fire_at, action });
+    }
+
+    /// Set the intensity on a beat/bar boundary (see [`set_intensity`](Self::set_intensity)).
+    pub fn set_intensity_at(&mut self, x: f32, q: Quantize) {
+        if self.fire_frame(q) <= self.position {
+            self.set_intensity(x);
+        } else {
+            self.schedule(q, Action::SetIntensity(x));
+        }
+    }
+
+    /// Fire a stinger on a beat/bar boundary. The stinger is **rendered now** (off
+    /// the audio thread); only its playback is deferred to the boundary.
+    pub fn stinger_at(&mut self, doc: &SoundDoc, q: Quantize) {
+        if self.fire_frame(q) <= self.position {
+            self.stinger(doc);
+            return;
+        }
+        let p = render::render_product(doc);
+        let (left, right) = p.stereo.unwrap_or_else(|| (p.mono.clone(), p.mono));
+        self.schedule(
+            q,
+            Action::Stinger(Stinger {
+                left,
+                right,
+                pos: 0,
+            }),
+        );
+    }
+
+    // ---- Horizontal sections ----
+
+    /// Add a horizontal section (a looping bed). The first section added starts
+    /// playing immediately; switch between them with [`transition_to`](Self::transition_to).
+    pub fn add_section(&mut self, name: impl Into<String>, doc: &SoundDoc) -> usize {
+        let index = self.sections.len();
+        self.sections.push(Section {
+            name: name.into(),
+            buffer: LoopBuffer::from_doc(doc),
+        });
+        if self.current_section.is_none() {
+            self.current_section = Some(index);
+        }
+        index
+    }
+
+    /// Cross-fade to another section on a beat/bar boundary — horizontal
+    /// re-sequencing (e.g. swap "explore" for "battle" on the next bar). The target
+    /// enters from its downbeat. A no-op for an unknown or already-current section.
+    pub fn transition_to(&mut self, section: usize, q: Quantize) {
+        if section >= self.sections.len() || self.current_section == Some(section) {
+            return;
+        }
+        if self.fire_frame(q) <= self.position {
+            self.begin_transition(section);
+        } else {
+            self.schedule(q, Action::Transition { to: section });
+        }
+    }
+
+    /// Start the section cross-fade now: rewind the target to its head so it enters
+    /// on its downbeat, and ramp it in over the declick window.
+    fn begin_transition(&mut self, to: usize) {
+        if self.current_section.is_none() {
+            self.current_section = Some(to);
+            return;
+        }
+        self.sections[to].buffer.reset();
+        self.section_fade = Some(SectionFade {
+            to,
+            gain: 0.0,
+            step: self.section_step,
+        });
+    }
+
+    /// The section currently sounding, if any.
+    pub fn current_section(&self) -> Option<usize> {
+        self.current_section
+    }
+
+    /// Look up a section index by name.
+    pub fn section_named(&self, name: &str) -> Option<usize> {
+        self.sections.iter().position(|s| s.name == name)
+    }
+
+    /// Fire every scheduled action due within `[position, position + frames)`,
+    /// in chronological order. Called at the top of each block.
+    fn fire_due(&mut self, frames: usize) {
+        let horizon = self.position + frames as u64;
+        if self.pending.iter().all(|s| s.fire_at >= horizon) {
+            return;
+        }
+        let mut due: Vec<Scheduled> = Vec::new();
+        let mut i = 0;
+        while i < self.pending.len() {
+            if self.pending[i].fire_at < horizon {
+                due.push(self.pending.swap_remove(i));
+            } else {
+                i += 1;
+            }
+        }
+        due.sort_by_key(|s| s.fire_at);
+        for s in due {
+            match s.action {
+                Action::SetIntensity(x) => self.set_intensity(x),
+                Action::Stinger(st) => self.stingers.push(st),
+                Action::Transition { to } => self.begin_transition(to),
+            }
+        }
+    }
 }
 
 impl AudioSource for AdaptiveMusic {
@@ -234,11 +465,46 @@ impl AudioSource for AdaptiveMusic {
         if self.paused {
             return frames;
         }
+        // Apply any changes scheduled to land in this block before rendering it.
+        self.fire_due(frames);
         if self.scratch.len() < frames * 2 {
             self.scratch.resize(frames * 2, 0.0);
         }
         let coeff = self.fade_coeff;
         let scratch = &mut self.scratch[..frames * 2];
+
+        // Horizontal section (the base bed), optionally cross-fading to a new one.
+        let fade = self.section_fade.as_ref().map(|f| (f.to, f.gain, f.step));
+        if let Some((to, start, step)) = fade {
+            if let Some(cur) = self.current_section {
+                self.sections[cur].buffer.fill(scratch);
+                for f in 0..frames {
+                    let g = (start + f as f32 * step).min(1.0);
+                    out[f * 2] += scratch[f * 2] * (1.0 - g);
+                    out[f * 2 + 1] += scratch[f * 2 + 1] * (1.0 - g);
+                }
+            }
+            self.sections[to].buffer.fill(scratch);
+            for f in 0..frames {
+                let g = (start + f as f32 * step).min(1.0);
+                out[f * 2] += scratch[f * 2] * g;
+                out[f * 2 + 1] += scratch[f * 2 + 1] * g;
+            }
+            let end = (start + frames as f32 * step).min(1.0);
+            if end >= 1.0 {
+                self.current_section = Some(to);
+                self.section_fade = None;
+            } else if let Some(fd) = self.section_fade.as_mut() {
+                fd.gain = end;
+            }
+        } else if let Some(cur) = self.current_section {
+            self.sections[cur].buffer.fill(scratch);
+            for f in 0..frames {
+                out[f * 2] += scratch[f * 2];
+                out[f * 2 + 1] += scratch[f * 2 + 1];
+            }
+        }
+
         for layer in &mut self.layers {
             layer.source.fill(scratch);
             for f in 0..frames {
@@ -419,5 +685,124 @@ mod tests {
             peak(&recovered) > 0.9 * reference,
             "the duck recovered toward unity"
         );
+    }
+
+    // ---- interactive-music v2 ----
+
+    fn tone(freq: f32) -> SoundDoc {
+        doc(&format!(
+            r#"{{ "name":"t", "duration":0.25, "root": {{ "type":"sine", "freq":{freq} }} }}"#
+        ))
+    }
+
+    /// Advance the clock by exactly `frames` in one block.
+    fn advance(m: &mut AdaptiveMusic, frames: usize) {
+        m.fill(&mut vec![0.0f32; frames * 2]);
+    }
+
+    #[test]
+    fn clock_counts_beats_and_bars() {
+        let mut m = AdaptiveMusic::new(48_000);
+        m.add_layer(LoopBuffer::from_doc(&tone(220.0)), 0.0);
+        m.set_tempo(120.0, 4); // 120 bpm → 24 000 frames/beat at 48 kHz
+        advance(&mut m, 24_000);
+        assert!(
+            (m.beats() - 1.0).abs() < 1e-6,
+            "one beat elapsed: {}",
+            m.beats()
+        );
+        advance(&mut m, 24_000 * 7); // to 8 beats = 2 bars total
+        assert!(
+            (m.bars() - 2.0).abs() < 1e-6,
+            "two bars elapsed: {}",
+            m.bars()
+        );
+    }
+
+    #[test]
+    fn intensity_change_waits_for_the_bar() {
+        let mut m = AdaptiveMusic::new(48_000);
+        m.add_layer(LoopBuffer::from_doc(&tone(220.0)), 0.0);
+        m.add_layer(LoopBuffer::from_doc(&tone(880.0)), 0.5); // joins at intensity ≥ 0.5
+        m.set_tempo(120.0, 4); // 96 000 frames/bar
+        m.set_intensity_at(1.0, Quantize::Bar);
+        // A block short of the bar: the target has not been raised yet.
+        advance(&mut m, 48_000);
+        assert_eq!(m.intensity(), 0.0, "intensity holds before the bar");
+        // Cross the bar line: the scheduled change fires.
+        advance(&mut m, 48_100);
+        assert_eq!(m.intensity(), 1.0, "intensity applied on the bar");
+    }
+
+    #[test]
+    fn transition_swaps_sections_on_the_bar() {
+        let mut m = AdaptiveMusic::new(48_000);
+        let explore = m.add_section("explore", &tone(330.0));
+        let battle = m.add_section("battle", &tone(660.0));
+        assert_eq!(m.current_section(), Some(explore));
+        assert_eq!(m.section_named("battle"), Some(battle));
+        m.set_tempo(120.0, 4); // 96 000 frames/bar
+        m.transition_to(battle, Quantize::Bar);
+        // Before the bar: still on explore, and audible.
+        let mut out = vec![0.0f32; 512 * 2];
+        m.fill(&mut out);
+        assert!(peak(&out) > 0.0, "section audio plays");
+        assert_eq!(m.current_section(), Some(explore), "holds until the bar");
+        // Past the bar + the short cross-fade: now on battle.
+        for _ in 0..200 {
+            advance(&mut m, 512);
+        }
+        assert_eq!(m.current_section(), Some(battle), "swapped to battle");
+    }
+
+    #[test]
+    fn stinger_fires_on_the_beat() {
+        let mut m = AdaptiveMusic::new(48_000);
+        m.add_layer(LoopBuffer::from_doc(&tone(220.0)), 0.0);
+        m.set_tempo(120.0, 4); // beat at 24 000 frames
+        m.stinger_at(&tone(1320.0), Quantize::Beat);
+        assert_eq!(m.active_stingers(), 0, "not yet — waiting for the beat");
+        // Serve realistic blocks up to just before the beat.
+        for _ in 0..46 {
+            advance(&mut m, 512); // 23 552 frames < 24 000
+        }
+        assert_eq!(m.active_stingers(), 0, "still before the beat");
+        advance(&mut m, 512); // crosses 24 000 — the stinger fires (and is long)
+        assert_eq!(m.active_stingers(), 1, "stinger fired on the beat");
+    }
+
+    #[test]
+    fn quantized_schedule_is_deterministic() {
+        let run = || {
+            let mut m = AdaptiveMusic::new(48_000);
+            m.add_section("a", &tone(330.0));
+            let b = m.add_section("b", &tone(660.0));
+            m.add_layer(LoopBuffer::from_doc(&tone(220.0)), 0.0);
+            m.set_tempo(140.0, 4);
+            m.set_intensity_at(0.8, Quantize::Beat);
+            m.transition_to(b, Quantize::Bar);
+            m.stinger_at(&tone(990.0), Quantize::Bars(2));
+            let mut acc = Vec::new();
+            let mut out = vec![0.0f32; 333 * 2]; // odd block size stresses boundaries
+            for _ in 0..300 {
+                m.fill(&mut out);
+                acc.extend_from_slice(&out);
+            }
+            acc
+        };
+        assert_eq!(
+            run(),
+            run(),
+            "a fixed tempo + block schedule replays identically"
+        );
+    }
+
+    #[test]
+    fn immediate_api_unchanged_without_tempo() {
+        // No tempo set → quantized calls act immediately (back-compat).
+        let mut m = AdaptiveMusic::new(48_000);
+        m.add_layer(LoopBuffer::from_doc(&tone(220.0)), 0.5);
+        m.set_intensity_at(1.0, Quantize::Bar); // no tempo → immediate
+        assert_eq!(m.intensity(), 1.0, "no tempo → applies immediately");
     }
 }

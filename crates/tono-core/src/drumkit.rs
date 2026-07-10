@@ -86,6 +86,13 @@ impl DrumKit {
         }
     }
 
+    /// Set the polyphony cap — the number of simultaneous hits before the oldest
+    /// is stolen with a short fade (builder style; default 32, clamped to ≥ 1).
+    pub fn with_max_voices(mut self, max: usize) -> Self {
+        self.max_voices = max.max(1);
+        self
+    }
+
     /// Strike the drum mapped to `note` (velocity scales its level). Notes with no
     /// mapped piece are ignored.
     pub fn note_on(&mut self, note: Note, velocity: f32) {
