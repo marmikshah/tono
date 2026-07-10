@@ -123,19 +123,7 @@ fn run_stream(
                     }
                     let interleaved = &mut scratch[..frames * 2];
                     renderer.fill(interleaved);
-                    for (f, frame) in data.chunks_mut(channels).enumerate() {
-                        let l = interleaved[f * 2];
-                        let r = interleaved[f * 2 + 1];
-                        if channels == 1 {
-                            frame[0] = 0.5 * (l + r);
-                        } else {
-                            frame[0] = l;
-                            frame[1] = r;
-                            for c in frame.iter_mut().skip(2) {
-                                *c = 0.0;
-                            }
-                        }
-                    }
+                    tono_core::runtime::write_interleaved(data, channels, interleaved);
                 },
                 |err| eprintln!("tono audio stream error: {err}"),
                 None,

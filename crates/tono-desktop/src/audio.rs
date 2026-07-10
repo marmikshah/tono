@@ -183,39 +183,32 @@ fn mix(
     now.resize(frames * 2, 0.0);
     now.fill(0.0);
 
-    if let Ok(mut deck) = deck.try_lock() {
-        if deck.playing {
-            if let Some(p) = deck.current.as_mut() {
-                p.fill(now);
+    if let Ok(mut deck) = deck.try_lock()
+        && deck.playing
+    {
+        if let Some(p) = deck.current.as_mut() {
+            p.fill(now);
+        }
+        if let Some((out_player, remaining, total)) = deck.outgoing.as_mut() {
+            old.resize(frames * 2, 0.0);
+            out_player.fill(old);
+            let total = *total as f32;
+            for f in 0..frames {
+                let w = *remaining as f32 / total; // outgoing weight, 1 → 0
+                now[f * 2] = now[f * 2] * (1.0 - w) + old[f * 2] * w;
+                now[f * 2 + 1] = now[f * 2 + 1] * (1.0 - w) + old[f * 2 + 1] * w;
+                *remaining = remaining.saturating_sub(1);
             }
-            if let Some((out_player, remaining, total)) = deck.outgoing.as_mut() {
-                old.resize(frames * 2, 0.0);
-                out_player.fill(old);
-                let total = *total as f32;
-                for f in 0..frames {
-                    let w = *remaining as f32 / total; // outgoing weight, 1 → 0
-                    now[f * 2] = now[f * 2] * (1.0 - w) + old[f * 2] * w;
-                    now[f * 2 + 1] = now[f * 2 + 1] * (1.0 - w) + old[f * 2 + 1] * w;
-                    *remaining = remaining.saturating_sub(1);
-                }
-                if *remaining == 0 {
-                    deck.outgoing = None;
-                }
+            if *remaining == 0 {
+                deck.outgoing = None;
             }
         }
     }
 
-    for f in 0..frames {
-        let (l, r) = (now[f * 2].clamp(-1.0, 1.0), now[f * 2 + 1].clamp(-1.0, 1.0));
-        let base = f * channels;
-        if channels == 1 {
-            data[base] = 0.5 * (l + r);
-            continue;
-        }
-        data[base] = l;
-        data[base + 1] = r;
-        for c in 2..channels {
-            data[base + c] = 0.0;
-        }
+    // Hard safety clamp before the device write (the audition path can spike
+    // mid-edit), then the shared channel spread.
+    for s in now[..frames * 2].iter_mut() {
+        *s = s.clamp(-1.0, 1.0);
     }
+    tono_core::runtime::write_interleaved(data, channels, &now[..frames * 2]);
 }
