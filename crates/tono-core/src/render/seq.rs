@@ -53,6 +53,91 @@ pub(super) struct SeqVoice<'a> {
     pub(super) engine: u32,
 }
 
+impl<'a> SeqVoice<'a> {
+    /// Borrow a `Node::Seq`'s instrument settings as a voice, along with its
+    /// timing (`bpm`, `steps_per_beat`) and notes. The single construction
+    /// site for every seq render path — `None` for a non-Seq node.
+    pub(super) fn from_node(
+        node: &'a Node,
+        engine: u32,
+    ) -> Option<(SeqVoice<'a>, f32, u32, &'a [SeqNote])> {
+        let Node::Seq {
+            bpm,
+            steps_per_beat,
+            wave,
+            duty,
+            fm_ratio,
+            fm_index,
+            fm_strike,
+            pluck_decay,
+            pluck_body,
+            pluck_pick,
+            pluck_tone,
+            piano_hammer,
+            piano_strike,
+            piano_inharm,
+            piano_detune,
+            piano_decay,
+            kit,
+            bass_cutoff,
+            bass_env,
+            bass_env_vel,
+            bass_decay,
+            bass_click,
+            bass_body,
+            bass_sub,
+            bass_sub_ratio,
+            bass_drive,
+            bass_body_decay,
+            sf2,
+            sf2_preset,
+            sf2_bank,
+            swing,
+            humanize,
+            env,
+            notes,
+        } = node
+        else {
+            return None;
+        };
+        let voice = SeqVoice {
+            wave: *wave,
+            duty,
+            fm_ratio: *fm_ratio,
+            fm_index: *fm_index,
+            fm_strike: *fm_strike,
+            pluck_decay: *pluck_decay,
+            pluck_body: *pluck_body,
+            pluck_pick: *pluck_pick,
+            pluck_tone: *pluck_tone,
+            piano_hammer: *piano_hammer,
+            piano_strike: *piano_strike,
+            piano_inharm: *piano_inharm,
+            piano_detune: *piano_detune,
+            piano_decay: *piano_decay,
+            kit: *kit,
+            bass_cutoff: *bass_cutoff,
+            bass_env: *bass_env,
+            bass_env_vel: *bass_env_vel,
+            bass_decay: *bass_decay,
+            bass_click: *bass_click,
+            bass_body: *bass_body,
+            bass_sub: *bass_sub,
+            bass_sub_ratio: *bass_sub_ratio,
+            bass_drive: *bass_drive,
+            bass_body_decay: *bass_body_decay,
+            sf2,
+            sf2_preset: *sf2_preset,
+            sf2_bank: *sf2_bank,
+            swing: *swing,
+            humanize: *humanize,
+            env,
+            engine,
+        };
+        Some((voice, *bpm, *steps_per_beat, notes))
+    }
+}
+
 /// A stable identity for a note's pitch, mixed into the engine ≥ 4 humanize
 /// seed so chord notes (same step, same length) jitter independently.
 fn pitch_identity(v: &Value) -> u64 {
@@ -149,78 +234,8 @@ fn render_seq(
 /// pre-renders the seq with a structurally-seeded RNG) so a streamed seq is
 /// byte-identical. Silence for a non-Seq node.
 pub(crate) fn seq_to_signal(node: &Node, n: usize, sr: u32, rng: &mut Rng, engine: u32) -> Signal {
-    if let Node::Seq {
-        bpm,
-        steps_per_beat,
-        wave,
-        duty,
-        fm_ratio,
-        fm_index,
-        fm_strike,
-        pluck_decay,
-        pluck_body,
-        pluck_pick,
-        pluck_tone,
-        piano_hammer,
-        piano_strike,
-        piano_inharm,
-        piano_detune,
-        piano_decay,
-        kit,
-        bass_cutoff,
-        bass_env,
-        bass_env_vel,
-        bass_decay,
-        bass_click,
-        bass_body,
-        bass_sub,
-        bass_sub_ratio,
-        bass_drive,
-        bass_body_decay,
-        sf2,
-        sf2_preset,
-        sf2_bank,
-        swing,
-        humanize,
-        env,
-        notes,
-    } = node
-    {
-        let voice = SeqVoice {
-            wave: *wave,
-            duty,
-            fm_ratio: *fm_ratio,
-            fm_index: *fm_index,
-            fm_strike: *fm_strike,
-            pluck_decay: *pluck_decay,
-            pluck_body: *pluck_body,
-            pluck_pick: *pluck_pick,
-            pluck_tone: *pluck_tone,
-            piano_hammer: *piano_hammer,
-            piano_strike: *piano_strike,
-            piano_inharm: *piano_inharm,
-            piano_detune: *piano_detune,
-            piano_decay: *piano_decay,
-            kit: *kit,
-            bass_cutoff: *bass_cutoff,
-            bass_env: *bass_env,
-            bass_env_vel: *bass_env_vel,
-            bass_decay: *bass_decay,
-            bass_click: *bass_click,
-            bass_body: *bass_body,
-            bass_sub: *bass_sub,
-            bass_sub_ratio: *bass_sub_ratio,
-            bass_drive: *bass_drive,
-            bass_body_decay: *bass_body_decay,
-            sf2,
-            sf2_preset: *sf2_preset,
-            sf2_bank: *sf2_bank,
-            swing: *swing,
-            humanize: *humanize,
-            env,
-            engine,
-        };
-        render_seq(*bpm, *steps_per_beat, &voice, notes, n, sr, rng)
+    if let Some((voice, bpm, steps_per_beat, notes)) = SeqVoice::from_node(node, engine) {
+        render_seq(bpm, steps_per_beat, &voice, notes, n, sr, rng)
     } else {
         vec![0.0; n]
     }

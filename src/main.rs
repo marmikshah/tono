@@ -172,8 +172,13 @@ fn midi_cmd(args: &[String]) -> anyhow::Result<()> {
     let file = cli.input("tono midi FILE.json [-o FILE.mid]")?;
     let out = PathBuf::from(cli.flag(&["-o", "--out"]).unwrap_or("out.mid"));
     let doc = load_doc(file)?;
-    tono::midi::export_midi(&doc, &out)?;
-    println!("{}", out.display());
+    let summary = tono::midi::export_midi(&doc, &out)?;
+    println!(
+        "{} — {} notes across {} tracks",
+        out.display(),
+        summary.notes,
+        summary.tracks
+    );
     Ok(())
 }
 

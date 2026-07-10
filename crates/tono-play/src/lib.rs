@@ -81,19 +81,7 @@ impl<S: AudioSource + Send + 'static> Speaker<S> {
                     let mut s = cb.lock().unwrap_or_else(|p| p.into_inner());
                     s.fill(st);
                     drop(s);
-                    for f in 0..frames {
-                        let (l, r) = (st[f * 2], st[f * 2 + 1]);
-                        let base = f * chans;
-                        if chans == 1 {
-                            data[base] = 0.5 * (l + r);
-                        } else {
-                            data[base] = l;
-                            data[base + 1] = r;
-                            for c in 2..chans {
-                                data[base + c] = 0.0;
-                            }
-                        }
-                    }
+                    tono_core::runtime::write_interleaved(data, chans, st);
                 },
                 on_err,
                 None,
