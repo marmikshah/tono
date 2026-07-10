@@ -36,7 +36,10 @@ jobs:
       - name: Build + install the extension
         run: |
           python -m pip install --upgrade pip maturin numpy
-          maturin develop -m crates/tono-py/Cargo.toml
+          # `maturin develop` needs an active virtualenv (absent on CI's system
+          # Python), so build a wheel and pip-install it instead.
+          maturin build --out dist -m crates/tono-py/Cargo.toml
+          pip install --no-index --find-links dist tono
       - name: Smoke test
         run: python crates/tono-py/tests/smoke.py
 
