@@ -11,9 +11,7 @@ impl Adsr {
     /// (e.g. `"env"` ⇒ `"env.a must be >= 0"`).
     fn validate(&self, what: &str) -> Result<(), String> {
         for (n, v) in [("a", self.a), ("d", self.d), ("r", self.r)] {
-            if v < 0.0 {
-                return Err(format!("{what}.{n} must be >= 0, got {v}"));
-            }
+            non_negative(&format!("{what}.{n}"), v)?;
         }
         in_unit(&format!("{what}.s"), self.s)?;
         in_unit(&format!("{what}.punch"), self.punch)
@@ -102,11 +100,7 @@ impl SoundDoc {
                     ));
                 }
             }
-            if crossfade_secs < 0.0 {
-                return Err(format!(
-                    "playback.loop.crossfade_secs must be >= 0, got {crossfade_secs}"
-                ));
-            }
+            non_negative("playback.loop.crossfade_secs", crossfade_secs)?;
         }
         if let Node::Tracks { tracks, master } = &self.root {
             if tracks.is_empty() {
@@ -357,13 +351,8 @@ fn validate_node(node: &Node) -> Result<(), String> {
             in_unit("impact.velocity", *velocity)
         }
         Node::Dust { density, decay } => {
-            if *density <= 0.0 {
-                return Err(format!("dust.density must be > 0, got {density}"));
-            }
-            if *decay < 0.0 {
-                return Err(format!("dust.decay must be >= 0, got {decay}"));
-            }
-            Ok(())
+            positive("dust.density", *density)?;
+            non_negative("dust.decay", *decay)
         }
         Node::Fm { freq, ratio, index } => {
             validate_freq_value(freq, "fm.freq")?;
@@ -526,16 +515,11 @@ fn validate_node(node: &Node) -> Result<(), String> {
             detune_cents,
             ..
         } => {
-            validate_value(freq, "super.freq")?;
+            validate_freq_value(freq, "super.freq")?;
             if !(1..=16).contains(voices) {
                 return Err(format!("super.voices must be in [1, 16], got {voices}"));
             }
-            if *detune_cents < 0.0 {
-                return Err(format!(
-                    "super.detune_cents must be >= 0, got {detune_cents}"
-                ));
-            }
-            Ok(())
+            non_negative("super.detune_cents", *detune_cents)
         }
         Node::Gain { amount } => validate_value(amount, "gain.amount"),
         Node::Bitcrush { bits } => {
@@ -575,15 +559,8 @@ fn validate_node(node: &Node) -> Result<(), String> {
                 ));
             }
             for (i, m) in modes.iter().enumerate() {
-                if m.freq <= 0.0 {
-                    return Err(format!("modal.modes[{i}].freq must be > 0, got {}", m.freq));
-                }
-                if m.decay <= 0.0 {
-                    return Err(format!(
-                        "modal.modes[{i}].decay must be > 0, got {}",
-                        m.decay
-                    ));
-                }
+                positive(&format!("modal.modes[{i}].freq"), m.freq)?;
+                positive(&format!("modal.modes[{i}].decay"), m.decay)?;
                 in_unit(&format!("modal.modes[{i}].gain"), m.gain)?;
             }
             in_unit("modal.mix", *mix)
@@ -591,9 +568,7 @@ fn validate_node(node: &Node) -> Result<(), String> {
         Node::Drive { amount, .. } => validate_value(amount, "drive.amount"),
         Node::RingMod { freq } => validate_freq_value(freq, "ringmod.freq"),
         Node::Chorus { rate, depth, mix } => {
-            if *rate <= 0.0 {
-                return Err(format!("chorus.rate must be > 0, got {rate}"));
-            }
+            positive("chorus.rate", *rate)?;
             in_unit("chorus.depth", *depth)?;
             in_unit("chorus.mix", *mix)
         }
@@ -609,9 +584,7 @@ fn validate_node(node: &Node) -> Result<(), String> {
             feedback,
             mix,
         } => {
-            if *rate <= 0.0 {
-                return Err(format!("flanger/phaser.rate must be > 0, got {rate}"));
-            }
+            positive("flanger/phaser.rate", *rate)?;
             in_unit("flanger/phaser.depth", *depth)?;
             in_unit("flanger/phaser.feedback", *feedback)?;
             in_unit("flanger/phaser.mix", *mix)
@@ -623,24 +596,24 @@ fn validate_node(node: &Node) -> Result<(), String> {
             release,
         } => {
             in_unit("duck.amount", *amount)?;
-            if *attack < 0.0 || *release < 0.0 {
-                return Err("duck.attack/release must be >= 0".into());
-            }
+            non_negative("duck.attack", *attack)?;
+            non_negative("duck.release", *release)?;
             validate_node(trigger)
         }
         Node::Compress {
+            threshold,
             ratio,
             attack,
             release,
-            ..
+            makeup,
         } => {
+            finite("compress.threshold", *threshold)?;
             if *ratio < 1.0 {
                 return Err(format!("compress.ratio must be >= 1, got {ratio}"));
             }
-            if *attack < 0.0 || *release < 0.0 {
-                return Err("compress.attack/release must be >= 0".into());
-            }
-            Ok(())
+            non_negative("compress.attack", *attack)?;
+            non_negative("compress.release", *release)?;
+            finite("compress.makeup", *makeup)
         }
     }
 }
