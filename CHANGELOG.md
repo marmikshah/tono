@@ -1,13 +1,38 @@
 # Changelog
 
-## Unreleased — 2.0.0
+## 1.6.0 — 2026-07-11
 
-A verified bug sweep, a corrected output stage behind engine revision 4, and an
+The game-audio release: live DSP buses, voice management, beat-quantized
+interactive music, and Python bindings — plus a verified bug sweep, a corrected
+output stage behind engine revision 4, the native pattern station, and an
 organization/API pass. Every pre-existing document still renders byte-for-byte
-(a golden corpus now pins this in CI); the 2.0 major is for the API surface,
-not the audio.
+(a golden corpus now pins this in CI).
 
 ### Added
+- **Python bindings** (`crates/tono-py`, PyO3): a live `Engine` owning the
+  output stream (drum kit, preset instruments, adaptive music, zero-asset patch
+  triggers — the audio thread never touches Python), and a numpy pull API
+  (`tono.render`, `Patch.render(**params)`), deterministic and CI-testable.
+  Build with `make python`; abi3 wheels build in CI.
+- **Live DSP effects on mixer buses**: sources feed named buses with insert
+  chains (reverb/EQ/compressor/delay/…), post-fader sends into shared FX/return
+  buses, and a master chain — all reusing the streaming effect kernels, so a
+  bus stays byte-identical to the offline processors. `Mixer::new_at`, `bus`,
+  `fx_bus`, `add_to`, `set_bus_effects`, `master_effects`, `set_send`.
+- **Voice management**: an opt-in polyphony budget with priority stealing.
+  `Engine::set_max_voices`, `Priority` (`LOW`/`NORMAL`/`HIGH`/`CRITICAL`),
+  `play_prioritized` / `play_looping_prioritized` / `set_priority`; the victim
+  declicks instead of hard-cutting, an outranked voice is denied, and a flood is
+  hard-bounded at 2× the budget. `DrumKit::with_max_voices` tunes the kit's cap.
+- **Interactive music v2** on `AdaptiveMusic`: a musical clock
+  (`set_tempo`/`beats`/`bars`), `Quantize` (`Beat`/`Bar`/`Bars(n)`) scheduling
+  for `set_intensity_at` and `stinger_at`, and horizontal **sections**
+  (`add_section` + `transition_to`) that cross-fade on the bar — swap "explore"
+  for "battle" without a mid-phrase cut.
+- **The pattern station** (`make desktop`): a native Tauri studio with
+  real-time audio — an FL-style step grid over the catalog instruments,
+  click-free live editing, per-track faders, undo, and per-edit
+  LUFS/spectrogram feedback. Off the default build and CI.
 - `AdaptiveMusic` transport for beat-locked games: `pause`/`resume`/`is_paused`,
   `reset` (rewinds the position clock to 0 and every layer to its loop head),
   and `position_frames()` — the musical clock a game derives its beat position
@@ -15,6 +40,12 @@ not the audio.
   independent of the slower intensity cross-fade.
 - `AudioSource::reset()` (default no-op; `LoopBuffer` overrides it) so a
   transport can rewind a looping source to its head.
+- `runtime::spsc` generalizes the wait-free split over any `AudioSource`
+  (`Pump<S>`; `Controller = Pump<Engine>` unchanged), and
+  `runtime::write_interleaved` is the one channel-spread every output adapter
+  shares. `tono midi` prints its notes/tracks summary.
+- Infrastructure: a `v*` tag now auto-creates its GitHub Release with the
+  CHANGELOG section as notes; the showcase site deploys to GitHub Pages.
 
 ### Fixed (no rendered bytes change)
 - `delay.secs` is bounded — an unbounded value passed `validate()` then aborted
@@ -43,7 +74,7 @@ not the audio.
 - All metering (analysis, CLI, desktop) now reads the stereo pair that ships,
   with oversampled true-peak and gated loudness.
 
-### Changed (API — the reason this is 2.0.0)
+### Changed (API)
 - `stream` → `player` (deprecated alias kept); `catalog::Instrument` →
   `catalog::Voice` (deprecated alias kept).
 - `#[non_exhaustive]` on the enums and builder-structs that grow every release.
