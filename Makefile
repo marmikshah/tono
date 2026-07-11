@@ -6,7 +6,7 @@ BIN     := target/release/tono
 RELEASE_BRANCH ?= master
 
 .DEFAULT_GOAL := help
-.PHONY: help run build build-release install desktop play python wheel test fmt lint check pre-commit-checks verify release hooks clean
+.PHONY: help run build build-release install desktop play python wheel python-test python-smoke test fmt lint check pre-commit-checks verify verify-native site version release hooks clean
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -24,14 +24,16 @@ build-release: ## Optimized release build → target/release/tono
 install: ## Install the `tono` CLI into ~/.cargo/bin
 	cargo install --path .
 
-desktop: ## Build the native desktop studio (Tauri + cpal + MIDI) — NOT in the default build/CI
+desktop: ## Build the native desktop studio (Tauri + cpal + MIDI) — off the default build; gated by 'make verify-native'
 	cargo build -p tono-desktop --release
 	@echo "→ run it:  target/release/tono-desktop"
 
-play: ## Run the programmatic playground (cpal speaker output) — NOT in the default build/CI
-	cargo run -p tono-play --example playground
+EXAMPLE ?= playground
 
-python: ## Build the Python extension into the active venv (maturin develop) — NOT in the default build/CI
+play: ## Run a tono-play example (EXAMPLE=<name>, see crates/tono-play/examples) — off the default build; gated by 'make verify-native'
+	cargo run -p tono-play --example $(EXAMPLE)
+
+python: ## Build the Python extension into the active venv (maturin develop) — off the default build; gated by 'make verify-native' + 'make python-test'
 	maturin develop -m crates/tono-py/Cargo.toml
 
 wheel: ## Build a release abi3 wheel for the Python bindings → target/wheels/
@@ -53,6 +55,10 @@ pre-commit-checks: ## CI lint gate (non-mutating): fmt --check + clippy. Pair wi
 	cargo clippy --all-targets -- -D warnings
 
 verify: pre-commit-checks test ## Exactly what CI runs (fmt --check + clippy + test) - non-mutating
+
+verify-native: ## Lint + test the off-CI native crates (desktop/play/py); --all-targets compiles their examples too
+	cargo clippy -p tono-desktop -p tono-play -p tono-py --all-targets -- -D warnings
+	cargo test -p tono-desktop -p tono-play
 
 release: ## Cut a release: guard clean master, tag vX.Y.Z from Cargo.toml, push (CI publishes to crates.io)
 	@[ "$$(git branch --show-current)" = "$(RELEASE_BRANCH)" ] || { echo "Release only from $(RELEASE_BRANCH)."; exit 1; }

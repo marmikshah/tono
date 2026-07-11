@@ -1,0 +1,41 @@
+name: Native
+
+# The off-default workspace members (tono-desktop, tono-play, tono-py) get no
+# coverage from the main CI job (`make verify` builds default members only), so
+# this gate compiles/lints/tests them whenever they — or the core they wrap —
+# change. macOS: CoreAudio needs no system packages and it matches the primary
+# dev platform.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "crates/tono-desktop/**"
+      - "crates/tono-play/**"
+      - "crates/tono-py/**"
+      - "crates/tono-core/**"
+      - ".github/workflows/native.yml"
+      - "Makefile"
+  pull_request:
+    paths:
+      - "crates/tono-desktop/**"
+      - "crates/tono-play/**"
+      - "crates/tono-py/**"
+      - "crates/tono-core/**"
+      - ".github/workflows/native.yml"
+      - "Makefile"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify-native:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify the native crates
+        run: make verify-native

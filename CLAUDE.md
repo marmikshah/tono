@@ -24,7 +24,11 @@ The root is the `tono` crate (the CLI); the sub-crates live under `crates/`.
   built via `make desktop`. Heavy deps (webview/cpal/midir) never touch the default build.
 - **`crates/tono-play/`** — the programmatic playground: a `cpal` speaker so a Rust
   program can build a sound/instrument and hear it in a couple of lines. Excluded
-  from `default-members`/CI; run via `make play`.
+  from `default-members`/CI; run via `make play EXAMPLE=<name>`.
+- **`crates/tono-py/`** — the PyO3 Python bindings (render + live `Engine` stream).
+  Excluded from `default-members`/CI; built via `make python` / `make wheel`,
+  smoke-tested by `make python-test`. Build-from-source only — never published to
+  PyPI (the name is taken).
 
 ## The invariant that matters
 
@@ -49,6 +53,10 @@ transcendental kernels behind a future engine revision.
 - `make verify` — exactly what CI runs: `fmt --check` + clippy (`-D warnings`) +
   tests. The pre-push hook runs this. `make check` is the mutating version.
 - `make pre-commit-checks` — the lint gate (fmt + clippy) alone.
+- `make verify-native` — the gate for the off-CI crates: touching tono-desktop /
+  tono-play / tono-py? This is your gate — plain `make verify` does not compile
+  them (they are non-default workspace members). CI runs it via the Native
+  workflow when those crates change.
 - `make desktop` / `make play` — the native faces (heavy deps, off the default build).
 - `make hooks` — install the git hooks (`.githooks/pre-commit`, `pre-push`).
 
