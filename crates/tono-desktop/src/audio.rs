@@ -22,6 +22,29 @@ use tono_core::player::Player;
 /// that an edit feels instant.
 const SWAP_FADE_SECS: f32 = 0.02;
 
+/// A transport action, parsed loudly at the Tauri boundary — a frontend typo
+/// must error, not silently no-op.
+pub enum TransportAction {
+    /// Start/resume playback.
+    Play,
+    /// Freeze in place.
+    Pause,
+    /// Freeze and rewind.
+    Stop,
+}
+
+impl std::str::FromStr for TransportAction {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "play" => Ok(TransportAction::Play),
+            "pause" => Ok(TransportAction::Pause),
+            "stop" => Ok(TransportAction::Stop),
+            other => Err(format!("unknown transport action: {other}")),
+        }
+    }
+}
+
 /// The playing state behind the mutex: the current loop, plus the outgoing
 /// loop during a swap crossfade.
 struct Deck {
@@ -35,7 +58,6 @@ struct Deck {
 }
 
 /// A `Send + Sync` control handle to the running audio deck.
-#[derive(Clone)]
 pub struct AudioHandle {
     deck: Arc<Mutex<Deck>>,
     device_sr: u32,
@@ -53,6 +75,7 @@ impl AudioHandle {
             p.looping = true;
             p
         });
+        let fade = ((SWAP_FADE_SECS * self.device_sr as f32) as u32).max(1);
         let mut deck = self.deck.lock().unwrap_or_else(|p| p.into_inner());
         let old = deck.current.take();
         match (fresh, old) {
@@ -61,7 +84,6 @@ impl AudioHandle {
                     new.seek(old.position() % new.frames());
                 }
                 new.play();
-                let fade = ((SWAP_FADE_SECS * self.device_sr as f32) as u32).max(1);
                 deck.outgoing = Some((old, fade, fade));
                 deck.current = Some(new);
             }
@@ -72,26 +94,24 @@ impl AudioHandle {
             (None, old) => {
                 // The grid went silent: fade whatever was playing out.
                 if let Some(old) = old {
-                    let fade = ((SWAP_FADE_SECS * self.device_sr as f32) as u32).max(1);
                     deck.outgoing = Some((old, fade, fade));
                 }
             }
         }
     }
 
-    /// Transport: `"play"`, `"pause"` (freeze in place), or `"stop"` (rewind).
-    pub fn transport(&self, action: &str) {
+    /// Drive the transport (see [`TransportAction`]).
+    pub fn transport(&self, action: TransportAction) {
         let mut deck = self.deck.lock().unwrap_or_else(|p| p.into_inner());
         match action {
-            "play" => deck.playing = true,
-            "pause" => deck.playing = false,
-            "stop" => {
+            TransportAction::Play => deck.playing = true,
+            TransportAction::Pause => deck.playing = false,
+            TransportAction::Stop => {
                 deck.playing = false;
                 if let Some(p) = deck.current.as_mut() {
                     p.seek(0);
                 }
             }
-            _ => {}
         }
     }
 
