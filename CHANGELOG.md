@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Phase-locked stem sets** on `AdaptiveMusic`: `add_stem_set(stems,
+  duration_beats)` forces every stem onto one shared loop length (from the tempo,
+  or the first stem's natural length without one) so layered intensity
+  cross-fades stay sample-aligned and never drift phase; returns the grid length
+  in frames. Plus `LoopBuffer::from_doc_len(doc, frames)` — render and loop a doc
+  at an exact frame count.
+
 ## 1.6.0 — 2026-07-11
 
 The game-audio release: live DSP buses, voice management, beat-quantized
