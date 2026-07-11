@@ -1,5 +1,68 @@
 # Changelog
 
+## 2.0.0 — 2026-07-11
+
+The structure release: a full quality review swept every lens, the god-files
+split into module directories, the native faces share one cpal shim, and the
+long-deprecated names are gone. Every pre-existing document still renders
+byte-for-byte (the golden corpus and the offline/streaming byte-identity fuzz
+are unchanged).
+
+### Removed (breaking)
+- The 1.6.0 rename aliases: `tono_core::stream` (use `player`) and
+  `catalog::Instrument` (use `catalog::Voice`).
+- `tono_core::voice` — `EnvGen` lives with its only consumer as
+  `instrument::EnvGen` (the module was named for a type it didn't contain).
+- `tono::audio::write_wav` (mono; the stereo writer is the export path),
+  `streaming::is_streamable` (call `StreamGraph::try_from_doc`), and
+  `EffectChain::is_empty`.
+
+### Changed (breaking)
+- `SoundDoc::validate()` is filesystem-free: it no longer stats a sampler's
+  `.sf2` path (the same valid doc used to validate differently per machine,
+  against the core's no-I/O contract). Loaders call the new pure
+  `SoundDoc::sf2_paths()` and check existence themselves — the CLI and the
+  Python bindings already do, so their behavior is unchanged.
+- `Node::Seq`'s per-voice knobs are grouped into `serde(flatten)`ed structs
+  (`FmKnobs`/`PluckKnobs`/`PianoKnobs`/`BassKnobs`/`Sf2Knobs`). The JSON wire
+  shape is untouched; only Rust pattern-matches on the variant change.
+- `tono-desktop` drops its `play` subcommand (use
+  `tono_play::play_doc` / `make play`, which streams byte-identically).
+
+### Added
+- `tono render` writes the documented `smpl` loop chunk again for
+  `playback: loop` WAV exports (silently regressed when the MCP server was
+  removed).
+- `analysis::spectral_frames` + `stats_with`/`stats_stereo_with`/
+  `spectrogram_png_with`: one STFT now feeds both the numeric stats and the
+  spectrogram (it was computed twice per render analysis).
+- `tono_play::Speaker::open_at` (explicit stream rate) and `Speaker::shared`;
+  the desktop deck and the Python engine stream through this one cpal shim.
+- `make verify-native` (clippy + tests for the off-CI native crates, examples
+  included) with a path-filtered CI workflow; `make play EXAMPLE=<name>`;
+  `make python-test` / `python-smoke` / `site` / `version` — CI workflows now
+  exec make targets only, and CI validates the golden pins on macOS too.
+
+### Fixed
+- Real-time hardening in the streaming path now matches the offline renderer
+  exactly (empty `arp` steps, `secs == 0` slides, sub-240 Hz filter clamps).
+- The instrument's modulation LFOs derive phase from accumulators instead of
+  an absolute `f32` clock — vibrato/tremolo/wobble no longer go steppy after
+  ~3 hours of live play (frozen after ~6).
+- `AdaptiveMusic`: a stinger with unequal channel lengths could stall the
+  spent-stinger cull; the loop play-head no longer overflows on very long
+  sessions; `add_stem_set` no longer renders the first stem twice.
+- The playground example's first demo played 0.5 s of silence (envelope
+  fields nested under an ignored `"adsr"` key) — and `play_doc` now validates
+  up front so a malformed doc errors instead of playing silence.
+- Validation rejects NaN/±inf knobs everywhere (a `1e308` JSON literal used
+  to cast silently to `inf` and render garbage), and validates
+  `compress.threshold`/`makeup` and `super.freq` like their siblings.
+- `describe()` fails loud instead of returning an empty map; review summaries
+  are no longer ALL CAPS; the LUFS field's doc says gated (the meter always
+  was); `tono-py`'s crate type no longer collides with the root crate's rlib.
+
+
 ## 1.7.0 — 2026-07-11
 
 Audio real-time safety and mixer/adaptive correctness from a full review of the
