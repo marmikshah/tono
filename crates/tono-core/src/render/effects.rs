@@ -36,7 +36,7 @@ pub(super) fn biquad(input: &[f32], cutoff: &Value, q: f32, sr: u32, kind: Filte
     let (mut x1, mut x2, mut y1, mut y2) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
     let mut out = Vec::with_capacity(input.len());
     for (i, &x0) in input.iter().enumerate() {
-        let f = fc[i].clamp(20.0, nyq - 100.0);
+        let f = fc[i].clamp(20.0, (nyq - 100.0).max(20.0));
         let w0 = TAU * f / srf;
         let (sin, cos) = w0.sin_cos();
         let alpha = sin / (2.0 * q);
@@ -265,7 +265,7 @@ pub(super) fn modal_bank(input: &[f32], modes: &[Mode], mix: f32, sr: u32) -> Si
     let mix = mix.clamp(0.0, 1.0);
     let mut wet = vec![0.0f32; input.len()];
     for m in modes {
-        let f0 = m.freq.clamp(1.0, nyq - 1.0);
+        let f0 = m.freq.clamp(1.0, (nyq - 1.0).max(1.0));
         let decay = m.decay.max(1e-3);
         let w0 = TAU * f0 / srf;
         let (sin0, cos0) = (w0.sin(), w0.cos());

@@ -534,6 +534,8 @@ fn normalize_output_v4(channels: &mut [&mut [f32]], nz: &Normalize, sr: u32) {
 /// compressed above, never exceeding `ceil`. C1-continuous at the knee.
 fn soft_limit(samples: &mut [f32], ceil: f32) {
     const KNEE: f32 = 0.7;
+    // A degenerate ceiling must not turn the mix into inf/NaN.
+    let ceil = ceil.max(1e-9);
     for x in samples.iter_mut() {
         let v = *x / ceil;
         let a = v.abs();
@@ -628,7 +630,9 @@ fn eval_value(v: &Value, n: usize, sr: u32) -> Vec<f32> {
         }) => (0..n)
             .map(|i| {
                 let t = i as f32 / srf;
-                let p = (t / secs).clamp(0.0, 1.0);
+                // Floor `secs` so an unvalidated `secs == 0` can't make `t/secs`
+                // a NaN that then poisons the whole render.
+                let p = (t / secs.max(1e-6)).clamp(0.0, 1.0);
                 match curve {
                     Curve::Lin => from + (to - from) * p,
                     Curve::Exp if *from > 0.0 && *to > 0.0 => {
@@ -654,13 +658,15 @@ fn eval_value(v: &Value, n: usize, sr: u32) -> Vec<f32> {
                 center + depth * osc(*shape, phase)
             })
             .collect(),
-        Value::Modulated(Modulator::Arp { steps, rate }) => (0..n)
+        Value::Modulated(Modulator::Arp { steps, rate }) if !steps.is_empty() => (0..n)
             .map(|i| {
                 let t = i as f32 / srf;
                 let idx = (t * rate) as usize % steps.len();
                 steps[idx]
             })
             .collect(),
+        // Empty steps would divide by zero; an unvalidated doc must not panic.
+        Value::Modulated(Modulator::Arp { .. }) => vec![0.0; n],
         Value::Modulated(Modulator::EnvMod {
             adsr: env,
             from,
