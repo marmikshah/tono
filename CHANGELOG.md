@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.7.0 — 2026-07-11
+
+Audio real-time safety and mixer/adaptive correctness from a full review of the
+1.6.0 sprint, plus phase-locked stem sets. Every pre-existing document still
+renders byte-for-byte (the golden corpus is unchanged).
 
 ### Added
 - **Phase-locked stem sets** on `AdaptiveMusic`: `add_stem_set(stems,
@@ -9,6 +13,26 @@
   cross-fades stay sample-aligned and never drift phase; returns the grid length
   in frames. Plus `LoopBuffer::from_doc_len(doc, frames)` — render and loop a doc
   at an exact frame count.
+- Off-lock entry points so a real-time wrapper never renders under a lock:
+  `AdaptiveMusic::add_section_buffer`, `stinger_stereo`, `stinger_stereo_at`
+  (mirroring `add_layer`). The doc-taking `add_section`/`stinger`/`stinger_at`
+  now delegate to them.
+
+### Fixed
+- **Mixer**: the master fader (`set_bus_gain(MASTER, …)`) was a no-op; sources
+  added directly to an FX bus were silently dropped. `write_interleaved` no
+  longer reads past a short source slice.
+- **Adaptive music**: a transition to the already-current section double-filled a
+  buffer (audible speed-up); pending transitions now dedup/supersede; `duck()`
+  ramps in instead of stepping (no click) and recovery snaps to unity.
+- **Render path**: guarded divide-by-zero / NaN on unvalidated docs (empty `Arp`
+  steps, `Slide` `secs == 0`, `soft_limit` `ceil == 0`, low-sample-rate filter
+  clamps).
+- **Real-time callbacks**: `tono-play` no longer blocks the audio thread on the
+  control lock (`try_lock` + silence); all cpal callbacks are wrapped in
+  `catch_unwind` (a render panic can no longer unwind across the C frame);
+  `tono-py` `Engine::new` no longer leaks the audio thread + stream on a
+  pump-spawn failure.
 
 ## 1.6.0 — 2026-07-11
 
