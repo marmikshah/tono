@@ -81,8 +81,8 @@ struct Bus {
     sends: Vec<(u32, f32)>,
 }
 
-/// A routing stereo mixer of audio sources — instruments, the SFX [`Engine`],
-/// [`StreamSource`]s. Each source feeds a **bus**; buses carry live insert
+/// A routing stereo mixer of audio sources — instruments, the SFX [`Engine`](super::Engine),
+/// [`StreamSource`](super::StreamSource)s. Each source feeds a **bus**; buses carry live insert
 /// chains (reverb / EQ / compressor / …) and post-fader **sends** into shared
 /// FX/return buses, all summing through a **master** insert chain. It is itself
 /// an [`AudioSource`], so it feeds one output callback (or nests).

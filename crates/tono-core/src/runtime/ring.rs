@@ -72,8 +72,8 @@ impl SampleRing {
 /// every method of the wrapped source (for an [`Engine`]: `play`, `set_gain`,
 /// `set_param`, …), then [`pump`](Self::pump) to keep the audio thread fed.
 ///
-/// Generic over the source so the same seam drives a bare [`Engine`], a
-/// [`Mixer`] of instruments + SFX, or any other [`AudioSource`]. [`Controller`]
+/// Generic over the source so the same seam drives a bare [`Engine`](super::Engine), a
+/// [`Mixer`](super::Mixer) of instruments + SFX, or any other [`AudioSource`]. [`Controller`]
 /// is the `Engine` specialization returned by [`Engine::split`].
 pub struct Pump<S: AudioSource> {
     source: S,

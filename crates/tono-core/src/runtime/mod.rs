@@ -1,7 +1,7 @@
 //! runtime — the embeddable real-time control surface over the deterministic engine.
 //!
 //! The idiomatic library API a game (or any host) drives: [`Engine::load`] a
-//! [`SoundDoc`] (or [`Engine::load_patch`] a [`Patch`] with named parameters) as
+//! [`SoundDoc`](crate::dsl::SoundDoc) (or [`Engine::load_patch`] a [`Patch`](crate::patch::Patch) with named parameters) as
 //! a reusable **resource**, [`Engine::play`] as many independent **instances** as
 //! you like, and control each by its [`InstanceHandle`] with [`Tween`]-smoothed
 //! setters. Host output adapters (cpal, an AudioWorklet, a Bevy source) target

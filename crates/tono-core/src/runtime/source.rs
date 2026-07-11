@@ -51,13 +51,12 @@ pub fn write_interleaved(data: &mut [f32], channels: usize, stereo: &[f32]) {
 }
 /// doc's graph **indefinitely and allocation-free** — mono duplicated to
 /// stereo. Returns `None` for docs outside the streamable subset (the caller
-/// falls back to a buffer-backed [`Player`]/instance). This is how a game
+/// falls back to a buffer-backed [`Player`](crate::player::Player)/instance). This is how a game
 /// feeds the streaming renderer straight to a cpal / AudioWorklet callback
 /// for continuous generative content.
 ///
 /// Byte-identity: the offline bounce ends in a transparent sample-peak safety
-/// limit, a whole-buffer gain that cannot be computed causally. [`from_doc`]
-/// (`StreamSource::from_doc`) therefore measures the finite render's peak with
+/// limit, a whole-buffer gain that cannot be computed causally. [`StreamSource::from_doc`] therefore measures the finite render's peak with
 /// one throwaway pass of the same deterministic graph (O(duration) time, O(1)
 /// memory) and bakes the identical constant gain, so the stream matches the
 /// bounce bit-for-bit over the document's duration.
