@@ -324,9 +324,10 @@ pub fn describe(doc: &SoundDoc) -> DescribeMap {
         layers: Vec::new(),
         master: Vec::new(),
     };
-    let Ok(json) = serde_json::to_value(doc) else {
-        return map;
-    };
+    // Serializing a derived-Serialize SoundDoc is infallible in practice (the
+    // presets::patch precedent); failing loud beats returning an empty map an
+    // agent would read as "nothing editable".
+    let json = serde_json::to_value(doc).expect("SoundDoc serializes");
     if let crate::dsl::Node::Tracks { tracks, master } = &doc.root {
         for (i, t) in tracks.iter().enumerate() {
             let mut nodes = Vec::new();
