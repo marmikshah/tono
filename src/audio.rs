@@ -98,6 +98,22 @@ fn spec(channels: u16, sample_rate: u32, bits: u16) -> hound::WavSpec {
     }
 }
 
+/// Write mono `f32` samples (in [-1, 1]) to a WAV file at `path`.
+/// `bits` is 8 or 16; anything else falls back to 16.
+#[deprecated(
+    since = "1.8.0",
+    note = "orphaned when the MCP server was removed; use `write_wav_stereo`"
+)]
+pub fn write_wav(path: &Path, samples: &[f32], sample_rate: u32, bits: u16) -> anyhow::Result<()> {
+    let bits = if bits == 8 { 8 } else { 16 };
+    let mut writer = hound::WavWriter::create(path, spec(1, sample_rate, bits))?;
+    for &x in samples {
+        write_sample(&mut writer, x, bits)?;
+    }
+    writer.finalize()?;
+    Ok(())
+}
+
 /// Write interleaved-stereo `f32` samples (left/right in [-1, 1]) to `path`.
 pub fn write_wav_stereo(
     path: &Path,

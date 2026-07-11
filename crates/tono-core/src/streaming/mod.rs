@@ -141,6 +141,19 @@ impl StreamGraph {
     }
 }
 
+/// Whether `doc`'s graph can be streamed.
+///
+/// NOT cheap: this performs a full build-and-discard (including pre-rendering
+/// every `seq` node). A caller that will stream anyway should call
+/// [`StreamGraph::try_from_doc`] once and keep the result. Deleted at 2.0.
+#[deprecated(
+    since = "1.8.0",
+    note = "use `StreamGraph::try_from_doc(doc).is_some()`"
+)]
+pub fn is_streamable(doc: &SoundDoc) -> bool {
+    StreamGraph::try_from_doc(doc).is_some()
+}
+
 /// A stateful chain of streaming effect processors applied to an input signal
 /// block-by-block — byte-identical to the offline processors, carrying delay
 /// lines / filter state across blocks. Used for a shared bus (e.g. an
@@ -176,5 +189,12 @@ impl EffectChain {
             *x = v;
             self.pos += 1;
         }
+    }
+
+    /// Whether the chain has no processors. Deleted at 2.0 (a constructed
+    /// chain is never empty — both construction sites early-return first).
+    #[deprecated(since = "1.8.0", note = "a constructed chain is never empty")]
+    pub fn is_empty(&self) -> bool {
+        self.procs.is_empty()
     }
 }

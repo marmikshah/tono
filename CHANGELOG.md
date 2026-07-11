@@ -1,31 +1,33 @@
 # Changelog
 
-## 2.0.0 — 2026-07-11
+## 1.8.0 — 2026-07-11
 
 The structure release: a full quality review swept every lens, the god-files
 split into module directories, the native faces share one cpal shim, and the
-long-deprecated names are gone. Every pre-existing document still renders
-byte-for-byte (the golden corpus and the offline/streaming byte-identity fuzz
-are unchanged).
+long-deprecated names are staged for deletion at 2.0. Every pre-existing
+document still renders byte-for-byte (the golden corpus and the
+offline/streaming byte-identity fuzz are unchanged).
 
-### Removed (breaking)
-- The 1.6.0 rename aliases: `tono_core::stream` (use `player`) and
-  `catalog::Instrument` (use `catalog::Voice`).
+### Deprecated (deleted at 2.0)
+- The 1.6.0 rename aliases, now through two minors: `tono_core::stream`
+  (use `player`) and `catalog::Instrument` (use `catalog::Voice`).
 - `tono_core::voice` — `EnvGen` lives with its only consumer as
-  `instrument::EnvGen` (the module was named for a type it didn't contain).
+  `instrument::EnvGen`; the module shim keeps the old path valid.
 - `tono::audio::write_wav` (mono; the stereo writer is the export path),
-  `streaming::is_streamable` (call `StreamGraph::try_from_doc`), and
-  `EffectChain::is_empty`.
+  `streaming::is_streamable` (call `StreamGraph::try_from_doc` — it was a
+  misdocumented full build-and-discard), and `EffectChain::is_empty`.
 
-### Changed (breaking)
+### Changed
 - `SoundDoc::validate()` is filesystem-free: it no longer stats a sampler's
   `.sf2` path (the same valid doc used to validate differently per machine,
   against the core's no-I/O contract). Loaders call the new pure
   `SoundDoc::sf2_paths()` and check existence themselves — the CLI and the
-  Python bindings already do, so their behavior is unchanged.
+  Python bindings already do, so their behavior is unchanged. A caller that
+  relied on `validate()` to catch a missing file now gets the error at load.
 - `Node::Seq`'s per-voice knobs are grouped into `serde(flatten)`ed structs
   (`FmKnobs`/`PluckKnobs`/`PianoKnobs`/`BassKnobs`/`Sf2Knobs`). The JSON wire
-  shape is untouched; only Rust pattern-matches on the variant change.
+  shape is untouched; Rust code that pattern-matched the old flat fields on
+  this variant must switch to the structs.
 - `tono-desktop` drops its `play` subcommand (use
   `tono_play::play_doc` / `make play`, which streams byte-identically).
 
@@ -42,6 +44,7 @@ are unchanged).
   included) with a path-filtered CI workflow; `make play EXAMPLE=<name>`;
   `make python-test` / `python-smoke` / `site` / `version` — CI workflows now
   exec make targets only, and CI validates the golden pins on macOS too.
+- The GitHub Pages site gains an architecture & getting-started page.
 
 ### Fixed
 - Real-time hardening in the streaming path now matches the offline renderer
@@ -52,16 +55,12 @@ are unchanged).
 - `AdaptiveMusic`: a stinger with unequal channel lengths could stall the
   spent-stinger cull; the loop play-head no longer overflows on very long
   sessions; `add_stem_set` no longer renders the first stem twice.
-- The playground example's first demo played 0.5 s of silence (envelope
-  fields nested under an ignored `"adsr"` key) — and `play_doc` now validates
-  up front so a malformed doc errors instead of playing silence.
 - Validation rejects NaN/±inf knobs everywhere (a `1e308` JSON literal used
   to cast silently to `inf` and render garbage), and validates
   `compress.threshold`/`makeup` and `super.freq` like their siblings.
 - `describe()` fails loud instead of returning an empty map; review summaries
   are no longer ALL CAPS; the LUFS field's doc says gated (the meter always
   was); `tono-py`'s crate type no longer collides with the root crate's rlib.
-
 
 ## 1.7.0 — 2026-07-11
 

@@ -7,7 +7,7 @@ members = ["crates/tono-core", "crates/tono-desktop", "crates/tono-play", "crate
 default-members = [".", "crates/tono-core"]
 
 [workspace.package]
-version = "2.0.0"
+version = "1.8.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -16,7 +16,7 @@ repository = "https://github.com/marmikshah/tono"
 [workspace.dependencies]
 # The version must match workspace.package.version above: cargo strips `path` at
 # publish time and pins the crates.io dependency to this version. Bump both together.
-tono-core = { path = "crates/tono-core", version = "2.0.0" }
+tono-core = { path = "crates/tono-core", version = "1.8.0" }
 anyhow = "1.0.102"
 base64 = "0.22.1"
 cpal = "0.15.3"
