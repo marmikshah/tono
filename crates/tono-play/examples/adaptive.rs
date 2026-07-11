@@ -9,23 +9,16 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use tono_core::adaptive::{AdaptiveMusic, LoopBuffer};
+use tono_core::adaptive::AdaptiveMusic;
 use tono_core::dsl::{Adsr, SeqWave, SoundDoc};
-use tono_core::render;
 use tono_core::song::{Song, note};
 use tono_play::{Speaker, device_sample_rate};
 
-/// Render a one-bar song and trim it to exactly one bar for a seamless loop.
-fn stem(song: &Song, sr: u32) -> LoopBuffer {
+/// Compile a one-bar song to a doc rendered at the device sample rate.
+fn stem_doc(song: &Song, sr: u32) -> SoundDoc {
     let mut doc = song.to_doc().expect("song compiles");
     doc.sample_rate = sr;
-    let bar_secs = song.length_bars() as f32 * song.beats_per_bar as f32 * 60.0 / song.bpm;
-    let n = (bar_secs * sr as f32) as usize;
-    let p = render::render_product(&doc);
-    let (mut l, mut r) = p.stereo.unwrap_or_else(|| (p.mono.clone(), p.mono));
-    l.truncate(n);
-    r.truncate(n);
-    LoopBuffer::from_stereo(l, r)
+    doc
 }
 
 fn one_bar(name: &str, wave: SeqWave, env: Adsr, notes: Vec<tono_core::dsl::SeqNote>) -> Song {
@@ -88,9 +81,17 @@ fn main() -> anyhow::Result<()> {
     )?;
 
     let mut music = AdaptiveMusic::new(sr);
-    music.add_layer(stem(&drums, sr), 0.0); // always on
-    music.add_layer(stem(&bass, sr), 0.34); // joins at mid intensity
-    music.add_layer(stem(&lead, sr), 0.7); // swells in when it's intense
+    // One phase-locked stem set: every stem lands on the same one-bar grid
+    // (4 beats at 120 bpm), so the cross-fades stay sample-aligned.
+    music.set_tempo(120.0, 4);
+    music.add_stem_set(
+        &[
+            (&stem_doc(&drums, sr), 0.0), // always on
+            (&stem_doc(&bass, sr), 0.34), // joins at mid intensity
+            (&stem_doc(&lead, sr), 0.7),  // swells in when it's intense
+        ],
+        4.0,
+    );
     let speaker = Speaker::open(music)?;
 
     // Ramp the action up, fire a stinger at the peak, then wind back down.

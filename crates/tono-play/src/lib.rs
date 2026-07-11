@@ -144,6 +144,10 @@ pub fn play<S: AudioSource + Send + 'static>(source: S, secs: f32) -> anyhow::Re
 /// Play a [`SoundDoc`] for `secs` seconds — streamed if it's in the streamable
 /// subset, else buffered — one call to hear a sound you built in code.
 pub fn play_doc(doc: &SoundDoc, secs: f32) -> anyhow::Result<()> {
+    // Validate up front: a malformed doc should error loudly here, not play
+    // silence (the classic case is the `env`-fields-nested-under-"adsr"
+    // serde-flatten footgun, which renders as an all-zero envelope).
+    doc.validate().map_err(|e| anyhow::anyhow!(e))?;
     let sr = device_sample_rate()?;
     let mut doc = doc.clone();
     doc.sample_rate = sr;

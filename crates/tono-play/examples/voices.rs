@@ -31,7 +31,7 @@ fn main() -> anyhow::Result<()> {
     let pad = engine.load(&{
         let mut d: SoundDoc = serde_json::from_str(
             r#"{ "name":"pad", "duration":1.0, "engine":2, "root": { "type":"mul", "inputs": [
-                { "type":"super", "freq":220, "voices":5, "detune":0.2 },
+                { "type":"super", "freq":220, "voices":5, "detune_cents":15 },
                 { "type":"env", "a":0.2, "d":0.2, "s":0.8, "r":0.3 } ] } }"#,
         )
         .unwrap();
