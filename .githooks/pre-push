@@ -11,5 +11,4 @@ while read -r _local_ref _local_sha remote_ref _remote_sha; do
         exit 1
     fi
 done
-make pre-commit-checks
-make test
+exec make verify

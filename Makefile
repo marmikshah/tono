@@ -63,9 +63,9 @@ release: ## Cut a release: guard clean master, tag vX.Y.Z from Cargo.toml, push 
 		git tag -a "v$$V" -m "v$$V" && git push origin "v$$V"; \
 		echo "✓ Tagged v$$V. The release workflow publishes to crates.io — watch GitHub Actions."
 
-hooks: ## Enable the pre-push gate (runs 'make verify' before every push)
+hooks: ## Install the git hooks (pre-commit: lint gate; pre-push: refuse master + make verify)
 	git config core.hooksPath .githooks
-	@echo "pre-push hook enabled"
+	@echo "git hooks enabled (.githooks)"
 
 clean: ## Remove build artifacts
 	cargo clean
