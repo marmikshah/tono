@@ -118,36 +118,36 @@ fn render_cmd(args: &[String]) -> anyhow::Result<()> {
     } else {
         doc.name.clone()
     };
-    let (left, right) = product
+    let stereo = product
         .stereo
-        .clone()
-        .unwrap_or_else(|| (product.mono.clone(), product.mono.clone()));
+        .as_ref()
+        .map(|(l, r)| (l.as_slice(), r.as_slice()));
+    let (left, right) = stereo.unwrap_or((&product.mono, &product.mono));
 
-    let audio_path = out_dir.join(format!("{stem}.{}", audio_ext(format)));
+    let audio_path = out_dir.join(format!("{stem}.{format}"));
     match format {
-        "flac" => tono::audio::write_flac(
+        "flac" => tono::audio::write_flac(&audio_path, &[left, right], doc.sample_rate, 16)?,
+        "ogg" => tono::audio::write_ogg(&audio_path, &[left, right], doc.sample_rate, 0.7)?,
+        _ => tono::audio::write_wav_stereo(&audio_path, left, right, doc.sample_rate, 16)?,
+    }
+    // A `loop` doc's WAV carries a `smpl` chunk spanning the whole rendered
+    // loop body, so game engines loop at the sample-accurate points.
+    if format == "wav"
+        && matches!(doc.playback, tono_core::dsl::Playback::Loop { .. })
+        && !left.is_empty()
+    {
+        tono::audio::append_smpl_loop(
             &audio_path,
-            &[left.as_slice(), right.as_slice()],
             doc.sample_rate,
-            16,
-        )?,
-        "ogg" => tono::audio::write_ogg(
-            &audio_path,
-            &[left.as_slice(), right.as_slice()],
-            doc.sample_rate,
-            0.7,
-        )?,
-        _ => tono::audio::write_wav_stereo(&audio_path, &left, &right, doc.sample_rate, 16)?,
+            0,
+            (left.len() as u32).saturating_sub(1),
+        )?;
     }
 
     // The feedback images + numeric analysis — the loop's "look at it" half.
     // Level metrics measure the stereo pair when there is one (the export);
     // the images read the mono mid.
     let png = out_dir.join(format!("{stem}.png"));
-    let stereo = product
-        .stereo
-        .as_ref()
-        .map(|(l, r)| (l.as_slice(), r.as_slice()));
     let analysis = tono::imaging::analyze_to_disk(&product.mono, stereo, doc.sample_rate, &png)?;
     let stats = out_dir.join(format!("{stem}.stats.json"));
     fs::write(&stats, serde_json::to_string_pretty(&analysis)?)?;
@@ -157,14 +157,6 @@ fn render_cmd(args: &[String]) -> anyhow::Result<()> {
     println!("{}", analysis.waveform_png_path);
     println!("{}", stats.display());
     Ok(())
-}
-
-fn audio_ext(format: &str) -> &str {
-    match format {
-        "flac" => "flac",
-        "ogg" => "ogg",
-        _ => "wav",
-    }
 }
 
 fn midi_cmd(args: &[String]) -> anyhow::Result<()> {
@@ -248,12 +240,5 @@ mod tests {
         let after = Cli::parse(&args(&["f.json", "--format", "ogg"]), &["--format"]).unwrap();
         assert_eq!(before.flag(&["--format"]), after.flag(&["--format"]));
         assert_eq!(before.positionals, after.positionals);
-    }
-
-    #[test]
-    fn audio_ext_maps_every_accepted_format() {
-        assert_eq!(audio_ext("wav"), "wav");
-        assert_eq!(audio_ext("flac"), "flac");
-        assert_eq!(audio_ext("ogg"), "ogg");
     }
 }

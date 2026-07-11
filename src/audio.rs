@@ -17,7 +17,8 @@ fn interleave_i32(channels: &[&[f32]], bits: u16) -> Vec<i32> {
     out
 }
 
-/// Write channels as a FLAC file (lossless). `bits` is 8 or 16.
+/// Write channels as a FLAC file (lossless). `bits` is 8 or 16; anything else
+/// falls back to 16 (same contract as `write_wav`).
 pub fn write_flac(
     path: &Path,
     channels: &[&[f32]],
