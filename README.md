@@ -33,7 +33,8 @@ Recognizable classics rebuilt from scratch — the ▶ links play right on GitHu
 | river-flows-in-you | [▶](docs/examples/audio/river-flows-in-you.mp4) | a complete piano piece — 800 notes on the sampled grand |
 | band-demo | [▶](docs/examples/audio/band-demo.mp4) | four instruments, one groove, mixed on the stereo bus |
 
-More in [docs/examples/audio/](docs/examples/audio/) — game-ready BGM loops and ambient beds, all deterministic renders.
+More in [docs/examples/audio/](docs/examples/audio/) — game-ready BGM loops and
+ambient beds, all deterministic renders.
 
 ## What it is
 
@@ -58,7 +59,14 @@ in real time, or played as an instrument — so audio becomes something you can
 - **SoundFont sampler** — point the `sampler` voice at any free GM bank for real
   recorded instruments, still deterministic.
 
-## Use it from the command line
+## Quick start
+
+```sh
+cargo install tono       # the `tono render` CLI
+cargo add tono-core      # …or the engine as a library (games, tools)
+```
+
+Render a document and look at what came back:
 
 ```sh
 tono render docs/examples/blip.json -o out/
@@ -71,6 +79,23 @@ tono render docs/examples/blip.json -o out/
 That loop — emit a doc, render, read the images + stats, refine — is all a
 human *or an agent* needs to author sound by inspection.
 
+> Sampled instruments need a free General MIDI SoundFont once (FluidR3 GM,
+> GeneralUser GS): `wave: "sampler", sf2: "/path/to/gm.sf2", sf2_preset: 0`.
+
+## One engine, five faces
+
+Every face renders the same `SoundDoc` byte-identically — pick the surface that
+fits your workflow. New to the codebase? Start with the
+[architecture & getting-started guide](https://marmikshah.github.io/tono/architecture.html).
+
+| Face | What it is | Entry point |
+|---|---|---|
+| CLI | render → audio + spectrogram + stats | `tono render f.json -o out/` |
+| Rust library | the engine embedded in a game or tool | `cargo add tono-core` |
+| Python bindings | live engine + deterministic numpy renders | `make python` |
+| Pattern station | Tauri app: FL-style step grid, live audio, undo | `make desktop` |
+| Playground | hear Rust snippets through the speakers | `make play EXAMPLE=band` |
+
 ## Use it from Rust
 
 ```rust
@@ -78,7 +103,7 @@ use tono_core::dsl::SoundDoc;
 use tono_core::render;
 
 let doc: SoundDoc = serde_json::from_str(r#"{
-    "name": "blip", "duration": 0.3, "engine": 2,
+    "name": "blip", "duration": 0.3, "engine": 4,
     "root": { "type": "mul", "inputs": [
         { "type": "sine", "freq": 880 },
         { "type": "env", "a": 0.002, "d": 0.08, "s": 0.0, "r": 0.05 } ] }
@@ -140,27 +165,6 @@ buf = tono.Patch(open("impact.patch.json").read()).render(hardness=0.7)
 
 Build it with `make python` (maturin; abi3 wheels for 3.9+ build in CI).
 
-## Install
-
-```sh
-cargo add tono-core      # the engine, as a library (games, tools)
-cargo install tono       # the `tono render` CLI
-```
-
-Sampled instruments need a free General MIDI SoundFont once (FluidR3 GM,
-GeneralUser GS): `wave: "sampler", sf2: "/path/to/gm.sf2", sf2_preset: 0`.
-
-## The other faces
-
-One `SoundDoc`, rendered byte-identically by every face:
-
-- **A native pattern station** (`make desktop`) — a Tauri app with real-time
-  audio: an FL-style step grid over the catalog instruments, click-free live
-  editing, per-track faders, undo, and LUFS/spectrogram feedback per edit.
-- **A programmatic playground** (`make play`) — hear a sound, instrument, song,
-  bus chain, or adaptive-music arc from a few lines of Rust
-  (`cargo run -p tono-play --example buses` / `voices` / `interactive_music`).
-
 ## Determinism
 
 The real-time streaming path is byte-identical to an offline bounce (verified
@@ -169,13 +173,41 @@ document `engine` revision, so old sounds never change. A golden corpus pins
 representative renders in CI. Render the same document twice, get the same bytes
 — which is what makes audio testable, diffable, and cacheable.
 
-## More
+## Learn more
 
+- [Architecture & getting started](https://marmikshah.github.io/tono/architecture.html) —
+  the smallest unit (a node) and the ladder up to a full game soundtrack.
 - [docs/cookbook.md](docs/cookbook.md) — the `SoundDoc` DSL, node vocabulary,
   instrument table, worked recipes (validated in CI).
 - [docs/runtime.md](docs/runtime.md) — embedding the engine + parametric patches.
 - [docs/ROADMAP.md](docs/ROADMAP.md) — where 2.0 is headed.
 - `make help` — every target; `make verify` mirrors CI.
+
+## A personal note
+
+Every line of code in tono was written by AI. I didn't write a single line
+myself — my part was direction: deciding what to build, and holding the
+project to the same practices and standards I use in the projects where I do
+still write the code.
+
+If tono helps you in any way — as a game-audio tool, a reference, or just a
+kick-start on your own project — that makes me genuinely happy. The tokens are
+already spent; the least they can do is be useful to you too.
+
+> **⚠️ Notice — versions below 2.0.0**
+>
+> I intend to follow SemVer, but be realistic about what this project is:
+> AI-generated code. Diffs are large, and every release below 2.0.0 may
+> contain breaking changes despite my best intentions.
+>
+> Once the tool has proven itself, I will cut a 2.0.0 release — that is the
+> point where I start reviewing the code in detail and contributing to it
+> directly. 2.0.0 will be tagged by me, by hand — it is the one release an AI
+> agent is not allowed to cut. Until then, assume that anything below 2.0.0
+> has not been fully reviewed by me and may contain bugs or security issues I
+> haven't caught.
+>
+> Use at your own risk.
 
 ## License
 

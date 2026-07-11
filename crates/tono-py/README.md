@@ -26,6 +26,8 @@ music.add_layer(open("combat_stem.json").read(), fade_in_at=0.6)
 music.set_intensity(0.9)             # stems swell with the action
 ```
 
+Runnable version: [`examples/live_pygame.py`](examples/live_pygame.py).
+
 ## Pull — render to numpy, integrate anywhere
 
 ```python
@@ -40,8 +42,10 @@ sd.play(buf, 48000)
 assert np.array_equal(impact.render(hardness=0.7), impact.render(hardness=0.7))
 
 # Or bounce a whole SoundDoc offline.
-samples = tono.render(open("blip.sound.json").read())
+samples = tono.render(open("blip.json").read())
 ```
+
+Runnable version: [`examples/render_numpy.py`](examples/render_numpy.py).
 
 ## Build
 

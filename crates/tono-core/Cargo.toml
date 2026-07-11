@@ -6,6 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+# cargo copies the workspace README into the package, so the crates.io page of
+# the engine crate isn't blank.
+readme = "../../README.md"
 keywords = ["audio", "synthesis", "dsp", "chiptune", "gamedev"]
 categories = ["multimedia::audio", "game-development"]
 

@@ -1,6 +1,6 @@
 //! A four-piece band, written with the catalog + fluent song builder, then heard.
 //!
-//!     cargo run -p tono-play --example band
+//!     make play EXAMPLE=band   (or `cargo run -p tono-play --example band`)
 //!
 //! `Song::add(instrument, |t| ...)` adds a catalog instrument and writes its
 //! notes on the shared beat timeline — piano chords, a walking bass, a steel

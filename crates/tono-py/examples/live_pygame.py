@@ -1,6 +1,7 @@
 """Live procedural audio for a Python game — the whole thing in ~10 lines.
 
-No WAVs, no compiler: `pip install tono`, then drive the engine from your loop.
+No WAVs to ship: build the bindings from the repo with `make python`, then
+drive the engine from your loop.
 This example uses plain `time.sleep` in place of a real game loop; drop the same
 calls into a Pygame / Arcade / Ren'Py loop instead.
 """

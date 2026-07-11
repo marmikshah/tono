@@ -4,8 +4,8 @@ Covers the deterministic pull API (no audio device needed, so it runs in CI) and
 asserts the live-stream classes are exported. The owned-stream Engine is exercised
 only when an output device is available.
 
-Run from the repo root after `maturin develop -m crates/tono-py/Cargo.toml`:
-    python crates/tono-py/tests/smoke.py
+Run from the repo root after `make python`:
+    make python-test
 """
 
 from pathlib import Path

@@ -1,5 +1,5 @@
 /target
-/sounds
+/dist
 .DS_Store
 *.swp
 /crates/tono-desktop/gen/
@@ -7,6 +7,5 @@
 # A library resolves at the consumer's end, so the lockfile is not committed.
 /Cargo.lock
 
-# Local-only helpers/notes kept out of the repo
+# Local-only notes kept out of the repo
 /docs/architecture.html
-/resume.sh

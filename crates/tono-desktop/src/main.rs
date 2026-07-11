@@ -5,10 +5,9 @@
 //! hear it on the next block; every edit is undoable; the project saves as an
 //! ordinary tono [`Song`](tono_core::song::Song) wrapped with its grid rows.
 //!
-//! Not part of the default build or CI; built only via `make desktop`. Two
-//! entry points on one engine:
-//! - `tono-desktop` (no args) launches the station window.
-//! - `tono-desktop play FILE.json [SECS]` is a headless native preview (loops).
+//! Not part of the default build or CI; built only via `make desktop`.
+//! (Headless preview lives in tono-play: `tono_play::play_doc` picks the
+//! byte-identical streaming path when it can.)
 //!
 //! State lives in Rust ([`studio::Station`]); the webview is a pure view that
 //! sends commands and re-renders from the returned [`StudioState`].
@@ -38,6 +37,19 @@ impl Default for App {
             station: Mutex::new(Station::new()),
             audio: Mutex::new(None),
         }
+    }
+}
+
+impl App {
+    /// Lock the station, recovering from a poisoned lock: a panic on another
+    /// thread must not wedge the UI — the state is plain data, safe to reuse.
+    fn station(&self) -> std::sync::MutexGuard<'_, Station> {
+        self.station.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Lock the audio-deck slot (same poison recovery as [`Self::station`]).
+    fn audio(&self) -> std::sync::MutexGuard<'_, Option<AudioHandle>> {
+        self.audio.lock().unwrap_or_else(|p| p.into_inner())
     }
 }
 
@@ -77,15 +89,13 @@ struct StudioState {
 
 /// Rebuild the view model and push the recompiled loop to the audio deck.
 fn refresh(app: &App) -> StudioState {
-    let station = app.station.lock().unwrap_or_else(|p| p.into_inner());
+    let station = app.station();
     let project = &station.project;
     let mut error = None;
 
     match project.loop_doc() {
         Ok(doc) => {
-            if let Ok(slot) = app.audio.lock()
-                && let Some(deck) = slot.as_ref()
-            {
+            if let Some(deck) = app.audio().as_ref() {
                 deck.set_doc(doc);
             }
         }
@@ -129,8 +139,7 @@ fn refresh(app: &App) -> StudioState {
 /// Run an undoable edit, then rebuild the view.
 fn edit(app: &App, change: impl FnOnce(&mut studio::Project)) -> StudioState {
     {
-        let mut station = app.station.lock().unwrap_or_else(|p| p.into_inner());
-        station.edit(change);
+        app.station().edit(change);
     }
     refresh(app)
 }
@@ -171,70 +180,65 @@ fn set_swing(swing: f32, app: State<App>) -> StudioState {
 #[tauri::command]
 fn set_track(name: String, gain: f32, pan: f32, muted: bool, app: State<App>) -> StudioState {
     edit(&app, |p| {
+        // Only mutate state for a real track — an unknown name must not leave
+        // a phantom entry in the serialized mute set.
         if let Some(t) = p.song.tracks.iter_mut().find(|t| t.name == name) {
             t.gain = gain.clamp(0.0, 2.0);
             t.pan = pan.clamp(-1.0, 1.0);
+            match muted {
+                true => p.muted.insert(name.clone()),
+                false => p.muted.remove(&name),
+            };
         }
-        match muted {
-            true => p.muted.insert(name.clone()),
-            false => p.muted.remove(&name),
-        };
     })
 }
 
 /// Step back / forward through the edit history.
 #[tauri::command]
 fn undo(app: State<App>) -> StudioState {
-    {
-        let mut station = app.station.lock().unwrap_or_else(|p| p.into_inner());
-        station.undo();
-    }
+    app.station().undo();
     refresh(&app)
 }
 
 /// See [`undo`].
 #[tauri::command]
 fn redo(app: State<App>) -> StudioState {
-    {
-        let mut station = app.station.lock().unwrap_or_else(|p| p.into_inner());
-        station.redo();
-    }
+    app.station().redo();
     refresh(&app)
 }
 
 /// Save the project (Song + grid rows) as JSON.
 #[tauri::command]
 fn save_project(path: String, app: State<App>) -> Result<(), String> {
-    let station = app.station.lock().unwrap_or_else(|p| p.into_inner());
-    station.save(&path)
+    app.station().save(&path)
 }
 
 /// Load a project, replacing the current one (undoable).
 #[tauri::command]
 fn load_project(path: String, app: State<App>) -> Result<StudioState, String> {
     {
-        let mut station = app.station.lock().unwrap_or_else(|p| p.into_inner());
-        station.load(&path)?;
+        app.station().load(&path)?;
     }
     Ok(refresh(&app))
 }
 
 /// Transport: `"play"` (spins the audio deck up on first use), `"pause"`,
-/// `"stop"`. Returns an error string when no output device is available.
+/// `"stop"`. Errors on an unknown action or when no output device is available.
 #[tauri::command]
 fn transport(action: String, app: State<App>) -> Result<(), String> {
-    let mut slot = app.audio.lock().unwrap_or_else(|p| p.into_inner());
-    if slot.is_none() && action == "play" {
+    let action: audio::TransportAction = action.parse()?;
+    let mut slot = app.audio();
+    if slot.is_none() && matches!(action, audio::TransportAction::Play) {
         match audio::spawn() {
             Ok(deck) => *slot = Some(deck),
             Err(e) => return Err(format!("audio unavailable: {e}")),
         }
         drop(slot);
         refresh(&app); // push the current loop to the fresh deck
-        slot = app.audio.lock().unwrap_or_else(|p| p.into_inner());
+        slot = app.audio();
     }
     if let Some(deck) = slot.as_ref() {
-        deck.transport(&action);
+        deck.transport(action);
     }
     Ok(())
 }
@@ -249,11 +253,8 @@ struct Playhead {
 /// Where the loop currently is (polled by the UI at ~20 Hz).
 #[tauri::command]
 fn playhead(app: State<App>) -> Playhead {
-    let steps = {
-        let station = app.station.lock().unwrap_or_else(|p| p.into_inner());
-        station.project.steps().max(1)
-    };
-    let slot = app.audio.lock().unwrap_or_else(|p| p.into_inner());
+    let steps = app.station().project.steps().max(1);
+    let slot = app.audio();
     let (playing, pos, len) = slot.as_ref().map(|d| d.playhead()).unwrap_or((false, 0, 0));
     let step = match len {
         0 => 0,
@@ -290,7 +291,7 @@ fn analyze(app: State<App>) -> AnalysisResult {
         waveform_png: String::new(),
     };
     let doc = {
-        let station = app.station.lock().unwrap_or_else(|p| p.into_inner());
+        let station = app.station();
         match station.project.loop_doc() {
             Ok(Some(doc)) => doc,
             Ok(None) => return empty(None),
@@ -298,9 +299,11 @@ fn analyze(app: State<App>) -> AnalysisResult {
         }
     };
     let product = render::render_product(&doc);
+    // One STFT feeds both the numeric stats and the spectrogram image.
+    let frames = analysis::spectral_frames(&product.mono);
     let stats = match &product.stereo {
-        Some((l, r)) => analysis::stats_stereo(l, r, doc.sample_rate),
-        None => analysis::stats(&product.mono, doc.sample_rate),
+        Some((l, r)) => analysis::stats_stereo_with(l, r, doc.sample_rate, &frames),
+        None => analysis::stats_with(&product.mono, doc.sample_rate, &frames),
     };
     let b64 = |bytes: Vec<u8>| base64::engine::general_purpose::STANDARD.encode(bytes);
     AnalysisResult {
@@ -310,7 +313,7 @@ fn analyze(app: State<App>) -> AnalysisResult {
         true_peak_dbtp: stats.true_peak_dbfs,
         peak_dbfs: stats.peak_dbfs,
         duration: stats.duration_secs,
-        spectrogram_png: b64(analysis::spectrogram_png(&product.mono).unwrap_or_default()),
+        spectrogram_png: b64(analysis::spectrogram_png_with(&frames).unwrap_or_default()),
         waveform_png: b64(analysis::waveform_png(&product.mono).unwrap_or_default()),
     }
 }
@@ -318,18 +321,11 @@ fn analyze(app: State<App>) -> AnalysisResult {
 const HELP: &str = "tono-desktop — the tono pattern station.
 
 USAGE:
-    tono-desktop                         launch the station window (real-time audio)
-    tono-desktop play FILE.json [SECS]   headless: loop a graph through the default device";
+    tono-desktop    launch the station window (real-time audio)";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
-        Some("play") => {
-            if let Err(e) = play_cli(&args[2..]) {
-                eprintln!("error: {e}");
-                std::process::exit(1);
-            }
-        }
         Some("--help" | "-h") => println!("{HELP}"),
         _ => run_studio(),
     }
@@ -356,22 +352,4 @@ fn run_studio() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to launch the tono studio window");
-}
-
-/// `tono-desktop play FILE [SECS]` — loop a graph natively via cpal.
-fn play_cli(args: &[String]) -> anyhow::Result<()> {
-    let path = args
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("usage: tono-desktop play FILE.json [SECS]"))?;
-    let doc: tono_core::dsl::SoundDoc = serde_json::from_str(&std::fs::read_to_string(path)?)?;
-    doc.validate().map_err(|e| anyhow::anyhow!(e))?;
-    let secs = args
-        .get(1)
-        .and_then(|s| s.parse::<f32>().ok())
-        .unwrap_or_else(|| doc.duration.max(0.5));
-    let deck = audio::spawn()?;
-    deck.set_doc(Some(doc));
-    deck.transport("play");
-    std::thread::sleep(std::time::Duration::from_secs_f32(secs));
-    Ok(())
 }

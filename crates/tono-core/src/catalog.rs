@@ -125,6 +125,7 @@ pub struct Voice {
 
 /// The old name of [`Voice`] — it collided with the live-playable
 /// [`crate::instrument::Instrument`], the crate's other `Instrument`.
+/// Deleted at 2.0.
 #[deprecated(since = "1.6.0", note = "renamed to `catalog::Voice`")]
 pub type Instrument = Voice;
 
@@ -212,11 +213,12 @@ impl GrandPiano {
     pub fn bright() -> Voice {
         Voice {
             gain: 1.05,
-            voice: piano_tone(&[
-                (Tone::Hammer, 1.6),
-                (Tone::Strike, 0.11),
-                (Tone::Decay, 1.05),
-            ]),
+            voice: VoiceParams {
+                piano_hammer: Some(1.6),
+                piano_strike: Some(0.11),
+                piano_decay: Some(1.05),
+                ..VoiceParams::default()
+            },
             ..voice(
                 "bright piano",
                 SeqWave::Piano,
@@ -234,11 +236,12 @@ impl GrandPiano {
     pub fn mellow() -> Voice {
         Voice {
             gain: 0.9,
-            voice: piano_tone(&[
-                (Tone::Hammer, 0.65),
-                (Tone::Strike, 0.14),
-                (Tone::Decay, 1.1),
-            ]),
+            voice: VoiceParams {
+                piano_hammer: Some(0.65),
+                piano_strike: Some(0.14),
+                piano_decay: Some(1.1),
+                ..VoiceParams::default()
+            },
             ..voice("mellow piano", SeqWave::Piano, piano_env(0.6))
         }
     }
@@ -248,11 +251,12 @@ impl GrandPiano {
     pub fn felt() -> Voice {
         Voice {
             gain: 0.85,
-            voice: piano_tone(&[
-                (Tone::Hammer, 0.35),
-                (Tone::Strike, 0.16),
-                (Tone::Decay, 0.8),
-            ]),
+            voice: VoiceParams {
+                piano_hammer: Some(0.35),
+                piano_strike: Some(0.16),
+                piano_decay: Some(0.8),
+                ..VoiceParams::default()
+            },
             ..voice("felt piano", SeqWave::Piano, piano_env(0.5))
         }
     }
@@ -261,13 +265,14 @@ impl GrandPiano {
     /// (a metallic jangle); slightly hard, dry, no pedal.
     pub fn upright() -> Voice {
         Voice {
-            voice: piano_tone(&[
-                (Tone::Hammer, 1.15),
-                (Tone::Strike, 0.115),
-                (Tone::Inharm, 1.6),
-                (Tone::Detune, 1.3),
-                (Tone::Decay, 0.7),
-            ]),
+            voice: VoiceParams {
+                piano_hammer: Some(1.15),
+                piano_strike: Some(0.115),
+                piano_inharm: Some(1.6),
+                piano_detune: Some(1.3),
+                piano_decay: Some(0.7),
+                ..VoiceParams::default()
+            },
             ..voice("upright piano", SeqWave::Piano, piano_env(0.12))
         }
     }
@@ -276,41 +281,17 @@ impl GrandPiano {
     /// short inharmonic strings and a bright tinny attack. Plinky, fast-decaying.
     pub fn honky_tonk() -> Voice {
         Voice {
-            voice: piano_tone(&[
-                (Tone::Hammer, 1.5),
-                (Tone::Strike, 0.11),
-                (Tone::Inharm, 1.7),
-                (Tone::Detune, 12.0),
-                (Tone::Decay, 0.65),
-            ]),
+            voice: VoiceParams {
+                piano_hammer: Some(1.5),
+                piano_strike: Some(0.11),
+                piano_inharm: Some(1.7),
+                piano_detune: Some(12.0),
+                piano_decay: Some(0.65),
+                ..VoiceParams::default()
+            },
             ..voice("honky-tonk piano", SeqWave::Piano, piano_env(0.12))
         }
     }
-}
-
-/// Which piano tone knob a [`piano_tone`] entry sets.
-enum Tone {
-    Hammer,
-    Strike,
-    Inharm,
-    Detune,
-    Decay,
-}
-
-/// Build [`VoiceParams`] for a piano variant from a list of (knob, value) pairs;
-/// unlisted knobs stay `None` (the concert-grand default).
-fn piano_tone(knobs: &[(Tone, f32)]) -> VoiceParams {
-    let mut v = VoiceParams::default();
-    for (knob, value) in knobs {
-        match knob {
-            Tone::Hammer => v.piano_hammer = Some(*value),
-            Tone::Strike => v.piano_strike = Some(*value),
-            Tone::Inharm => v.piano_inharm = Some(*value),
-            Tone::Detune => v.piano_detune = Some(*value),
-            Tone::Decay => v.piano_decay = Some(*value),
-        }
-    }
-    v
 }
 
 /// The **electric piano** — a Rhodes-style tine voice: soft FM body plus a
@@ -471,9 +452,19 @@ impl Bass {
     /// Picked — a bright plectrum tick, a fast-closing filter, a touch of grit.
     pub fn pick() -> Voice {
         Voice {
-            voice: bass_tone(
-                300.0, 800.0, 1200.0, 0.08, 2500.0, 0.75, 0.40, 1.0, 0.05, 1.6,
-            ),
+            voice: VoiceParams {
+                bass_cutoff: Some(300.0),
+                bass_env: Some(800.0),
+                bass_env_vel: Some(1200.0),
+                bass_decay: Some(0.08),
+                bass_click: Some(2500.0),
+                bass_body: Some(0.75),
+                bass_sub: Some(0.40),
+                bass_sub_ratio: Some(1.0),
+                bass_drive: Some(0.05),
+                bass_body_decay: Some(1.6),
+                ..VoiceParams::default()
+            },
             ..voice(
                 "pick bass",
                 SeqWave::Bass,
@@ -492,7 +483,19 @@ impl Bass {
     /// translates on small speakers; long hold, felt more than heard.
     pub fn sub() -> Voice {
         Voice {
-            voice: bass_tone(100.0, 150.0, 200.0, 0.25, 0.0, 0.22, 0.95, 1.0, 0.0, 4.0),
+            voice: VoiceParams {
+                bass_cutoff: Some(100.0),
+                bass_env: Some(150.0),
+                bass_env_vel: Some(200.0),
+                bass_decay: Some(0.25),
+                bass_click: Some(0.0),
+                bass_body: Some(0.22),
+                bass_sub: Some(0.95),
+                bass_sub_ratio: Some(1.0),
+                bass_drive: Some(0.0),
+                bass_body_decay: Some(4.0),
+                ..VoiceParams::default()
+            },
             ..voice(
                 "sub bass",
                 SeqWave::Bass,
@@ -511,7 +514,19 @@ impl Bass {
     /// modern electronic/EDM voice.
     pub fn synth() -> Voice {
         Voice {
-            voice: bass_tone(600.0, 1500.0, 800.0, 0.25, 0.0, 0.85, 0.35, 0.5, 0.35, 6.0),
+            voice: VoiceParams {
+                bass_cutoff: Some(600.0),
+                bass_env: Some(1500.0),
+                bass_env_vel: Some(800.0),
+                bass_decay: Some(0.25),
+                bass_click: Some(0.0),
+                bass_body: Some(0.85),
+                bass_sub: Some(0.35),
+                bass_sub_ratio: Some(0.5),
+                bass_drive: Some(0.35),
+                bass_body_decay: Some(6.0),
+                ..VoiceParams::default()
+            },
             ..voice(
                 "synth bass",
                 SeqWave::Bass,
@@ -524,35 +539,6 @@ impl Bass {
                 },
             )
         }
-    }
-}
-
-/// Build [`VoiceParams`] for a bass variant (all ten `bass_*` knobs).
-#[allow(clippy::too_many_arguments)]
-fn bass_tone(
-    cutoff: f32,
-    env: f32,
-    env_vel: f32,
-    decay: f32,
-    click: f32,
-    body: f32,
-    sub: f32,
-    sub_ratio: f32,
-    drive: f32,
-    body_decay: f32,
-) -> VoiceParams {
-    VoiceParams {
-        bass_cutoff: Some(cutoff),
-        bass_env: Some(env),
-        bass_env_vel: Some(env_vel),
-        bass_decay: Some(decay),
-        bass_click: Some(click),
-        bass_body: Some(body),
-        bass_sub: Some(sub),
-        bass_sub_ratio: Some(sub_ratio),
-        bass_drive: Some(drive),
-        bass_body_decay: Some(body_decay),
-        ..VoiceParams::default()
     }
 }
 
@@ -632,10 +618,9 @@ impl Drums {
 
     /// The original synthesized GM kit (byte-frozen).
     pub fn classic() -> Voice {
-        Voice {
-            voice: VoiceParams::default(), // no kit key ⇒ classic, unchanged
-            ..drum_kit("classic drums", KitStyle::Classic)
-        }
+        // Built directly (not via drum_kit): the classic kit ships NO kit key,
+        // keeping old documents byte-frozen.
+        voice("classic drums", SeqWave::Kit, drum_env())
     }
 
     /// Clean synthesized electronic drums — tight, punchy, crisp.
@@ -649,6 +634,17 @@ impl Drums {
     }
 }
 
+/// The shared kit envelope (instant attack, full sustain, short release).
+fn drum_env() -> Adsr {
+    Adsr {
+        a: 0.001,
+        d: 0.0,
+        s: 1.0,
+        r: 0.05,
+        punch: 0.0,
+    }
+}
+
 /// A drum kit on the GM map with the given [`KitStyle`].
 fn drum_kit(name: &str, style: KitStyle) -> Voice {
     Voice {
@@ -656,17 +652,7 @@ fn drum_kit(name: &str, style: KitStyle) -> Voice {
             kit: Some(style),
             ..VoiceParams::default()
         },
-        ..voice(
-            name,
-            SeqWave::Kit,
-            Adsr {
-                a: 0.001,
-                d: 0.0,
-                s: 1.0,
-                r: 0.05,
-                punch: 0.0,
-            },
-        )
+        ..voice(name, SeqWave::Kit, drum_env())
     }
 }
 

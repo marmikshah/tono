@@ -49,7 +49,7 @@ jobs:
       - name: Verify tag matches Cargo.toml version
         if: env.HAS_TOKEN == 'true'
         run: |
-          CRATE_VERSION="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)".*/\1/p' Cargo.toml)"
+          CRATE_VERSION="$(make -s version)"
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           if [ "$CRATE_VERSION" != "$TAG_VERSION" ]; then
             echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $CRATE_VERSION"; exit 1
@@ -63,7 +63,7 @@ jobs:
         if: env.HAS_TOKEN == 'true'
         run: |
           V="${GITHUB_REF_NAME#v}"
-          if curl -sf "https://index.crates.io/to/no/tono-core" | grep -q "\"vers\":\"$V\""; then
+          if curl -sf "https://index.crates.io/to/no/tono-core" | grep -qF "\"vers\":\"$V\""; then
             echo "tono-core $V already on crates.io — skipping"
           else
             cargo publish -p tono-core
@@ -74,7 +74,7 @@ jobs:
         if: env.HAS_TOKEN == 'true'
         run: |
           V="${GITHUB_REF_NAME#v}"
-          if curl -sf "https://index.crates.io/to/no/tono" | grep -q "\"vers\":\"$V\""; then
+          if curl -sf "https://index.crates.io/to/no/tono" | grep -qF "\"vers\":\"$V\""; then
             echo "tono $V already on crates.io — skipping"
           else
             cargo publish -p tono

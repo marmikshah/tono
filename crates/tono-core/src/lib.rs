@@ -35,13 +35,20 @@ pub mod runtime;
 pub mod song;
 pub mod streaming;
 pub mod vary;
-pub mod voice;
 
 /// Renamed to [`player`] — `stream` (the buffer-backed audition `Player`) sat
 /// one suffix away from [`streaming`] (the per-sample block renderer), and the
-/// pair was a reliable source of confusion.
+/// pair was a reliable source of confusion. Deleted at 2.0.
 #[deprecated(since = "1.6.0", note = "renamed to `player`")]
 pub use player as stream;
+
+/// Moved to [`instrument`] — this module was named for a type it doesn't
+/// contain (`EnvGen`'s only consumer is the instrument; the crate's `Voice`
+/// lives in [`catalog`]). This shim keeps `tono_core::voice::EnvGen` valid
+/// until 2.0.
+pub mod voice {
+    pub use crate::instrument::EnvGen;
+}
 
 /// The workhorse names in one import: `use tono_core::prelude::*;` covers the
 /// primary flow (author a doc or a [`song::Song`], render it, analyze it, play
@@ -49,7 +56,9 @@ pub use player as stream;
 pub mod prelude {
     #[cfg(feature = "analysis")]
     pub use crate::analysis::{Analysis, stats, stats_stereo};
-    pub use crate::catalog::{Bass, Drums, GrandPiano, Guitar, Voice};
+    pub use crate::catalog::{
+        Bass, Drums, ElectricPiano, GrandPiano, Guitar, Organ, Strings, Voice,
+    };
     pub use crate::dsl::{Adsr, ENGINE_VERSION, Node, SeqNote, SeqWave, SoundDoc, Value};
     pub use crate::instrument::{Instrument, InstrumentDesign, Note};
     pub use crate::patch::Patch;

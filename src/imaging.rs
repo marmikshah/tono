@@ -28,13 +28,16 @@ pub fn analyze_to_disk(
     sample_rate: u32,
     png_path: &Path,
 ) -> anyhow::Result<Analysis> {
-    std::fs::write(png_path, analysis::spectrogram_png(mono)?)?;
+    // One STFT feeds both the spectrogram image and the numeric stats — for a
+    // minutes-long render it is the most expensive analysis step.
+    let frames = analysis::spectral_frames(mono);
+    std::fs::write(png_path, analysis::spectrogram_png_with(&frames)?)?;
     let wave_path = waveform_path(png_path);
     std::fs::write(&wave_path, analysis::waveform_png(mono)?)?;
 
     let mut a = match stereo {
-        Some((l, r)) => analysis::stats_stereo(l, r, sample_rate),
-        None => analysis::stats(mono, sample_rate),
+        Some((l, r)) => analysis::stats_stereo_with(l, r, sample_rate, &frames),
+        None => analysis::stats_with(mono, sample_rate, &frames),
     };
     a.spectrogram_png_path = png_path.to_string_lossy().into_owned();
     a.waveform_png_path = wave_path.to_string_lossy().into_owned();

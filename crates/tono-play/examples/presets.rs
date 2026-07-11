@@ -1,6 +1,6 @@
 //! Hear every factory instrument, played from a few lines of Rust.
 //!
-//!     cargo run -p tono-play --example presets
+//!     make play EXAMPLE=presets   (or `cargo run -p tono-play --example presets`)
 //!
 //! Each preset is a ready-made [`InstrumentDesign`]; open a [`Speaker`] on it and
 //! drive `note_on`/`note_off` live — the mono presets glide between notes, the

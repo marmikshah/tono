@@ -10,11 +10,13 @@ on:
     paths:
       - "crates/tono-py/**"
       - "crates/tono-core/**"
+      - "crates/tono-play/**"
       - ".github/workflows/python.yml"
   pull_request:
     paths:
       - "crates/tono-py/**"
       - "crates/tono-core/**"
+      - "crates/tono-play/**"
       - ".github/workflows/python.yml"
 
 env:
@@ -25,7 +27,7 @@ jobs:
     name: Smoke test (Linux)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-python@v5
@@ -33,15 +35,10 @@ jobs:
           python-version: "3.9"
       - name: Install ALSA headers (cpal build dep)
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - name: Build + install the extension
-        run: |
-          python -m pip install --upgrade pip maturin numpy
-          # `maturin develop` needs an active virtualenv (absent on CI's system
-          # Python), so build a wheel and pip-install it instead.
-          maturin build --out dist -m crates/tono-py/Cargo.toml
-          pip install --no-index --find-links dist tono
-      - name: Smoke test
-        run: python crates/tono-py/tests/smoke.py
+      - name: Build, install, and smoke-test the extension
+        # `maturin develop` needs an active virtualenv (absent on CI's system
+        # Python), so the target builds a wheel and pip-installs it instead.
+        run: make python-smoke
 
   wheels:
     name: Wheels (${{ matrix.platform.os }})
@@ -63,7 +60,7 @@ jobs:
             manylinux: auto
             args: --release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: PyO3/maturin-action@v1
         with:
           command: build

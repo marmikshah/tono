@@ -1,6 +1,6 @@
 //! Compose a little song by adding instruments and arranging parts, then hear it.
 //!
-//!     cargo run -p tono-play --example song
+//!     make play EXAMPLE=song   (or `cargo run -p tono-play --example song`)
 //!
 //! A [`Song`] is add-a-track, define-a-pattern, arrange-it — and it compiles to
 //! an ordinary deterministic `SoundDoc`, so it plays through the same engine as

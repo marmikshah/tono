@@ -10,12 +10,13 @@ publish = false
 
 [lib]
 name = "tono"
-# cdylib for the Python extension module; rlib so the seam is unit-testable.
-crate-type = ["cdylib", "rlib"]
+# cdylib only: the crate has no Rust tests (smoke coverage is Python-side), and
+# an rlib here collides with the root crate's libtono.rlib in workspace builds.
+crate-type = ["cdylib"]
 
 [dependencies]
 tono-core = { workspace = true }
-cpal = { workspace = true }
+tono-play = { path = "../tono-play" }
 serde_json = { workspace = true }
 # abi3-py39: one wheel per platform covers every CPython 3.9+. `extension-module`
 # is enabled only for the wheel build (see pyproject [tool.maturin].features), so

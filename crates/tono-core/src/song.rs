@@ -286,7 +286,7 @@ impl Song {
     /// The song's length in bars: the end of its last-ending pattern or of the
     /// last note written directly onto a track (the fluent [`Song::add`] path).
     pub fn length_bars(&self) -> u32 {
-        let steps_per_bar = (self.steps_per_beat * self.beats_per_bar).max(1);
+        let steps_per_bar = self.steps_per_bar();
         let from_patterns = self
             .arrangement
             .iter()
@@ -305,10 +305,17 @@ impl Song {
             .tracks
             .iter()
             .flat_map(|t| t.notes.iter())
-            .map(|n| (n.step + n.len).div_ceil(steps_per_bar))
+            .map(|n| note_end(n).div_ceil(steps_per_bar))
             .max()
             .unwrap_or(0);
         from_patterns.max(from_notes)
+    }
+
+    /// Steps per bar, degenerate (zero) fields floored to 1 — the one formula
+    /// [`length_bars`](Self::length_bars) and [`to_doc`](Self::to_doc) share,
+    /// so a deserialized song can't report a length its compile disagrees with.
+    fn steps_per_bar(&self) -> u32 {
+        self.beats_per_bar.max(1) * self.steps_per_beat.max(1)
     }
 
     /// Compile to a deterministic [`SoundDoc`] — a `tracks` root of `seq` tracks.
@@ -333,112 +340,11 @@ impl Song {
             }
         }
 
-        let steps_per_bar = self.beats_per_bar.max(1) * self.steps_per_beat.max(1);
         let sec_per_step = 60.0 / (self.bpm.max(1.0) * self.steps_per_beat.max(1) as f32);
         let mut end_step = 0u32;
         let mut doc_tracks = Vec::with_capacity(self.tracks.len());
-
         for t in &self.tracks {
-            let mut notes: Vec<SeqNote> = t.notes.clone();
-            for n in &notes {
-                end_step = end_step.max(n.step + n.len.max(1));
-            }
-            for pl in self.arrangement.iter().filter(|p| p.track == t.name) {
-                let pat = self
-                    .patterns
-                    .iter()
-                    .find(|p| p.name == pl.pattern)
-                    .expect("pattern existence checked above");
-                let offset = pl.bar * steps_per_bar;
-                for n in &pat.notes {
-                    let step = n.step + offset;
-                    end_step = end_step.max(step + n.len.max(1));
-                    notes.push(SeqNote {
-                        step,
-                        len: n.len,
-                        pitch: n.pitch.clone(),
-                        gain: n.gain,
-                    });
-                }
-            }
-            notes.sort_by_key(|n| n.step);
-
-            // Build the seq node via serde so the seq-only fields (duty, fm_*,
-            // pluck_decay) take the engine's own defaults — then override just
-            // the ones this instrument sets, so unset params never drift.
-            let mut seq_json = serde_json::json!({
-                "type": "seq",
-                "bpm": self.bpm,
-                "steps_per_beat": self.steps_per_beat,
-                "wave": serde_json::to_value(t.wave).map_err(|e| e.to_string())?,
-                "env": serde_json::to_value(t.env).map_err(|e| e.to_string())?,
-                "swing": t.swing.unwrap_or(self.swing),
-                "humanize": t.humanize.unwrap_or(self.humanize),
-                "sf2": t.sf2,
-                "sf2_preset": t.sf2_preset,
-                "sf2_bank": t.sf2_bank,
-                "notes": serde_json::to_value(&notes).map_err(|e| e.to_string())?,
-            });
-            if let Some(k) = t.voice.kit {
-                seq_json["kit"] = serde_json::to_value(k).map_err(|e| e.to_string())?;
-            }
-            for (key, val) in [
-                ("duty", t.voice.duty),
-                ("fm_ratio", t.voice.fm_ratio),
-                ("fm_index", t.voice.fm_index),
-                ("fm_strike", t.voice.fm_strike),
-                ("pluck_decay", t.voice.pluck_decay),
-                ("pluck_body", t.voice.pluck_body),
-                ("pluck_pick", t.voice.pluck_pick),
-                ("pluck_tone", t.voice.pluck_tone),
-                ("piano_hammer", t.voice.piano_hammer),
-                ("piano_strike", t.voice.piano_strike),
-                ("piano_inharm", t.voice.piano_inharm),
-                ("piano_detune", t.voice.piano_detune),
-                ("piano_decay", t.voice.piano_decay),
-                ("bass_cutoff", t.voice.bass_cutoff),
-                ("bass_env", t.voice.bass_env),
-                ("bass_env_vel", t.voice.bass_env_vel),
-                ("bass_decay", t.voice.bass_decay),
-                ("bass_click", t.voice.bass_click),
-                ("bass_body", t.voice.bass_body),
-                ("bass_sub", t.voice.bass_sub),
-                ("bass_sub_ratio", t.voice.bass_sub_ratio),
-                ("bass_drive", t.voice.bass_drive),
-                ("bass_body_decay", t.voice.bass_body_decay),
-            ] {
-                if let Some(v) = val {
-                    seq_json[key] = serde_json::json!(v);
-                }
-            }
-            let seq: Node = serde_json::from_value(seq_json)
-                .map_err(|e| format!("track '{}' seq build: {e}", t.name))?;
-
-            // A reverb send wraps the seq in a chain (dry when reverb == 0, so
-            // the track is byte-identical without it).
-            let node = if t.reverb > 0.0 {
-                let rv = t.reverb.clamp(0.0, 1.0);
-                Node::Chain {
-                    stages: vec![
-                        seq,
-                        Node::Reverb {
-                            room: 0.6,
-                            mix: 0.5 * rv,
-                        },
-                    ],
-                }
-            } else {
-                seq
-            };
-            doc_tracks.push(Track {
-                id: Some(t.name.clone()),
-                node,
-                pan: t.pan,
-                gain: t.gain,
-                at: 0.0,
-                mute: false,
-                automation: Vec::new(),
-            });
+            doc_tracks.push(self.compile_track(t, &mut end_step)?);
         }
 
         let duration = end_step as f32 * sec_per_step + 2.0; // tail for release/reverb
@@ -463,6 +369,103 @@ impl Song {
             serde_json::from_value(json).map_err(|e| format!("song doc build: {e}"))?;
         Ok(doc)
     }
+
+    /// Compile one song track to a mixer [`Track`]: merge its direct notes with
+    /// its pattern placements, build the seq node, and wrap the reverb send.
+    /// Extends `end_step` to the track's last note end.
+    fn compile_track(&self, t: &SongTrack, end_step: &mut u32) -> Result<Track, String> {
+        let steps_per_bar = self.steps_per_bar();
+        let mut notes: Vec<SeqNote> = t.notes.clone();
+        for n in &notes {
+            *end_step = (*end_step).max(note_end(n));
+        }
+        for pl in self.arrangement.iter().filter(|p| p.track == t.name) {
+            let pat = self
+                .patterns
+                .iter()
+                .find(|p| p.name == pl.pattern)
+                .expect("pattern existence checked above");
+            let offset = pl.bar * steps_per_bar;
+            for n in &pat.notes {
+                let placed = SeqNote {
+                    step: n.step + offset,
+                    len: n.len,
+                    pitch: n.pitch.clone(),
+                    gain: n.gain,
+                };
+                *end_step = (*end_step).max(note_end(&placed));
+                notes.push(placed);
+            }
+        }
+        notes.sort_by_key(|n| n.step);
+
+        // Build the seq node via serde so the seq-only fields (duty, fm_*,
+        // pluck_decay) take the engine's own defaults — then merge the whole
+        // VoiceParams struct over it. Field names match the seq node's keys
+        // one-for-one, so every set knob flows through and a newly added voice
+        // param can never be silently dropped here.
+        let mut seq_json = serde_json::json!({
+            "type": "seq",
+            "bpm": self.bpm,
+            "steps_per_beat": self.steps_per_beat,
+            "wave": serde_json::to_value(t.wave).map_err(|e| e.to_string())?,
+            "env": serde_json::to_value(t.env).map_err(|e| e.to_string())?,
+            "swing": t.swing.unwrap_or(self.swing),
+            "humanize": t.humanize.unwrap_or(self.humanize),
+            "sf2": t.sf2,
+            "sf2_preset": t.sf2_preset,
+            "sf2_bank": t.sf2_bank,
+            "notes": serde_json::to_value(&notes).map_err(|e| e.to_string())?,
+        });
+        if let serde_json::Value::Object(voice) =
+            serde_json::to_value(t.voice).map_err(|e| e.to_string())?
+        {
+            for (key, val) in voice {
+                if !val.is_null() {
+                    seq_json[key] = val;
+                }
+            }
+        }
+        let seq: Node = serde_json::from_value(seq_json)
+            .map_err(|e| format!("track '{}' seq build: {e}", t.name))?;
+
+        // A reverb send wraps the seq in a chain (dry when reverb == 0, so
+        // the track is byte-identical without it).
+        let node = if t.reverb > 0.0 {
+            let rv = t.reverb.clamp(0.0, 1.0);
+            Node::Chain {
+                stages: vec![
+                    seq,
+                    Node::Reverb {
+                        room: SEND_ROOM,
+                        mix: SEND_MIX_MAX * rv,
+                    },
+                ],
+            }
+        } else {
+            seq
+        };
+        Ok(Track {
+            id: Some(t.name.clone()),
+            node,
+            pan: t.pan,
+            gain: t.gain,
+            at: 0.0,
+            mute: false,
+            automation: Vec::new(),
+        })
+    }
+}
+
+/// The reverb room size of a track's send (one shared, musical room).
+const SEND_ROOM: f32 = 0.6;
+/// Mix at full send — half wet keeps the dry signal audible under it.
+const SEND_MIX_MAX: f32 = 0.5;
+
+/// Where a note stops sounding, in steps. Zero-length notes still occupy one
+/// step (the same floor the seq renderer applies).
+fn note_end(n: &SeqNote) -> u32 {
+    n.step + n.len.max(1)
 }
 
 /// A per-track note writer, handed to the closure of [`Song::add`]. A moving
@@ -768,10 +771,13 @@ mod tests {
         let Node::Tracks { tracks, .. } = &doc.root else {
             panic!("tracks");
         };
-        let Node::Seq { pluck_decay, .. } = &tracks[0].node else {
+        let Node::Seq { pluck, .. } = &tracks[0].node else {
             panic!("seq");
         };
-        assert!((*pluck_decay - 0.965).abs() < 1e-6, "steel pluck_decay set");
+        assert!(
+            (pluck.pluck_decay - 0.965).abs() < 1e-6,
+            "steel pluck_decay set"
+        );
     }
 
     #[test]
@@ -884,15 +890,8 @@ mod tests {
 
     #[test]
     fn song_pins_engine_and_version_at_creation() {
-        let amp = Adsr {
-            a: 0.005,
-            d: 0.1,
-            s: 0.8,
-            r: 0.2,
-            punch: 0.0,
-        };
         let mut song = Song::new("pinned", 120.0);
-        song.add_track("bass", SeqWave::Bass, amp);
+        song.add_track("bass", SeqWave::Bass, amp());
         song.tracks[0].notes.push(note(0, 4, "C2"));
         assert_eq!(song.engine, Some(ENGINE_VERSION));
         let doc = song.to_doc().unwrap();
@@ -919,24 +918,13 @@ mod tests {
     fn length_bars_counts_direct_track_notes() {
         // Notes written via the fluent path live on the track, not in a
         // pattern placement — they must still count toward the song length.
-        let amp = Adsr {
-            a: 0.005,
-            d: 0.1,
-            s: 0.8,
-            r: 0.2,
-            punch: 0.0,
-        };
         let mut song = Song::new("fluent", 120.0); // 16 steps per bar
-        song.add_track("bass", SeqWave::Bass, amp);
+        song.add_track("bass", SeqWave::Bass, amp());
         assert_eq!(song.length_bars(), 0);
         song.tracks[0].notes.push(note(17, 4, "C2")); // ends at step 21 → bar 2
         assert_eq!(song.length_bars(), 2);
     }
-}
 
-#[cfg(test)]
-mod slug_tests {
-    use super::slugify;
     #[test]
     fn slugifies_names() {
         assert_eq!(slugify("Mellow Piano"), "mellow_piano");

@@ -68,7 +68,7 @@ corrupt graph. Use `patch.instantiate(values)` if you want the concrete
 ```
 
 One parameter can drive several paths at once (here `size` rings every modal
-partial longer). Paths are the same ones `set_param` / `describe_sound` use, so
+partial longer). Paths are the same ones `tono_core::edit::describe` / `apply_ops` use, so
 an agent can design the sound in the studio, read off the paths, and emit the
 patch. A worked example: [`docs/examples/parametric-impact.patch.json`](examples/parametric-impact.patch.json).
 

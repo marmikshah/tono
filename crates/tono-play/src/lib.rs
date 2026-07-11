@@ -49,15 +49,25 @@ impl<S: AudioSource + Send + 'static> Speaker<S> {
     /// Open the default output device and start streaming `source` (rendered at
     /// the device sample rate — build the source with [`device_sample_rate`]).
     pub fn open(source: S) -> anyhow::Result<Speaker<S>> {
+        Speaker::open_at(source, None)
+    }
+
+    /// [`open`](Self::open) with an explicit stream sample rate (`None` = the
+    /// device default). Pin the rate when the source was built at a fixed one
+    /// (e.g. a pre-rendered ring) and must not be resampled by position.
+    pub fn open_at(source: S, sample_rate: Option<u32>) -> anyhow::Result<Speaker<S>> {
         let host = cpal::default_host();
         let device = host
             .default_output_device()
             .ok_or_else(|| anyhow::anyhow!("no default output device"))?;
         let config = device.default_output_config()?;
-        let sample_rate = config.sample_rate().0;
         let channels = config.channels() as usize;
         let sample_format = config.sample_format();
-        let stream_config: cpal::StreamConfig = config.into();
+        let mut stream_config: cpal::StreamConfig = config.into();
+        if let Some(sr) = sample_rate {
+            stream_config.sample_rate = cpal::SampleRate(sr);
+        }
+        let sample_rate = stream_config.sample_rate.0;
 
         let source = Arc::new(Mutex::new(source));
         let cb = source.clone();
@@ -121,6 +131,13 @@ impl<S: AudioSource + Send + 'static> Speaker<S> {
         self.sample_rate
     }
 
+    /// The shared source handle — the same mutex the audio callback
+    /// `try_lock`s. For consumers that park the (`!Send`) `Speaker` on a
+    /// dedicated thread and control the source from other threads.
+    pub fn shared(&self) -> Arc<Mutex<S>> {
+        self.source.clone()
+    }
+
     /// Drive the playing source (e.g. `instrument.note_on(...)`). Holds the
     /// source lock while `f` runs; the audio thread `try_lock`s, so a long `f`
     /// costs at most a silent block rather than a stall — fine for a
@@ -144,6 +161,10 @@ pub fn play<S: AudioSource + Send + 'static>(source: S, secs: f32) -> anyhow::Re
 /// Play a [`SoundDoc`] for `secs` seconds — streamed if it's in the streamable
 /// subset, else buffered — one call to hear a sound you built in code.
 pub fn play_doc(doc: &SoundDoc, secs: f32) -> anyhow::Result<()> {
+    // Validate up front: a malformed doc should error loudly here, not play
+    // silence (the classic case is the `env`-fields-nested-under-"adsr"
+    // serde-flatten footgun, which renders as an all-zero envelope).
+    doc.validate().map_err(|e| anyhow::anyhow!(e))?;
     let sr = device_sample_rate()?;
     let mut doc = doc.clone();
     doc.sample_rate = sr;

@@ -6,7 +6,7 @@ use crate::dsl::{DriveShape, Mode, Value};
 use std::f32::consts::{LN_2, TAU};
 
 #[derive(Clone, Copy)]
-pub(super) enum FilterKind {
+pub(crate) enum FilterKind {
     Low,
     High,
     Band,
@@ -19,80 +19,105 @@ pub(super) enum FilterKind {
     HighShelf(f32),
 }
 
-/// RBJ biquad with per-sample coefficient updates so the cutoff can be
-/// modulated. State carried in Direct Form I. Peaking/shelving kinds carry a
-/// dB gain (`A = 10^(gain/40)`).
-pub(super) fn biquad(input: &[f32], cutoff: &Value, q: f32, sr: u32, kind: FilterKind) -> Signal {
-    let fc = eval_value(cutoff, input.len(), sr);
+/// The (a0-normalised) RBJ biquad coefficients `(b0, b1, b2, a1, a2)` for one
+/// cutoff value — the single coefficient table both the offline [`biquad`] and
+/// the streaming renderer share, so the two paths can never drift. Pure, so a
+/// live cutoff sweep can recompute them.
+pub(crate) fn biquad_coeffs(
+    kind: FilterKind,
+    fc: f32,
+    q: f32,
+    sr: u32,
+) -> (f32, f32, f32, f32, f32) {
     let srf = sr as f32;
     let q = q.max(0.05);
     let nyq = srf / 2.0;
+    // `.max(20.0)` keeps the clamp bounds ordered at absurdly low sample
+    // rates (an unvalidated doc must not panic).
+    let f = fc.clamp(20.0, (nyq - 100.0).max(20.0));
+    let w0 = TAU * f / srf;
+    let (sin, cos) = w0.sin_cos();
+    let alpha = sin / (2.0 * q);
     let amp = match kind {
         FilterKind::Peak(g) | FilterKind::LowShelf(g) | FilterKind::HighShelf(g) => {
             10f32.powf(g / 40.0)
         }
         _ => 1.0,
     };
+    let (b0, b1, b2, a0, a1, a2) = match kind {
+        FilterKind::Low => (
+            (1.0 - cos) / 2.0,
+            1.0 - cos,
+            (1.0 - cos) / 2.0,
+            1.0 + alpha,
+            -2.0 * cos,
+            1.0 - alpha,
+        ),
+        FilterKind::High => (
+            (1.0 + cos) / 2.0,
+            -(1.0 + cos),
+            (1.0 + cos) / 2.0,
+            1.0 + alpha,
+            -2.0 * cos,
+            1.0 - alpha,
+        ),
+        FilterKind::Band => (alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
+        FilterKind::Notch => (1.0, -2.0 * cos, 1.0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
+        FilterKind::Peak(_) => (
+            1.0 + alpha * amp,
+            -2.0 * cos,
+            1.0 - alpha * amp,
+            1.0 + alpha / amp,
+            -2.0 * cos,
+            1.0 - alpha / amp,
+        ),
+        FilterKind::LowShelf(_) => {
+            let s = 2.0 * amp.sqrt() * alpha;
+            let (ap1, am1) = (amp + 1.0, amp - 1.0);
+            (
+                amp * (ap1 - am1 * cos + s),
+                2.0 * amp * (am1 - ap1 * cos),
+                amp * (ap1 - am1 * cos - s),
+                ap1 + am1 * cos + s,
+                -2.0 * (am1 + ap1 * cos),
+                ap1 + am1 * cos - s,
+            )
+        }
+        FilterKind::HighShelf(_) => {
+            let s = 2.0 * amp.sqrt() * alpha;
+            let (ap1, am1) = (amp + 1.0, amp - 1.0);
+            (
+                amp * (ap1 + am1 * cos + s),
+                -2.0 * amp * (am1 + ap1 * cos),
+                amp * (ap1 + am1 * cos - s),
+                ap1 - am1 * cos + s,
+                2.0 * (am1 - ap1 * cos),
+                ap1 - am1 * cos - s,
+            )
+        }
+    };
+    (b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0)
+}
+
+/// RBJ biquad with per-sample coefficient updates so the cutoff can be
+/// modulated. State carried in Direct Form I. Peaking/shelving kinds carry a
+/// dB gain (`A = 10^(gain/40)`).
+pub(super) fn biquad(input: &[f32], cutoff: &Value, q: f32, sr: u32, kind: FilterKind) -> Signal {
+    let fc = eval_value(cutoff, input.len(), sr);
     let (mut x1, mut x2, mut y1, mut y2) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
     let mut out = Vec::with_capacity(input.len());
+    // Coefficients are a pure function of the cutoff (kind/q/sr fixed), so
+    // recompute only when it moves — for the common constant/piecewise-constant
+    // cutoff this hoists the transcendental work out of the loop entirely,
+    // with bit-identical coefficients (and output) either way.
+    let mut prev_f = f32::NAN;
+    let (mut b0, mut b1, mut b2, mut a1, mut a2) = (0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32);
     for (i, &x0) in input.iter().enumerate() {
-        let f = fc[i].clamp(20.0, (nyq - 100.0).max(20.0));
-        let w0 = TAU * f / srf;
-        let (sin, cos) = w0.sin_cos();
-        let alpha = sin / (2.0 * q);
-        let (b0, b1, b2, a0, a1, a2) = match kind {
-            FilterKind::Low => (
-                (1.0 - cos) / 2.0,
-                1.0 - cos,
-                (1.0 - cos) / 2.0,
-                1.0 + alpha,
-                -2.0 * cos,
-                1.0 - alpha,
-            ),
-            FilterKind::High => (
-                (1.0 + cos) / 2.0,
-                -(1.0 + cos),
-                (1.0 + cos) / 2.0,
-                1.0 + alpha,
-                -2.0 * cos,
-                1.0 - alpha,
-            ),
-            FilterKind::Band => (alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
-            FilterKind::Notch => (1.0, -2.0 * cos, 1.0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
-            FilterKind::Peak(_) => (
-                1.0 + alpha * amp,
-                -2.0 * cos,
-                1.0 - alpha * amp,
-                1.0 + alpha / amp,
-                -2.0 * cos,
-                1.0 - alpha / amp,
-            ),
-            FilterKind::LowShelf(_) => {
-                let s = 2.0 * amp.sqrt() * alpha;
-                let (ap1, am1) = (amp + 1.0, amp - 1.0);
-                (
-                    amp * (ap1 - am1 * cos + s),
-                    2.0 * amp * (am1 - ap1 * cos),
-                    amp * (ap1 - am1 * cos - s),
-                    ap1 + am1 * cos + s,
-                    -2.0 * (am1 + ap1 * cos),
-                    ap1 + am1 * cos - s,
-                )
-            }
-            FilterKind::HighShelf(_) => {
-                let s = 2.0 * amp.sqrt() * alpha;
-                let (ap1, am1) = (amp + 1.0, amp - 1.0);
-                (
-                    amp * (ap1 + am1 * cos + s),
-                    -2.0 * amp * (am1 + ap1 * cos),
-                    amp * (ap1 + am1 * cos - s),
-                    ap1 - am1 * cos + s,
-                    2.0 * (am1 - ap1 * cos),
-                    ap1 - am1 * cos - s,
-                )
-            }
-        };
-        let y0 = (b0 / a0) * x0 + (b1 / a0) * x1 + (b2 / a0) * x2 - (a1 / a0) * y1 - (a2 / a0) * y2;
+        if fc[i] != prev_f {
+            (b0, b1, b2, a1, a2) = biquad_coeffs(kind, fc[i], q, sr);
+            prev_f = fc[i];
+        }
+        let y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
         x2 = x1;
         x1 = x0;
         y2 = y1;

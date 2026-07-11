@@ -20,7 +20,7 @@ This phase moves synthesis onto the audio thread behind a typed command queue.
 
 - **Streaming tracks mixer** — per-track block-pull rendering of a `tracks`
   doc, byte-identical to the offline bounce by construction (extend the
-  `streaming.rs` kernel-sharing pattern; never fork the math).
+  `streaming` module's kernel-sharing pattern; never fork the math).
 - **`Transport`** — play/pause/seek/loop-region with a sample-position ↔
   musical-time clock, implementing `AudioSource`.
 - **Catalog voices as gated streaming voices** — one `CatalogVoice` seam

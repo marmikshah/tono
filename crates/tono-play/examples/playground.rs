@@ -1,5 +1,5 @@
 //! The programmatic playground: build sounds and instruments in code and hear
-//! them. Run:  make play   (or `cargo run -p tono-play --example playground`)
+//! them. Run:  make play   (EXAMPLE=playground is the default)
 
 use std::thread::sleep;
 use std::time::Duration;
@@ -13,7 +13,7 @@ fn bleep() -> SoundDoc {
     serde_json::from_str(
         r#"{ "name":"bleep", "duration":0.25, "engine":2, "root": { "type":"mul", "inputs": [
             { "type":"sine", "freq":880 },
-            { "type":"env", "adsr": { "a":0.002, "d":0.08, "s":0.0, "r":0.05 } } ] } }"#,
+            { "type":"env", "a":0.002, "d":0.08, "s":0.0, "r":0.05 } ] } }"#,
     )
     .unwrap()
 }

@@ -43,8 +43,9 @@ pub struct Analysis {
     /// Crest factor (peak − RMS) in dB — a punchiness / transient measure. Big
     /// for percussive hits, small for sustained / compressed material.
     pub crest_factor_db: f32,
-    /// Approximate integrated loudness in LUFS (K-weighted, ungated). Useful for
-    /// matching perceived level across a sound set; not a certified meter.
+    /// Integrated loudness in LUFS (K-weighted, gated per ITU-R BS.1770-4).
+    /// Useful for matching perceived level across a sound set; not a
+    /// certified meter.
     pub loudness_lufs: f32,
     /// Attack time in ms: from the onset (envelope > 10% of peak) to first
     /// reaching 90% of peak. Small ⇒ a sharp/punchy transient.
@@ -79,11 +80,31 @@ pub struct Analysis {
 const FFT_SIZE: usize = 1024;
 const HOP: usize = 256;
 
+/// Precomputed STFT magnitude frames of a signal. Compute once with
+/// [`spectral_frames`] and share between [`stats_with`] and
+/// [`spectrogram_png_with`] — the STFT is the most expensive analysis step,
+/// and a full render analysis needs it for both the numbers and the image.
+pub struct SpectralFrames(Vec<Vec<f32>>);
+
+/// The STFT magnitude frames of `samples` (see [`SpectralFrames`]).
+pub fn spectral_frames(samples: &[f32]) -> SpectralFrames {
+    SpectralFrames(stft(samples))
+}
+
 /// Compute every numeric descriptor with **no filesystem access** — pure
 /// compute. Pair it with [`spectrogram_png`] / [`waveform_png`] for the images;
 /// writing them to disk is the shell's job. The `*_png_path` fields are left
 /// empty for the caller to fill once it has written the files.
+///
+/// Also producing the spectrogram image? Compute the frames once with
+/// [`spectral_frames`] and use [`stats_with`] + [`spectrogram_png_with`].
 pub fn stats(samples: &[f32], sample_rate: u32) -> Analysis {
+    stats_with(samples, sample_rate, &spectral_frames(samples))
+}
+
+/// [`stats`] over pre-computed [`SpectralFrames`] (they must be the frames of
+/// `samples`).
+pub fn stats_with(samples: &[f32], sample_rate: u32, frames: &SpectralFrames) -> Analysis {
     let srf = sample_rate as f32;
     let duration_secs = samples.len() as f32 / srf;
 
@@ -94,8 +115,10 @@ pub fn stats(samples: &[f32], sample_rate: u32) -> Analysis {
         (samples.iter().map(|x| x * x).sum::<f32>() / samples.len() as f32).sqrt()
     };
 
-    let frames = stft(samples);
+    let frames = &frames.0;
     let t = transients(samples, sample_rate);
+    // One power spectrum feeds both spectral descriptors below.
+    let power = power_spectrum(frames);
     let peak_dbfs = dbfs(peak);
     let rms_dbfs = dbfs(rms);
 
@@ -103,9 +126,9 @@ pub fn stats(samples: &[f32], sample_rate: u32) -> Analysis {
         duration_secs,
         peak_dbfs,
         rms_dbfs,
-        spectral_centroid_hz: spectral_centroid(&frames, srf),
-        spectral_flatness: spectral_flatness(&frames),
-        inharmonicity: inharmonicity(&frames, srf),
+        spectral_centroid_hz: spectral_centroid(frames, srf),
+        spectral_flatness: spectral_flatness(&power),
+        inharmonicity: inharmonicity(&power, srf),
         // Metering uses the honest kernels: a real oversampled true-peak
         // (linear interpolation could never read above the sample peak) and
         // gated, rate-correct BS.1770 loudness.
@@ -132,9 +155,23 @@ pub fn stats(samples: &[f32], sample_rate: u32) -> Analysis {
 /// and wide material by ~3 LU.
 pub fn stats_stereo(left: &[f32], right: &[f32], sample_rate: u32) -> Analysis {
     let n = left.len().min(right.len());
+    let mid: Vec<f32> = (0..n).map(|i| 0.5 * (left[i] + right[i])).collect();
+    stats_stereo_with(left, right, sample_rate, &spectral_frames(&mid))
+}
+
+/// [`stats_stereo`] over pre-computed [`SpectralFrames`] of the **mid** signal
+/// (`0.5 * (l + r)` — exactly what `render_product` exposes as `mono`), so a
+/// caller that also renders the spectrogram pays for one STFT.
+pub fn stats_stereo_with(
+    left: &[f32],
+    right: &[f32],
+    sample_rate: u32,
+    mid_frames: &SpectralFrames,
+) -> Analysis {
+    let n = left.len().min(right.len());
     let (left, right) = (&left[..n], &right[..n]);
     let mid: Vec<f32> = (0..n).map(|i| 0.5 * (left[i] + right[i])).collect();
-    let mut a = stats(&mid, sample_rate);
+    let mut a = stats_with(&mid, sample_rate, mid_frames);
     let peak = left
         .iter()
         .chain(right.iter())
@@ -314,7 +351,12 @@ pub fn waveform_png(samples: &[f32]) -> anyhow::Result<Vec<u8>> {
 
 /// Render a sound's log-frequency spectrogram straight to PNG bytes.
 pub fn spectrogram_png(samples: &[f32]) -> anyhow::Result<Vec<u8>> {
-    png_bytes(&spectrogram_image(&stft(samples)))
+    spectrogram_png_with(&spectral_frames(samples))
+}
+
+/// [`spectrogram_png`] over pre-computed [`SpectralFrames`].
+pub fn spectrogram_png_with(frames: &SpectralFrames) -> anyhow::Result<Vec<u8>> {
+    png_bytes(&spectrogram_image(&frames.0))
 }
 
 /// Short-time Fourier transform → a Vec of magnitude frames, each of length
@@ -391,11 +433,10 @@ fn power_spectrum(frames: &[Vec<f32>]) -> Vec<f64> {
 
 /// Spectral flatness in [0,1]: geometric ÷ arithmetic mean of the (non-DC)
 /// power spectrum. ~0 for a tone (energy in a few bins), ~1 for flat noise.
-fn spectral_flatness(frames: &[Vec<f32>]) -> f32 {
-    if frames.is_empty() {
+fn spectral_flatness(power: &[f64]) -> f32 {
+    if power.is_empty() {
         return 0.0;
     }
-    let power = power_spectrum(frames);
     let used = &power[1..];
     let total: f64 = used.iter().sum();
     if total <= 0.0 {
@@ -413,13 +454,12 @@ fn spectral_flatness(frames: &[Vec<f32>]) -> f32 {
 /// spectral peak above ~40 Hz in the frame-averaged spectrum; each harmonic
 /// contributes a leakage-aware tolerance band, counted once. High for noise,
 /// inharmonic bodies, and aliasing/foldback alike.
-fn inharmonicity(frames: &[Vec<f32>], sample_rate: f32) -> f32 {
-    if frames.is_empty() {
+fn inharmonicity(power: &[f64], sample_rate: f32) -> f32 {
+    if power.is_empty() {
         return 0.0;
     }
     let bins = FFT_SIZE / 2;
     let bin_hz = sample_rate / FFT_SIZE as f32;
-    let power = power_spectrum(frames);
     let total: f64 = power.iter().sum();
     if total <= 0.0 {
         return 0.0;
@@ -610,8 +650,8 @@ mod tests {
     #[test]
     fn spectral_flatness_separates_tone_from_noise() {
         let sr = 44_100u32;
-        let ft = spectral_flatness(&stft(&tone(sr, 440.0)));
-        let fnz = spectral_flatness(&stft(&noise(sr, 1)));
+        let ft = spectral_flatness(&power_spectrum(&stft(&tone(sr, 440.0))));
+        let fnz = spectral_flatness(&power_spectrum(&stft(&noise(sr, 1))));
         assert!(
             ft < 0.05,
             "a pure tone should be tonal (flatness ≈ 0), got {ft}"
@@ -622,8 +662,8 @@ mod tests {
     #[test]
     fn inharmonicity_low_for_tone_high_for_noise() {
         let sr = 44_100u32;
-        let it = inharmonicity(&stft(&tone(sr, 440.0)), sr as f32);
-        let inz = inharmonicity(&stft(&noise(sr, 2)), sr as f32);
+        let it = inharmonicity(&power_spectrum(&stft(&tone(sr, 440.0))), sr as f32);
+        let inz = inharmonicity(&power_spectrum(&stft(&noise(sr, 2))), sr as f32);
         assert!(it < 0.25, "a tone's energy sits on its harmonics, got {it}");
         assert!(inz > 0.5, "noise has little harmonic energy, got {inz}");
     }

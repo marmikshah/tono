@@ -60,15 +60,21 @@ struct Case {
     linux: Option<Pins>,
 }
 
-/// The pins this platform must reproduce, or `None` on an unpinned platform.
-fn expected(c: &Case) -> Option<Pins> {
+/// Select the pin this platform must reproduce, or `None` on an unpinned
+/// platform — the single place the pinned-platform list lives.
+fn platform_pin<T>(mac: T, linux: Option<T>) -> Option<T> {
     if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        Some(c.mac)
+        Some(mac)
     } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        Some(c.linux.unwrap_or(c.mac))
+        linux
     } else {
         None
     }
+}
+
+/// The pins this platform must reproduce, or `None` on an unpinned platform.
+fn expected(c: &Case) -> Option<Pins> {
+    platform_pin(c.mac, Some(c.linux.unwrap_or(c.mac)))
 }
 
 /// One document per kernel family × engine revision. Durations are short so
@@ -359,13 +365,7 @@ fn example_recipes_replay_byte_identically() {
             .unwrap_or_else(|e| panic!("read {file}: {e}"));
         let doc = parse(&json);
         let got = hash_signal(&render_product(&doc).mono);
-        let expected = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-            Some(mac)
-        } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-            Some(linux)
-        } else {
-            None
-        };
+        let expected = platform_pin(mac, Some(linux));
         if let Some(expected) = expected {
             assert_eq!(
                 got, expected,

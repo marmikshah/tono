@@ -19,8 +19,6 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use cpal::SampleFormat;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
@@ -31,7 +29,7 @@ use tono_core::instrument::{Instrument as CoreInstrument, Note};
 use tono_core::patch::Patch as CorePatch;
 use tono_core::presets;
 use tono_core::runtime::{
-    AudioSource, Engine as CoreEngine, Mixer, PatchId, Pump, Renderer, SourceId, Tween, spsc,
+    Engine as CoreEngine, Mixer, PatchId, Pump, Renderer, SourceId, Tween, spsc,
 };
 
 /// Ring depth (frames). ~85 ms at 48 kHz — ample underrun headroom.
@@ -75,82 +73,47 @@ fn parse_doc(json: &str, sample_rate: u32) -> PyResult<SoundDoc> {
         serde_json::from_str(json).map_err(|e| PyValueError::new_err(e.to_string()))?;
     doc.sample_rate = sample_rate;
     doc.validate().map_err(PyValueError::new_err)?;
+    // validate() is filesystem-free (the core is pure); the loader owns the
+    // existence check so a missing SoundFont still fails loud at load time.
+    for sf2 in doc.sf2_paths() {
+        if !std::path::Path::new(sf2).exists() {
+            return Err(PyValueError::new_err(format!(
+                "seq.sf2: no such file '{sf2}'"
+            )));
+        }
+    }
     Ok(doc)
 }
 
 /// The native output device's default sample rate.
 fn device_sample_rate() -> PyResult<u32> {
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .ok_or_else(|| PyRuntimeError::new_err("no default audio output device"))?;
-    let config = device
-        .default_output_config()
-        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-    Ok(config.sample_rate().0)
+    tono_play::device_sample_rate().map_err(|e| PyRuntimeError::new_err(e.to_string()))
 }
 
-/// Build and run the cpal output stream on the calling (dedicated) thread,
-/// draining `renderer` in the callback. Reports build success/failure back over
-/// `ready`, then keeps the stream alive until `stop` is set.
+/// Run the output stream on the calling (dedicated) thread, draining
+/// `renderer` in the callback via [`tono_play::Speaker`] — the one cpal shim
+/// across the native faces (device open, f32 gate, panic containment, channel
+/// spread). The stream is pinned to the engine's `sample_rate` (the ring's
+/// frames are pre-rendered at it). Reports open success/failure back over
+/// `ready`, then keeps the (`!Send`) `Speaker` alive until `stop` is set.
+/// The `Renderer` is lock-free, so the `Speaker`'s uncontended source mutex
+/// costs nothing on the callback.
 fn run_stream(
     sample_rate: u32,
-    mut renderer: Renderer,
+    renderer: Renderer,
     stop: Arc<AtomicBool>,
     ready: mpsc::Sender<Result<(), String>>,
 ) {
-    let built = (|| -> Result<cpal::Stream, String> {
-        let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or("no default audio output device")?;
-        let config = device.default_output_config().map_err(|e| e.to_string())?;
-        if config.sample_format() != SampleFormat::F32 {
-            return Err("only F32 output is supported".into());
-        }
-        let channels = config.channels() as usize;
-        let mut stream_config: cpal::StreamConfig = config.into();
-        stream_config.sample_rate = cpal::SampleRate(sample_rate);
-
-        let mut scratch: Vec<f32> = Vec::new();
-        let stream = device
-            .build_output_stream(
-                &stream_config,
-                move |data: &mut [f32], _| {
-                    // Never unwind into cpal's C callback (UB): contain any panic
-                    // in the render path and fall back to silence.
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        let frames = data.len() / channels;
-                        if scratch.len() < frames * 2 {
-                            scratch.resize(frames * 2, 0.0);
-                        }
-                        let interleaved = &mut scratch[..frames * 2];
-                        renderer.fill(interleaved);
-                        tono_core::runtime::write_interleaved(data, channels, interleaved);
-                    }));
-                    if result.is_err() {
-                        data.fill(0.0);
-                    }
-                },
-                |err| eprintln!("tono audio stream error: {err}"),
-                None,
-            )
-            .map_err(|e| e.to_string())?;
-        stream.play().map_err(|e| e.to_string())?;
-        Ok(stream)
-    })();
-
-    match built {
-        Ok(stream) => {
+    match tono_play::Speaker::open_at(renderer, Some(sample_rate)) {
+        Ok(speaker) => {
             let _ = ready.send(Ok(()));
-            // Keep the (!Send) stream alive on this thread until asked to stop.
             while !stop.load(Ordering::Relaxed) {
                 thread::sleep(Duration::from_millis(50));
             }
-            drop(stream);
+            drop(speaker);
         }
         Err(e) => {
-            let _ = ready.send(Err(e));
+            let _ = ready.send(Err(e.to_string()));
         }
     }
 }

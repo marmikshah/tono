@@ -10,18 +10,19 @@ env:
 
 jobs:
   build-test:
-    runs-on: ubuntu-latest
+    # Both pinned golden-corpus platforms: the per-platform render hashes
+    # (macos-aarch64 vs linux-x86_64) must each be CI-validated.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Format check
-        run: cargo fmt --all -- --check
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
-      - name: Build
-        run: cargo build --verbose
-      - name: Test
-        run: cargo test --verbose
+      - name: Verify
+        # The one gate — identical to the pre-push hook and `make verify`.
+        run: make verify
