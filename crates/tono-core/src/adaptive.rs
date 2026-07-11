@@ -142,8 +142,13 @@ pub struct AdaptiveMusic {
     /// Frames rendered while playing since construction or the last `reset` —
     /// the musical clock a beat-locked game derives its beat position from.
     position: u64,
-    /// Current master duck multiplier (1.0 = no duck), recovering per sample.
+    /// Current master duck multiplier (1.0 = no duck), moving per sample.
     duck_gain: f32,
+    /// The floor the current duck is attacking toward; snaps back to 1.0 once
+    /// reached so the release phase takes over.
+    duck_target: f32,
+    /// Per-sample one-pole coefficient for the (fast) duck attack.
+    duck_attack: f32,
     /// Per-sample one-pole coefficient for the duck recovery.
     duck_coeff: f32,
     /// Tempo for beat/bar quantization (`0` = unset → everything is immediate).
@@ -176,6 +181,8 @@ impl AdaptiveMusic {
             paused: false,
             position: 0,
             duck_gain: 1.0,
+            duck_target: 1.0,
+            duck_attack: 0.0,
             duck_coeff: 0.0,
             bpm: 0.0,
             beats_per_bar: 4,
@@ -259,14 +266,18 @@ impl AdaptiveMusic {
     }
 
     /// Restart the bed from the top: the position clock returns to 0, every
-    /// layer rewinds to its loop head, and ringing stingers are cleared. The
-    /// intensity and layer target gains are left as they are — call this to line
-    /// the music up with a beat clock at sample 0.
+    /// layer rewinds to its loop head, ringing stingers are cleared, any pending
+    /// quantized schedules are dropped, and an in-flight duck resets to unity.
+    /// The intensity and layer target gains are left as they are — call this to
+    /// line the music up with a beat clock at sample 0.
     pub fn reset(&mut self) {
         self.position = 0;
         self.stingers.clear();
         self.pending.clear();
         self.section_fade = None;
+        // Any in-flight duck is dropped — a restart starts at unity.
+        self.duck_gain = 1.0;
+        self.duck_target = 1.0;
         for l in &mut self.layers {
             l.source.reset();
         }
@@ -288,9 +299,14 @@ impl AdaptiveMusic {
     /// the (slower) intensity cross-fade. `depth` clamps to `0..=1`; a stinger
     /// duck is typically shallow and short (e.g. `0.4`, ~180 ms).
     pub fn duck(&mut self, depth: f32, release: std::time::Duration) {
-        self.duck_gain = (1.0 - depth).clamp(0.0, 1.0);
+        // Attack toward the floor rather than stepping to it — an instantaneous
+        // gain jump is an audible click. `fill` ramps `duck_gain` down over a few
+        // ms, then releases back to unity.
+        self.duck_target = (1.0 - depth).clamp(0.0, 1.0);
         let secs = release.as_secs_f32().max(1.0 / self.sample_rate as f32);
         self.duck_coeff = 1.0 - (-1.0 / (secs * self.sample_rate as f32)).exp();
+        let attack = 0.002 * self.sample_rate as f32;
+        self.duck_attack = 1.0 - (-1.0 / attack).exp();
     }
 
     // ---- Musical time & quantized scheduling ----
@@ -395,7 +411,15 @@ impl AdaptiveMusic {
     /// re-sequencing (e.g. swap "explore" for "battle" on the next bar). The target
     /// enters from its downbeat. A no-op for an unknown or already-current section.
     pub fn transition_to(&mut self, section: usize, q: Quantize) {
-        if section >= self.sections.len() || self.current_section == Some(section) {
+        if section >= self.sections.len() {
+            return;
+        }
+        // A new transition supersedes any still-pending one (no stacking of
+        // duplicate/contradictory transitions). Requesting the current section
+        // just cancels a pending transition.
+        self.pending
+            .retain(|s| !matches!(s.action, Action::Transition { .. }));
+        if self.current_section == Some(section) {
             return;
         }
         if self.fire_frame(q) <= self.position {
@@ -408,6 +432,12 @@ impl AdaptiveMusic {
     /// Start the section cross-fade now: rewind the target to its head so it enters
     /// on its downbeat, and ramp it in over the declick window.
     fn begin_transition(&mut self, to: usize) {
+        // Already there (a duplicate/queued transition): do nothing. Starting a
+        // fade to the current section would fill the same buffer twice per block
+        // and advance its play head twice — an audible speed-up.
+        if self.current_section == Some(to) {
+            return;
+        }
         if self.current_section.is_none() {
             self.current_section = Some(to);
             return;
@@ -524,10 +554,26 @@ impl AudioSource for AdaptiveMusic {
             }
         }
         self.stingers.retain(|s| s.pos < s.left.len());
-        // Master duck recovery (skip entirely when at unity and idle).
-        if self.duck_gain < 1.0 {
+        // Master duck: attack toward the floor, then release to unity. Skip
+        // entirely when idle at unity so the common case pays nothing.
+        if self.duck_gain < 1.0 || self.duck_target < 1.0 {
             for f in 0..frames {
-                self.duck_gain += (1.0 - self.duck_gain) * self.duck_coeff;
+                if self.duck_gain > self.duck_target {
+                    // Attack: ramp down to the floor over a few ms (no click).
+                    self.duck_gain += (self.duck_target - self.duck_gain) * self.duck_attack;
+                    if self.duck_gain <= self.duck_target + 1e-4 {
+                        self.duck_gain = self.duck_target;
+                        // Floor reached — release from here on.
+                        self.duck_target = 1.0;
+                    }
+                } else {
+                    // Release: recover toward unity, snapping so it doesn't
+                    // asymptote below 1.0 forever (a permanent tiny attenuation).
+                    self.duck_gain += (1.0 - self.duck_gain) * self.duck_coeff;
+                    if self.duck_gain >= 1.0 - 1e-4 {
+                        self.duck_gain = 1.0;
+                    }
+                }
                 out[f * 2] *= self.duck_gain;
                 out[f * 2 + 1] *= self.duck_gain;
             }
@@ -753,6 +799,31 @@ mod tests {
             advance(&mut m, 512);
         }
         assert_eq!(m.current_section(), Some(battle), "swapped to battle");
+    }
+
+    #[test]
+    fn transition_to_the_current_section_is_a_pure_noop() {
+        // Requesting the section already playing must not start a fade: doing so
+        // filled the same buffer twice per block and advanced its play head
+        // twice (an audible speed-up). Output must equal a plain render.
+        let plain = {
+            let mut m = AdaptiveMusic::new(48_000);
+            m.add_section("a", &tone(220.0));
+            m.add_section("b", &tone(440.0));
+            let mut o = vec![0.0f32; 256 * 2];
+            m.fill(&mut o);
+            o
+        };
+        let mut m = AdaptiveMusic::new(48_000);
+        let a = m.add_section("a", &tone(220.0));
+        m.add_section("b", &tone(440.0));
+        m.transition_to(a, Quantize::Immediate); // `a` is already current
+        let mut o = vec![0.0f32; 256 * 2];
+        m.fill(&mut o);
+        assert_eq!(
+            o, plain,
+            "a transition to the current section changed the mix"
+        );
     }
 
     #[test]
