@@ -35,7 +35,6 @@ pub mod runtime;
 pub mod song;
 pub mod streaming;
 pub mod vary;
-pub mod voice;
 
 /// Renamed to [`player`] — `stream` (the buffer-backed audition `Player`) sat
 /// one suffix away from [`streaming`] (the per-sample block renderer), and the
