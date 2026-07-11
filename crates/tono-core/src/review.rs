@@ -188,23 +188,18 @@ pub fn review(
     // Sample peak — the renderer's limiter already caps it at ≈ −0.1 dBFS, so
     // hot is fine and true clipping is impossible here; the only fault is being
     // buried. (Inter-sample clipping is the `true peak` check below.)
-    if a.peak_dbfs < -12.0 {
-        f.push(finding(
-            "peak",
-            Status::Warn,
-            format!("{:.1} dBFS", a.peak_dbfs),
-            "−12..−0.1 dBFS",
-            "raise gain or add a normalize target_lufs",
-        ));
+    let peak_status = if a.peak_dbfs < -12.0 {
+        Status::Warn
     } else {
-        f.push(finding(
-            "peak",
-            Status::Pass,
-            format!("{:.1} dBFS", a.peak_dbfs),
-            "−12..−0.1 dBFS",
-            "",
-        ));
-    }
+        Status::Pass
+    };
+    f.push(finding(
+        "peak",
+        peak_status,
+        format!("{:.1} dBFS", a.peak_dbfs),
+        "−12..−0.1 dBFS",
+        "raise gain or add a normalize target_lufs",
+    ));
 
     // Inter-sample (true) peak: only an actual over-0 dBTP reading clips on
     // conversion/playback — a hot-but-under sound is fine for game SFX.
@@ -355,8 +350,7 @@ pub fn review(
     let summary = format!(
         "{} [{arch_label}]: {grade:?} — {pass} pass, {warn} warn, {fail} fail",
         doc.name
-    )
-    .to_uppercase();
+    );
 
     Review {
         archetype,
