@@ -415,9 +415,18 @@ version (document structure). `engine` is the **DSP-kernel** revision — which
 audio kernels render it. They are split so a fidelity upgrade never changes the
 bytes of an older sound: a document with `engine` omitted renders under the
 original kernels (byte-for-byte forever); new documents are stamped with the
-current engine and get the upgrades. Revision 1 adds anti-aliased `drive`
-(ADAA). To modernise an existing sound, set `"engine": 1` on it (its output
-will change — that's the point); to keep a legacy sound bit-exact, leave
+current engine and get the upgrades. The revisions so far:
+
+- **1** — anti-aliased `drive` (ADAA).
+- **2** — per-node structurally-seeded RNG for `noise`/`dust` (decorrelated
+  siblings; byte-identical streaming randomness).
+- **3** — the inharmonic additive `piano` voice (stretched partials,
+  per-partial decay, hammer spectrum, detuned unison pair).
+- **4** — corrected mixer output stage (joint stereo loudness normalization,
+  gated BS.1770, oversampled true-peak) and per-note humanize jitter.
+
+To modernise an existing sound, set `"engine": 4` (the current revision — its
+output will change; that's the point); to keep a legacy sound bit-exact, leave
 `engine` off.
 
 ## Determinism

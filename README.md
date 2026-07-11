@@ -78,7 +78,7 @@ use tono_core::dsl::SoundDoc;
 use tono_core::render;
 
 let doc: SoundDoc = serde_json::from_str(r#"{
-    "name": "blip", "duration": 0.3, "engine": 2,
+    "name": "blip", "duration": 0.3, "engine": 4,
     "root": { "type": "mul", "inputs": [
         { "type": "sine", "freq": 880 },
         { "type": "env", "a": 0.002, "d": 0.08, "s": 0.0, "r": 0.05 } ] }
