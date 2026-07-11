@@ -177,6 +177,32 @@ representative renders in CI. Render the same document twice, get the same bytes
 - [docs/ROADMAP.md](docs/ROADMAP.md) — where 2.0 is headed.
 - `make help` — every target; `make verify` mirrors CI.
 
+## A personal note
+
+Every line of code in tono was written by AI. I didn't write a single line
+myself — my part was direction: deciding what to build, and holding the
+project to the same practices and standards I use in the projects where I do
+still write the code.
+
+If tono helps you in any way — as a game-audio tool, a reference, or just a
+kick-start on your own project — that makes me genuinely happy. The tokens are
+already spent; the least they can do is be useful to you too.
+
+> **⚠️ Notice — versions below 2.0.0**
+>
+> I intend to follow SemVer, but be realistic about what this project is:
+> AI-generated code. Diffs are large, and every release below 2.0.0 may
+> contain breaking changes despite my best intentions.
+>
+> Once the tool has proven itself, I will cut a 2.0.0 release — that is the
+> point where I start reviewing the code in detail and contributing to it
+> directly. 2.0.0 will be tagged by me, by hand — it is the one release an AI
+> agent is not allowed to cut. Until then, assume that anything below 2.0.0
+> has not been fully reviewed by me and may contain bugs or security issues I
+> haven't caught.
+>
+> Use at your own risk.
+
 ## License
 
 [MIT](LICENSE) — permissive, no warranty.
