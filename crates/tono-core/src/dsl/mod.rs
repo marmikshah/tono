@@ -551,6 +551,36 @@ impl SoundDoc {
         self.engine.unwrap_or(0)
     }
 
+    /// Every SoundFont path the document references (each `seq` with
+    /// `wave: "sampler"` and a non-empty `sf2`). [`validate`](Self::validate)
+    /// is filesystem-free — the core is pure compute — so a *loader* (the CLI,
+    /// the Python bindings, a game's asset pipeline) calls this after
+    /// validation to check the files exist and fail loud at load time.
+    pub fn sf2_paths(&self) -> Vec<&str> {
+        fn walk<'doc>(node: &'doc Node, out: &mut Vec<&'doc str>) {
+            match node {
+                Node::Seq { wave, sf2, .. } => {
+                    if *wave == SeqWave::Sampler && !sf2.sf2.is_empty() {
+                        out.push(sf2.sf2.as_str());
+                    }
+                }
+                Node::Mix { inputs } | Node::Mul { inputs } => {
+                    inputs.iter().for_each(|n| walk(n, out));
+                }
+                Node::Chain { stages } => stages.iter().for_each(|n| walk(n, out)),
+                Node::Duck { trigger, .. } => walk(trigger, out),
+                Node::Tracks { tracks, master } => {
+                    tracks.iter().for_each(|t| walk(&t.node, out));
+                    master.iter().for_each(|n| walk(n, out));
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        walk(&self.root, &mut out);
+        out
+    }
+
     /// Backfill missing track ids deterministically (`layer_<position>`,
     /// suffixed on collision with explicit ids). Runs at the build chokepoint
     /// so every persisted mixer document carries addressable layers; the rule

@@ -93,6 +93,13 @@ fn load_doc(path: &str) -> anyhow::Result<SoundDoc> {
     let mut doc: SoundDoc = serde_json::from_str(&fs::read_to_string(path)?)?;
     doc.ensure_track_ids();
     doc.validate().map_err(|e| anyhow::anyhow!(e))?;
+    // validate() is filesystem-free (the core is pure); the loader owns the
+    // existence check so a missing SoundFont still fails loud at load time.
+    for sf2 in doc.sf2_paths() {
+        if !std::path::Path::new(sf2).exists() {
+            anyhow::bail!("seq.sf2: no such file '{sf2}'");
+        }
+    }
     Ok(doc)
 }
 

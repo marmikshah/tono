@@ -1001,12 +1001,16 @@ fn tracks_validation_guards_the_console() {
 }
 
 #[test]
-fn sampler_requires_a_real_soundfont_path() {
+fn sampler_requires_a_soundfont_path_and_exposes_it_to_loaders() {
+    // validate() is filesystem-free (the core is pure compute): a nonexistent
+    // path validates, and sf2_paths() hands it to the loader to check.
     let d = doc(r#"{ "name": "n", "duration": 0.5, "root": { "type": "seq",
                  "bpm": 120, "wave": "sampler", "sf2": "/no/such/font.sf2",
                  "env": { "s": 1 },
                  "notes": [ { "step": 0, "len": 2, "pitch": "C4" } ] } }"#);
-    assert!(d.validate().unwrap_err().contains("no such file"));
+    d.validate().expect("path existence is the loader's job");
+    assert_eq!(d.sf2_paths(), vec!["/no/such/font.sf2"]);
+    // An empty path is still a structural error.
     let d = doc(r#"{ "name": "n", "duration": 0.5, "root": { "type": "seq",
                  "bpm": 120, "wave": "sampler",
                  "env": { "s": 1 },

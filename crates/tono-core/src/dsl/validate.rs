@@ -323,9 +323,6 @@ impl crate::dsl::Sf2Knobs {
                 "seq.sf2 must point at a SoundFont (.sf2) file when wave is 'sampler'".into(),
             );
         }
-        if !std::path::Path::new(&self.sf2).exists() {
-            return Err(format!("seq.sf2: no such file '{}'", self.sf2));
-        }
         if self.sf2_preset > 127 {
             return Err(format!(
                 "seq.sf2_preset must be in 0..=127, got {}",

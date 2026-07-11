@@ -670,6 +670,10 @@ pub(super) fn sampler_seq_stereo(
 }
 
 /// SoundFonts are large; load each file once per process and share it.
+///
+/// This is the core's SOLE, feature-gated I/O exemption ("no I/O" otherwise):
+/// multi-MB external assets are addressed by path in the DSL, so the render
+/// path must open them. Loaders pre-check existence via `SoundDoc::sf2_paths`.
 #[cfg(feature = "sampler")]
 fn load_soundfont(path: &str) -> anyhow::Result<std::sync::Arc<rustysynth::SoundFont>> {
     use std::collections::HashMap;

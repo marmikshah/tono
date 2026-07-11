@@ -73,6 +73,15 @@ fn parse_doc(json: &str, sample_rate: u32) -> PyResult<SoundDoc> {
         serde_json::from_str(json).map_err(|e| PyValueError::new_err(e.to_string()))?;
     doc.sample_rate = sample_rate;
     doc.validate().map_err(PyValueError::new_err)?;
+    // validate() is filesystem-free (the core is pure); the loader owns the
+    // existence check so a missing SoundFont still fails loud at load time.
+    for sf2 in doc.sf2_paths() {
+        if !std::path::Path::new(sf2).exists() {
+            return Err(PyValueError::new_err(format!(
+                "seq.sf2: no such file '{sf2}'"
+            )));
+        }
+    }
     Ok(doc)
 }
 
