@@ -51,6 +51,22 @@ impl LoopBuffer {
             pos: 0,
         }
     }
+
+    /// Render `doc` and loop it at **exactly** `frames` samples — truncated or
+    /// zero-padded to that length. Use it to force a set of stems onto one shared
+    /// loop grid so their layered cross-fades stay sample-aligned (never drift
+    /// phase). See [`AdaptiveMusic::add_stem_set`].
+    pub fn from_doc_len(doc: &SoundDoc, frames: usize) -> Self {
+        let p = render::render_product(doc);
+        let (mut left, mut right) = p.stereo.unwrap_or_else(|| (p.mono.clone(), p.mono));
+        left.resize(frames, 0.0);
+        right.resize(frames, 0.0);
+        LoopBuffer {
+            left,
+            right,
+            pos: 0,
+        }
+    }
 }
 
 impl AudioSource for LoopBuffer {
@@ -206,6 +222,36 @@ impl AdaptiveMusic {
             gain: if on { 1.0 } else { 0.0 },
             target: if on { 1.0 } else { 0.0 },
         });
+    }
+
+    /// Add a **phase-locked stem set**: every stem is rendered and forced onto
+    /// one shared loop length, so their intensity cross-fades stay sample-aligned
+    /// and never drift phase — the guarantee layered adaptive music needs.
+    ///
+    /// The shared length is `duration_beats` at the current tempo (set
+    /// [`set_tempo`](Self::set_tempo) first); with no tempo it falls back to the
+    /// first stem's natural rendered length. Each `(doc, fade_in_at)` becomes a
+    /// layer, exactly as [`add_layer`](Self::add_layer). Returns the shared grid
+    /// length in frames — schedule a beat clock against it.
+    ///
+    /// Because every stem is trimmed/padded to the same frame count, the set is
+    /// **provably sample-identical in length** (author each `doc` to
+    /// `duration_beats` so the fit is a trim, not a silent pad).
+    pub fn add_stem_set(&mut self, stems: &[(&SoundDoc, f32)], duration_beats: f64) -> usize {
+        let grid = self
+            .frames_per_beat()
+            .map(|fpb| (duration_beats * fpb).round() as usize)
+            .filter(|f| *f > 0)
+            .or_else(|| {
+                stems
+                    .first()
+                    .map(|(doc, _)| render::render_product(doc).mono.len())
+            })
+            .unwrap_or(0);
+        for (doc, fade_in_at) in stems {
+            self.add_layer(LoopBuffer::from_doc_len(doc, grid), *fade_in_at);
+        }
+        grid
     }
 
     /// Set the intensity, 0..1 — stems cross-fade toward their new levels.
@@ -919,5 +965,46 @@ mod tests {
         m.add_layer(LoopBuffer::from_doc(&tone(220.0)), 0.5);
         m.set_intensity_at(1.0, Quantize::Bar); // no tempo → immediate
         assert_eq!(m.intensity(), 1.0, "no tempo → applies immediately");
+    }
+
+    #[test]
+    fn from_doc_len_forces_the_grid_and_loops_at_it() {
+        // A 0.5 s tone forced to 1000 frames: it loops exactly at the grid, so
+        // block N is sample-identical to block N+1.
+        let grid = 1000;
+        let mut buf = LoopBuffer::from_doc_len(&tone(220.0), grid);
+        let mut first = vec![0.0f32; grid * 2];
+        let mut second = vec![0.0f32; grid * 2];
+        buf.fill(&mut first);
+        buf.fill(&mut second);
+        assert_eq!(first, second, "the buffer loops exactly at the grid length");
+    }
+
+    #[test]
+    fn stem_set_shares_one_beat_grid() {
+        let mut music = AdaptiveMusic::new(48_000);
+        music.set_tempo(120.0, 4); // 48000*60/120 = 24000 frames/beat
+
+        let base = tone(220.0);
+        let hi = tone(880.0);
+        let grid = music.add_stem_set(&[(&base, 0.0), (&hi, 0.5)], 4.0);
+
+        // 4 beats × 24000 = 96000 frames — the provable shared length.
+        assert_eq!(grid, 96_000, "grid = duration_beats × frames_per_beat");
+        assert_eq!(music.layer_gain(0), Some(1.0), "base always on");
+        assert_eq!(music.layer_gain(1), Some(0.0), "hi silent until intensity");
+        // Both stems are forced to `grid` frames, so their loops are phase-locked
+        // by construction (see from_doc_len's loop test).
+    }
+
+    #[test]
+    fn stem_set_without_tempo_falls_back_to_the_first_stem() {
+        let mut music = AdaptiveMusic::new(48_000);
+        let base = tone(220.0);
+        let grid = music.add_stem_set(&[(&base, 0.0)], 4.0);
+        assert!(
+            grid > 0,
+            "no tempo → grid falls back to the first stem's natural length"
+        );
     }
 }
