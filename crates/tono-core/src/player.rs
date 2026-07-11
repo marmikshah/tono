@@ -112,7 +112,9 @@ impl Player {
                 } else {
                     out[f * 2] = 0.0;
                     out[f * 2 + 1] = 0.0;
-                    self.playing = self.looping && n > 0;
+                    // The guard above proves looping-with-content is impossible
+                    // here: the sound is over.
+                    self.playing = false;
                     continue;
                 }
             }

@@ -43,6 +43,12 @@ use crate::patch::Patch;
 use crate::player::Player;
 use crate::streaming::{EffectChain, StreamGraph};
 
+/// Fade applied wherever an abrupt gain change would click: voice steals and
+/// zero-length stops.
+const DECLICK_MS: f32 = 5.0;
+/// Floor for the re-render crossfade — a zero-length swap would click.
+const CROSSFADE_MIN_MS: f32 = 8.0;
+
 /// A block-serving audio source: fill `out` (interleaved stereo L,R,L,R…) and
 /// return the number of frames written. Runs indefinitely. This is the single
 /// seam host output adapters target, so a `cpal` callback, an AudioWorklet, or a
@@ -224,14 +230,6 @@ fn balance(pan: f32) -> (f32, f32) {
     (l, r)
 }
 
-/// The tracks (layers) of a document, in order, by optional id.
-fn layer_ids(doc: &SoundDoc) -> Vec<Option<String>> {
-    match &doc.root {
-        Node::Tracks { tracks, .. } => tracks.iter().map(|t| t.id.clone()).collect(),
-        _ => Vec::new(),
-    }
-}
-
 struct Instance {
     id: u64,
     patch: usize,
@@ -327,13 +325,16 @@ impl Engine {
     /// Resolve a named mixer layer (a `tracks` entry) to a typed handle. `None`
     /// if the patch's graph has no track with that id.
     pub fn layer(&self, patch: PatchId, name: &str) -> Option<LayerId> {
-        layer_ids(&self.patches[patch.0].doc)
-            .iter()
-            .position(|id| id.as_deref() == Some(name))
-            .map(|index| LayerId {
-                patch: patch.0,
-                index,
-            })
+        match &self.patches[patch.0].doc.root {
+            Node::Tracks { tracks, .. } => tracks
+                .iter()
+                .position(|t| t.id.as_deref() == Some(name))
+                .map(|index| LayerId {
+                    patch: patch.0,
+                    index,
+                }),
+            _ => None,
+        }
     }
 
     /// Spawn a one-shot instance of a patch (plays once, then culls itself) at
@@ -383,8 +384,7 @@ impl Engine {
         }
         let values = self.patches[patch.0].defaults();
         let doc = self.build_doc(patch.0, &values, &BTreeMap::new());
-        let mut player = self.new_player(doc, looping, 0);
-        player.play();
+        let player = self.new_player(doc, looping, 0);
         let id = self.next_id;
         self.next_id += 1;
         self.instances.push(Instance {
@@ -419,7 +419,7 @@ impl Engine {
                 .map(|i| (i.id, i.priority));
             match victim {
                 Some((id, vp)) if vp <= priority => {
-                    let fade = Tween::ms(5.0, self.sample_rate);
+                    let fade = Tween::ms(DECLICK_MS, self.sample_rate);
                     if let Some(v) = self.instances.iter_mut().find(|i| i.id == id) {
                         v.gain.set(0.0, fade);
                         v.stopping = true;
@@ -533,7 +533,7 @@ impl Engine {
         let fresh = self.new_player(doc, looping, pos);
 
         let fade = if tw.frames == 0 {
-            Tween::ms(8.0, self.sample_rate)
+            Tween::ms(CROSSFADE_MIN_MS, self.sample_rate)
         } else {
             tw
         };
@@ -548,7 +548,7 @@ impl Engine {
     /// Stop an instance with a declick fade-out; it is culled once silent. A
     /// zero-length `fade` is bumped to a short default so stops never click.
     pub fn stop(&mut self, h: InstanceHandle, fade: Tween) {
-        let min_fade = Tween::ms(5.0, self.sample_rate);
+        let min_fade = Tween::ms(DECLICK_MS, self.sample_rate);
         if let Some(i) = self.instance_mut(h) {
             let fade = if fade.frames == 0 { min_fade } else { fade };
             i.gain.set(0.0, fade);
@@ -909,7 +909,6 @@ impl std::error::Error for MixerError {}
 /// One bus: a summing point with an optional insert chain, a fader, post-fader
 /// sends to FX buses, and a dry level into master.
 struct Bus {
-    id: u32,
     name: String,
     kind: BusKind,
     gain: f32,
@@ -967,7 +966,6 @@ impl Mixer {
 
     fn build(sample_rate: Option<u32>) -> Self {
         let master = Bus {
-            id: 0,
             name: "master".into(),
             kind: BusKind::Master,
             gain: 1.0,
@@ -1035,10 +1033,9 @@ impl Mixer {
         kind: BusKind,
         inserts: Option<(EffectChain, EffectChain)>,
     ) -> BusId {
-        // A bus's index is its id, so pushing in id order keeps them equal.
+        // A bus's id is its index — buses are only ever pushed, never removed.
         let id = self.buses.len() as u32;
         self.buses.push(Bus {
-            id,
             name,
             kind,
             gain: 1.0,
@@ -1053,8 +1050,8 @@ impl Mixer {
     pub fn bus_named(&self, name: &str) -> Option<BusId> {
         self.buses
             .iter()
-            .find(|b| b.name == name)
-            .map(|b| BusId(b.id))
+            .position(|b| b.name == name)
+            .map(|i| BusId(i as u32))
     }
 
     /// Set (or clear, with an empty list) a bus's insert chain. Works on any bus,
@@ -1214,7 +1211,7 @@ impl AudioSource for Mixer {
             }
             bus_l[..frames].fill(0.0);
             bus_r[..frames].fill(0.0);
-            let bus_id = self.buses[bi].id;
+            let bus_id = bi as u32;
             for s in self.sources.iter_mut().filter(|s| s.bus.0 == bus_id) {
                 s.source.fill(scr);
                 for f in 0..frames {
@@ -1254,7 +1251,7 @@ impl AudioSource for Mixer {
             if self.buses[bi].kind != BusKind::Fx {
                 continue;
             }
-            let bus_id = self.buses[bi].id;
+            let bus_id = bi as u32;
             let (fl, fr) = &mut fx_in[bi];
             for s in self.sources.iter_mut().filter(|s| s.bus.0 == bus_id) {
                 s.source.fill(scr);
