@@ -39,6 +39,15 @@ python: ## Build the Python extension into the active venv (maturin develop) —
 wheel: ## Build a release abi3 wheel for the Python bindings → target/wheels/
 	maturin build --release -m crates/tono-py/Cargo.toml
 
+python-test: ## Run the Python determinism smoke test (build the extension first: make python)
+	python3 crates/tono-py/tests/smoke.py
+
+python-smoke: ## Build the extension as a wheel, install it, run the smoke test (what the Python workflow runs)
+	python3 -m pip install --upgrade pip maturin numpy
+	maturin build --out dist -m crates/tono-py/Cargo.toml
+	python3 -m pip install --no-index --find-links dist --force-reinstall tono
+	python3 crates/tono-py/tests/smoke.py
+
 test: ## Run the test suite
 	cargo test
 
@@ -56,6 +65,15 @@ pre-commit-checks: ## CI lint gate (non-mutating): fmt --check + clippy. Pair wi
 
 verify: pre-commit-checks test ## Exactly what CI runs (fmt --check + clippy + test) - non-mutating
 
+site: ## Assemble the GitHub Pages site into _site/ (what the Pages workflow deploys)
+	mkdir -p _site/audio _site/img
+	cp site/index.html _site/
+	cp docs/examples/audio/*.mp4 _site/audio/
+	cp docs/logo.png docs/logo-wordmark.png docs/river-flows-spectrogram.png _site/img/
+
+version: ## Print the workspace version (the single version parser — release + CI both use it)
+	@sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)".*/\1/p' Cargo.toml
+
 verify-native: ## Lint + test the off-CI native crates (desktop/play/py); --all-targets compiles their examples too
 	cargo clippy -p tono-desktop -p tono-play -p tono-py --all-targets -- -D warnings
 	cargo test -p tono-desktop -p tono-play
@@ -63,7 +81,7 @@ verify-native: ## Lint + test the off-CI native crates (desktop/play/py); --all-
 release: ## Cut a release: guard clean master, tag vX.Y.Z from Cargo.toml, push (CI publishes to crates.io)
 	@[ "$$(git branch --show-current)" = "$(RELEASE_BRANCH)" ] || { echo "Release only from $(RELEASE_BRANCH)."; exit 1; }
 	@git diff --quiet && git diff --cached --quiet || { echo "Working tree dirty — commit before releasing."; exit 1; }
-	@V=$$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\([^"]*\)".*/\1/p' Cargo.toml); \
+	@V=$$($(MAKE) -s version); \
 		echo "→ Releasing v$$V"; \
 		if git rev-parse "v$$V" >/dev/null 2>&1; then echo "tag v$$V exists — bump version in Cargo.toml first."; exit 1; fi; \
 		git tag -a "v$$V" -m "v$$V" && git push origin "v$$V"; \
