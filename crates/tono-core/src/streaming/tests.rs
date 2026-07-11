@@ -323,7 +323,7 @@ fn fuzz_streamed_matches_offline_byte_for_byte() {
         let Ok(doc) = serde_json::from_value::<SoundDoc>(doc_json) else {
             continue;
         };
-        if doc.validate().is_err() || !is_streamable(&doc) {
+        if doc.validate().is_err() || StreamGraph::try_from_doc(&doc).is_none() {
             continue;
         }
         assert_byte_identical(&doc);
@@ -451,9 +451,12 @@ fn engine1_noise_falls_back_but_engine2_streams() {
         ))
         .is_none()
     );
-    assert!(is_streamable(&parse(
-        r#"{ "name":"n2", "duration":0.05, "engine":2, "root": { "type":"noise", "color":"white" } }"#
-    )));
+    assert!(
+        StreamGraph::try_from_doc(&parse(
+            r#"{ "name":"n2", "duration":0.05, "engine":2, "root": { "type":"noise", "color":"white" } }"#
+        ))
+        .is_some()
+    );
 }
 
 #[test]

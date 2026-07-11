@@ -18,7 +18,7 @@ fn interleave_i32(channels: &[&[f32]], bits: u16) -> Vec<i32> {
 }
 
 /// Write channels as a FLAC file (lossless). `bits` is 8 or 16; anything else
-/// falls back to 16 (same contract as `write_wav`).
+/// falls back to 16 (same contract as `write_wav_stereo`).
 pub fn write_flac(
     path: &Path,
     channels: &[&[f32]],
@@ -98,18 +98,6 @@ fn spec(channels: u16, sample_rate: u32, bits: u16) -> hound::WavSpec {
     }
 }
 
-/// Write mono `f32` samples (in [-1, 1]) to a WAV file at `path`.
-/// `bits` is 8 or 16; anything else falls back to 16.
-pub fn write_wav(path: &Path, samples: &[f32], sample_rate: u32, bits: u16) -> anyhow::Result<()> {
-    let bits = if bits == 8 { 8 } else { 16 };
-    let mut writer = hound::WavWriter::create(path, spec(1, sample_rate, bits))?;
-    for &x in samples {
-        write_sample(&mut writer, x, bits)?;
-    }
-    writer.finalize()?;
-    Ok(())
-}
-
 /// Write interleaved-stereo `f32` samples (left/right in [-1, 1]) to `path`.
 pub fn write_wav_stereo(
     path: &Path,
@@ -179,20 +167,6 @@ mod tests {
     }
 
     #[test]
-    fn wav_roundtrips_through_hound() {
-        let samples = ramp(1000);
-        let path = tmp("mono.wav");
-        write_wav(&path, &samples, 44_100, 16).unwrap();
-        let reader = hound::WavReader::open(&path).unwrap();
-        let s = reader.spec();
-        assert_eq!(
-            (s.channels, s.sample_rate, s.bits_per_sample),
-            (1, 44_100, 16)
-        );
-        assert_eq!(reader.len(), 1000);
-    }
-
-    #[test]
     fn stereo_wav_interleaves_both_channels() {
         let path = tmp("stereo.wav");
         write_wav_stereo(&path, &ramp(500), &ramp(500), 48_000, 16).unwrap();
@@ -204,7 +178,7 @@ mod tests {
     #[test]
     fn smpl_chunk_appends_60_bytes_and_patches_riff() {
         let path = tmp("loop.wav");
-        write_wav(&path, &ramp(100), 44_100, 16).unwrap();
+        write_wav_stereo(&path, &ramp(100), &ramp(100), 44_100, 16).unwrap();
         let before = std::fs::read(&path).unwrap().len();
         append_smpl_loop(&path, 44_100, 0, 99).unwrap();
         let bytes = std::fs::read(&path).unwrap();

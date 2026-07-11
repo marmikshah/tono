@@ -141,12 +141,6 @@ impl StreamGraph {
     }
 }
 
-/// Whether `doc`'s graph can be streamed. A cheap check the runtime uses to pick
-/// the streaming path.
-pub fn is_streamable(doc: &SoundDoc) -> bool {
-    StreamGraph::try_from_doc(doc).is_some()
-}
-
 /// A stateful chain of streaming effect processors applied to an input signal
 /// block-by-block — byte-identical to the offline processors, carrying delay
 /// lines / filter state across blocks. Used for a shared bus (e.g. an
@@ -182,10 +176,5 @@ impl EffectChain {
             *x = v;
             self.pos += 1;
         }
-    }
-
-    /// Whether the chain has no processors.
-    pub fn is_empty(&self) -> bool {
-        self.procs.is_empty()
     }
 }

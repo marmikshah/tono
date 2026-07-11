@@ -4,7 +4,7 @@
 pattern station into a real music-production app — an FL-style pattern/playlist
 workflow with deep routing, fully synthetic, on the same byte-identical core.
 The API pass (renames, `#[non_exhaustive]`, the dead-code sweep) shipped in
-1.6.0 with the aliases deprecated; the old names are deleted when 2.0 lands.
+1.6.0 with the aliases deprecated; 2.0 deleted the old names.
 
 The sequencing rule throughout: the **bounce stays a pure function of
 `(project, seed, sample_rate)`** — CI-pinned by the golden corpus — and
