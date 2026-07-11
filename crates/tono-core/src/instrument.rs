@@ -343,7 +343,7 @@ pub struct VoiceHandle(u64);
 /// One detuned, panned copy in a (possibly unison) voice. The detune is baked
 /// into the graph at build; `l`/`r` are its channel gains (already unison-
 /// normalised so a stack isn't louder than a single voice).
-struct Copy {
+struct UnisonCopy {
     graph: StreamGraph,
     l: f32,
     r: f32,
@@ -354,7 +354,7 @@ struct Voice {
     note: Note,
     /// The unison stack — one entry unless unison is on. All copies share the
     /// note pitch (so glide/bend move them together); each is detuned + panned.
-    copies: Vec<Copy>,
+    copies: Vec<UnisonCopy>,
     /// The frequency the graphs were baked at (the note the voice was built for).
     /// A live pitch scale of `target.freq() / built_hz` retunes to any other note
     /// without a rebuild — how mono glide moves between notes.
@@ -385,8 +385,13 @@ pub struct Instrument {
     /// Filter-cutoff (brightness) scale, 1.0 = as designed. Applied live to every
     /// voice's filters — a mod-wheel / CC74 brightness sweep without a rebuild.
     brightness: f32,
-    /// Sample clock for the modulation LFOs.
-    clock: u64,
+    /// Modulation LFO phases in `0..1`, advanced per control block. Phase
+    /// accumulators (not an absolute sample clock) so precision never degrades:
+    /// a `u64` clock cast to `f32` quantizes to whole control blocks after a
+    /// few hours and the LFOs go steppy, then freeze.
+    vib_phase: f32,
+    flt_phase: f32,
+    trem_phase: f32,
     /// Current tremolo gain (1.0 = no tremolo), updated at control rate.
     trem: f32,
     /// Notes physically held, oldest→newest — mono note priority. On a note-off
@@ -420,9 +425,9 @@ fn transpose(node: &mut Node, ratio: f32) {
         Node::Sine { freq }
         | Node::Triangle { freq }
         | Node::Sawtooth { freq }
+        | Node::Square { freq, .. }
+        | Node::Fm { freq, .. }
         | Node::Super { freq, .. } => scale(freq, ratio),
-        Node::Square { freq, .. } => scale(freq, ratio),
-        Node::Fm { freq, .. } => scale(freq, ratio),
         // Pitch-determining processors: the ring-mod carrier and the modal
         // body's resonant partials must track the note, or a bell/metallic patch
         // plays the same pitch for every key.
@@ -485,7 +490,9 @@ impl Instrument {
             sustain: false,
             bend: 1.0,
             brightness: 1.0,
-            clock: 0,
+            vib_phase: 0.0,
+            flt_phase: 0.0,
+            trem_phase: 0.0,
             trem: 1.0,
             held: Vec::new(),
             master,
@@ -536,7 +543,7 @@ impl Instrument {
     /// Build the unison stack for `note`: `unison` detuned, panned, level-
     /// normalised copies (one copy, centered, when unison is off). `None` if the
     /// patch can't build.
-    fn build_copies(&self, note: Note, velocity: f32) -> Option<Vec<Copy>> {
+    fn build_copies(&self, note: Note, velocity: f32) -> Option<Vec<UnisonCopy>> {
         let n = self.design.unison.max(1);
         let norm = 1.0 / (n as f32).sqrt(); // a stack shouldn't be louder than one
         let mut copies = Vec::with_capacity(n);
@@ -556,7 +563,7 @@ impl Instrument {
                 graph.set_cutoff(self.brightness); // catch a new note up to the knob
             }
             let pan = spread * self.design.unison_width;
-            copies.push(Copy {
+            copies.push(UnisonCopy {
                 graph,
                 l: (1.0 - pan).min(1.0) * norm,
                 r: (1.0 + pan).min(1.0) * norm,
@@ -587,7 +594,7 @@ impl Instrument {
     /// gets a handle, just a silent voice.
     fn spawn_voice(&mut self, handle: u64, note: Note, velocity: f32) {
         let Some(copies) = self.build_copies(note, velocity) else {
-            return; // catch of the pitch wheel is applied inside build_copies
+            return; // un-buildable patch ⇒ the caller keeps its handle, the voice is silent
         };
         let mut env = EnvGen::new(&self.design.amp, self.sample_rate);
         env.gate_on();
@@ -842,27 +849,31 @@ impl Instrument {
 }
 
 impl Instrument {
-    /// Update the modulation LFOs at the current clock and apply them to every
-    /// voice: vibrato rides the bend channel, wobble the cutoff, tremolo the gain.
-    fn apply_modulation(&mut self) {
+    /// Update the modulation LFOs at their current phases, apply them to every
+    /// voice (vibrato rides the bend channel, wobble the cutoff, tremolo the
+    /// gain), then advance the phases by this `frames`-long control block.
+    fn apply_modulation(&mut self, frames: usize) {
         let m = self.design.modulation;
-        let t = self.clock as f32 / self.sample_rate as f32;
         let tau = std::f32::consts::TAU;
         let vib = if m.vibrato_cents > 0.0 {
-            2f32.powf((m.vibrato_cents / 1200.0) * (tau * m.vibrato_rate * t).sin())
+            2f32.powf((m.vibrato_cents / 1200.0) * (tau * self.vib_phase).sin())
         } else {
             1.0
         };
         let flt = if m.filter_octaves > 0.0 {
-            2f32.powf(m.filter_octaves * (tau * m.filter_rate * t).sin())
+            2f32.powf(m.filter_octaves * (tau * self.flt_phase).sin())
         } else {
             1.0
         };
         self.trem = if m.tremolo_depth > 0.0 {
-            1.0 - m.tremolo_depth * 0.5 * (1.0 - (tau * m.tremolo_rate * t).sin())
+            1.0 - m.tremolo_depth * 0.5 * (1.0 - (tau * self.trem_phase).sin())
         } else {
             1.0
         };
+        let step = frames as f32 / self.sample_rate as f32;
+        self.vib_phase = (self.vib_phase + m.vibrato_rate * step).fract();
+        self.flt_phase = (self.flt_phase + m.filter_rate * step).fract();
+        self.trem_phase = (self.trem_phase + m.tremolo_rate * step).fract();
         let (bend, cutoff) = (self.bend * vib, self.brightness * flt);
         let wobble = m.filter_octaves > 0.0;
         for v in self.voices.iter_mut() {
@@ -946,9 +957,8 @@ impl AudioSource for Instrument {
         let mut done = 0;
         while done < frames {
             let n = CTRL.min(frames - done);
-            self.apply_modulation();
+            self.apply_modulation(n);
             self.render_block(&mut out[done * 2..(done + n) * 2]);
-            self.clock += n as u64;
             done += n;
         }
         frames
