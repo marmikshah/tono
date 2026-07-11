@@ -4,11 +4,38 @@ on:
   push:
     tags: ["v*"]
 
-# Publishes the library + CLI to crates.io on a v* tag. The token is a
+# Publishes the library + CLI to crates.io on a v* tag, and creates the GitHub
+# Release with the tag's CHANGELOG section as notes. The crates token is a
 # production-environment secret (CRATES_API_TOKEN), exposed to cargo as
 # CARGO_REGISTRY_TOKEN. Silently skips when the token is unset (secrets can't be
 # read in `if:` directly, so route it through env — the documented indirection).
 jobs:
+  # The GitHub Release needs only the workflow token, so it is independent of
+  # the crates.io gating — a tag always gets its release page. Idempotent: a
+  # re-run of an already-released tag skips instead of erroring.
+  github-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Create the GitHub Release from the CHANGELOG
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists — skipping"
+            exit 0
+          fi
+          V="${GITHUB_REF_NAME#v}"
+          # The tag's section: from its "## X.Y.Z" header to the next "## ".
+          awk "/^## $V /{flag=1; next} /^## /{flag=0} flag" CHANGELOG.md > /tmp/notes.md
+          if [ ! -s /tmp/notes.md ]; then
+            echo "no CHANGELOG section for $V — releasing with an empty body"
+          fi
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" \
+            --notes-file /tmp/notes.md --verify-tag
+
   publish:
     runs-on: ubuntu-latest
     environment: production
