@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Architecture map and getting-started guide for tono — the deterministic synthesis-graph audio engine.">
+<meta name="description" content="tono from its smallest unit up: the node ladder, the byte-identity invariant, and a getting-started path through the deterministic audio engine.">
 <title>tono — architecture &amp; getting started</title>
 <link rel="icon" href="img/logo.png">
 <style>
@@ -21,24 +21,14 @@
     --path: #b06f1f;
     --path-soft: #f3e7d3;
     --code-bg: #eaeef2;
-    --good: #2e7d4f;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #14171c;
-      --surface: #1b1f26;
-      --surface-2: #232830;
-      --ink: #dde3e8;
-      --ink-soft: #9aa5b0;
-      --ink-faint: #6b7681;
-      --line: #303740;
-      --accent: #52c7bf;
-      --accent-ink: #7fd8d2;
-      --accent-soft: #1d3a38;
-      --path: #d99b47;
-      --path-soft: #3a2e1a;
+      --bg: #14171c; --surface: #1b1f26; --surface-2: #232830;
+      --ink: #dde3e8; --ink-soft: #9aa5b0; --ink-faint: #6b7681;
+      --line: #303740; --accent: #52c7bf; --accent-ink: #7fd8d2;
+      --accent-soft: #1d3a38; --path: #d99b47; --path-soft: #3a2e1a;
       --code-bg: #232830;
-      --good: #6fbf8f;
     }
   }
   :root[data-theme="dark"] {
@@ -46,14 +36,14 @@
     --ink: #dde3e8; --ink-soft: #9aa5b0; --ink-faint: #6b7681;
     --line: #303740; --accent: #52c7bf; --accent-ink: #7fd8d2;
     --accent-soft: #1d3a38; --path: #d99b47; --path-soft: #3a2e1a;
-    --code-bg: #232830; --good: #6fbf8f;
+    --code-bg: #232830;
   }
   :root[data-theme="light"] {
     --bg: #f4f6f8; --surface: #fbfcfd; --surface-2: #e9edf1;
     --ink: #232a31; --ink-soft: #58636e; --ink-faint: #8a95a0;
     --line: #d4dbe2; --accent: #22827d; --accent-ink: #135b57;
     --accent-soft: #d9edec; --path: #b06f1f; --path-soft: #f3e7d3;
-    --code-bg: #eaeef2; --good: #2e7d4f;
+    --code-bg: #eaeef2;
   }
 
   * { box-sizing: border-box; }
@@ -77,7 +67,7 @@
   h3 { font-size: 0.95rem; margin: 28px 0 8px; color: var(--ink); }
   p { max-width: 68ch; margin: 0 0 14px; }
   a { color: var(--accent-ink); }
-  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   .kicker {
     font-family: ui-monospace, Menlo, monospace;
@@ -115,9 +105,34 @@
     display: block; margin: 8px 0 10px; color: var(--ink);
   }
 
+  /* ---- the ladder ---- */
+  .ladder { list-style: none; margin: 24px 0 8px; padding: 0; position: relative; }
+  .ladder::before {
+    content: ""; position: absolute; left: 15px; top: 18px; bottom: 18px;
+    width: 2px; background: var(--line);
+  }
+  .ladder li { position: relative; padding: 0 0 26px 48px; }
+  .ladder li:last-child { padding-bottom: 0; }
+  .rung-dot {
+    position: absolute; left: 4px; top: 2px; width: 24px; height: 24px;
+    border-radius: 50%; border: 2px solid var(--accent); background: var(--surface);
+    color: var(--accent-ink); font-family: ui-monospace, Menlo, monospace;
+    font-size: 0.72rem; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .rung-title { font-family: ui-monospace, Menlo, monospace; font-weight: 700; font-size: 0.95rem; margin: 2px 0 6px; }
+  .rung-title .unit { color: var(--accent-ink); }
+  .ladder p { margin: 0 0 10px; font-size: 0.95rem; }
+  .ladder pre { margin: 8px 0 10px; }
+  .in-code {
+    font-size: 0.8rem; color: var(--ink-faint);
+    font-family: ui-monospace, Menlo, monospace;
+  }
+  .in-code b { color: var(--ink-soft); font-weight: 600; }
+
   /* ---- architecture diagram ---- */
   .diagram { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 20px; margin: 20px 0 8px; overflow-x: auto; }
-  .diagram-inner { min-width: 640px; display: flex; flex-direction: column; gap: 0; }
+  .diagram-inner { min-width: 640px; display: flex; flex-direction: column; }
   .tier-label {
     font-family: ui-monospace, Menlo, monospace; font-size: 0.68rem;
     letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint);
@@ -198,27 +213,144 @@
 
 <main>
   <div class="kicker">tono · repo guide · v2.0.0</div>
-  <h1>One engine, several faces</h1>
-  <p class="lede">tono is a deterministic synthesis-graph engine: you describe a sound as a JSON
-  document, the engine renders it to audio and hands back a spectrogram, a waveform, and numeric
-  stats — so sound is authored by <em>inspection</em>, in a write → render → look → refine loop.
-  Everything else in the repo is a different way of driving that one engine.</p>
+  <h1>From one node to a game soundtrack</h1>
+  <p class="lede">tono has exactly one primitive — a <strong>node</strong> that evaluates to a
+  signal — and one design rule: every layer above it (patches, instruments, songs, adaptive
+  music, the desktop studio, the Python bindings) must <em>compile down</em> to nodes rather than
+  invent its own audio path. Understand the smallest unit and how it composes, and the whole
+  codebase reads as variations on one idea.</p>
 
   <div class="invariant">
-    <div class="label">The invariant that shapes everything</div>
+    <div class="label">The invariant that makes composition safe</div>
     <span class="formula">render(graph, seed, sample_rate) → byte-identical audio, forever</span>
-    <p>The same document renders the same bytes on every run — and the real-time streaming path
-    matches the offline bounce bit-for-bit. A golden corpus
-    (<code>crates/tono-core/tests/golden.rs</code>) pins the hashes in CI. Kernel improvements that
-    would change output ship behind a document <code>engine</code> revision (currently 4), so old
-    sounds never silently change. If a change you make shifts a golden hash, that is the suite
-    telling you that you changed synthesis math, not organisation.</p>
+    <p>Because every layer reduces to the same nodes, one guarantee covers everything: the same
+    document renders the same bytes on every run, and the real-time path matches the offline
+    bounce bit-for-bit. A golden corpus (<code>crates/tono-core/tests/golden.rs</code>) pins the
+    hashes in CI; kernel improvements ship behind a document <code>engine</code> revision
+    (currently 4) so old sounds never silently change. If your change shifts a golden hash, you
+    changed synthesis math — not organisation.</p>
   </div>
 
+  <h2>the smallest unit, and the ladder up</h2>
+  <p>Read this ladder once and the module tree stops being a list of names. Each rung is built
+  only from the rungs below it.</p>
+
+  <ol class="ladder">
+    <li>
+      <span class="rung-dot">0</span>
+      <div class="rung-title">A sample — <span class="unit">f32 in [-1, 1]</span></div>
+      <p>The atom of audio. “Deterministic” in tono means literally these bits: two renders of
+      the same document produce identical <code>f32</code> bit patterns, which is why sounds are
+      testable, diffable, and cacheable like any other build artifact.</p>
+      <div class="in-code"><b>in the code:</b> type Signal = Vec&lt;f32&gt; · dsp.rs (RNG, loudness, limiting)</div>
+    </li>
+    <li>
+      <span class="rung-dot">1</span>
+      <div class="rung-title">A Value — <span class="unit">a parameter over time</span></div>
+      <p>Every knob a node exposes is a <code>Value</code>: a constant, a note name that resolves
+      to Hz, or a modulator that produces a value <em>per sample</em>. This is why there is no
+      separate “automation system” — modulation is just what parameters are.</p>
+      <pre><code>"freq": 880                                          <span class="c">// constant</span>
+"freq": "A5"                                         <span class="c">// note name → Hz</span>
+"freq": { "slide": { "from": 880, "to": 180,
+                     "secs": 0.18, "curve": "exp" } } <span class="c">// per-sample modulator</span></code></pre>
+      <div class="in-code"><b>in the code:</b> dsl/mod.rs::Value + Modulator · evaluated by render (eval_value) and streaming/value.rs — same formulas, same bytes</div>
+    </li>
+    <li>
+      <span class="rung-dot">2</span>
+      <div class="rung-title">A Node — <span class="unit">the smallest sound</span></div>
+      <p>One enum variant = one DSP unit that evaluates to a mono signal. Two kinds:
+      <strong>sources</strong> make signal (sine, square, noise, fm, impact, seq…);
+      <strong>processors</strong> transform an incoming one (lowpass, reverb, drive, compress…).
+      That’s the entire vocabulary — there is nothing else to learn at the bottom.</p>
+      <pre><code>{ "type": "sine", "freq": 880 }        <span class="c">// a source: the smallest complete sound</span>
+{ "type": "lowpass", "cutoff": 1200 }  <span class="c">// a processor: only meaningful inside a chain</span></code></pre>
+      <div class="in-code"><b>in the code:</b> dsl/node.rs (the enum + docs) · dsl/validate.rs (its rules) · render/ (the offline kernel per variant)</div>
+    </li>
+    <li>
+      <span class="rung-dot">3</span>
+      <div class="rung-title">Composition — <span class="unit">mix · mul · chain</span></div>
+      <p>Three combinator nodes turn atoms into design. <code>mix</code> layers signals,
+      <code>mul</code> gates one by another (an envelope is just <code>mul</code> by an
+      <code>env</code> node), <code>chain</code> runs processors in series. Everything you will
+      ever author is these three shapes nested.</p>
+      <pre><code>{ "type": "mul", "inputs": [                     <span class="c">// a “bleep”:</span>
+  { "type": "sine", "freq": 880 },               <span class="c">//   tone …</span>
+  { "type": "env", "a": 0.002, "d": 0.08,        <span class="c">//   … shaped by an envelope</span>
+    "s": 0.0, "r": 0.05 } ] }</code></pre>
+      <div class="in-code"><b>in the code:</b> Node::Mix / Mul / Chain in dsl/node.rs · recursion in render/mod.rs::render_node</div>
+    </li>
+    <li>
+      <span class="rung-dot">4</span>
+      <div class="rung-title">A SoundDoc — <span class="unit">the unit the whole project trades in</span></div>
+      <p>A root node plus metadata: <code>duration</code>, <code>sample_rate</code>,
+      <code>seed</code>, and the <code>engine</code> pin that freezes which kernel revision
+      renders it. This JSON document is the currency of the repo — the CLI renders it, the studio
+      edits it, Python receives it as a string, songs compile to it, and the golden tests hash
+      its render. If you save, send, or version anything in tono, it is one of these.</p>
+      <pre><code>{ "name": "blip", "duration": 0.3, "engine": 4, "root": { …the mul above… } }</code></pre>
+      <div class="in-code"><b>in the code:</b> dsl/mod.rs::SoundDoc · validate() is pure (no filesystem) — loaders check sf2_paths() themselves</div>
+    </li>
+    <li>
+      <span class="rung-dot">5</span>
+      <div class="rung-title">Two evaluators, one answer — <span class="unit">render vs streaming</span></div>
+      <p>The same node tree has two interpreters. <code>render/</code> evaluates whole buffers
+      offline (the bounce). <code>streaming/</code> carries per-node state (oscillator phase,
+      filter memory) and evaluates sample-by-sample in real time — reusing the offline kernels so
+      the output is byte-identical, verified by a fuzzer in CI. Docs outside the streamable
+      subset fall back to a pre-rendered <code>Player</code>: still the same bytes, just bounced
+      first.</p>
+      <div class="in-code"><b>in the code:</b> render/mod.rs::render_product · streaming/{value,source,proc}.rs · streaming/tests.rs::fuzz_streamed_matches_offline_byte_for_byte</div>
+    </li>
+    <li>
+      <span class="rung-dot">6</span>
+      <div class="rung-title">An AudioSource — <span class="unit">the run-time atom</span></div>
+      <p>One trait, one method: <em>fill this interleaved-stereo buffer</em>. It is to playback
+      what Node is to authoring. Engine, Mixer, Instrument, AdaptiveMusic, the streaming
+      renderer — every live object implements it, every output adapter (cpal via
+      <code>tono-play::Speaker</code>, a future AudioWorklet) consumes it. This seam is why the
+      pure core never links a sound card.</p>
+      <pre><code>pub trait AudioSource {
+    fn fill(&amp;mut self, out: &amp;mut [f32]) -&gt; usize;  <span class="c">// L,R,L,R… whole buffer, every call</span>
+}</code></pre>
+      <div class="in-code"><b>in the code:</b> runtime/source.rs · runtime/ring.rs (the wait-free Engine::split seam for game audio threads)</div>
+    </li>
+    <li>
+      <span class="rung-dot">7</span>
+      <div class="rung-title">The layers — <span class="unit">compilers down to rungs 4–6</span></div>
+      <p>Everything above the seam is sugar that reduces to what you already know:
+      a <strong>Patch</strong> is a doc plus named parameters (edits by path);
+      an <strong>Instrument</strong> renders its patch per note through the streaming evaluator;
+      a <strong>Song</strong> (tracks / patterns / arrangement) compiles via
+      <code>to_doc()</code> into an ordinary doc of <code>seq</code> nodes;
+      <strong>AdaptiveMusic</strong> loops rendered docs as intensity stems;
+      the <strong>catalog</strong> and <strong>presets</strong> are just curated constructors.
+      Nothing up here adds a new audio path — which is why the byte-identity guarantee at the
+      bottom covers all of it.</p>
+      <div class="in-code"><b>in the code:</b> patch.rs · instrument/ · song.rs (to_doc) · adaptive.rs · catalog.rs · presets.rs</div>
+    </li>
+  </ol>
+
+  <h2>the full flow, on the ladder</h2>
+  <p>The authoring loop is rungs 2→5 plus your eyes; the live loop is rungs 5→6 plus a speaker.
+  Same document either way.</p>
+  <pre><code>you write            the engine                       you look at
+─────────────        ──────────────────────────       ─────────────────
+blip.json   ──►  <span class="a">dsl</span>: parse + validate  ──►  <span class="a">render</span>  ──►  blip.wav
+(rungs 1–4)          (loud errors, NaN-proof)   │         blip.png       <span class="c">◄─ spectrogram</span>
+                                                │         blip_wave.png
+                                                └──►  <span class="a">analysis</span> ──►  blip.stats.json
+        ▲                                                      │
+        └──────────────  refine the JSON, re-render  ◄─────────┘
+
+game loop   ──►  <span class="a">runtime</span>: Engine / Mixer / Instrument (rung 7)
+                     └── fill() ──► <span class="a">streaming</span> (rung 5) ──► Speaker / ring ──► 🔊</code></pre>
+
   <h2>the map</h2>
-  <p>Cargo workspace. The root crate is the CLI; the pure engine and the native faces live under
+  <p>Cargo workspace: the root crate is the CLI; the engine and the native faces live under
   <code>crates/</code>. The three cpal-based crates are <strong>off the default build</strong> —
-  <code>make verify</code> never compiles them; <code>make verify-native</code> is their gate.</p>
+  <code>make verify</code> never compiles them; <code>make verify-native</code> is their gate.
+  Row labels below are the ladder rungs each module group implements.</p>
 
   <div class="diagram">
     <div class="diagram-inner">
@@ -247,19 +379,19 @@
       </div>
       <div class="flow-arrow">│ all four depend on ▼ (and tono-desktop/py stream through tono-play's Speaker)</div>
       <div class="core">
-        <div class="core-title">crates/tono-core <span>— the pure engine. No I/O, no transport, no cpal. Everything below is deterministic compute.</span></div>
+        <div class="core-title">crates/tono-core <span>— the pure engine. No I/O, no transport, no cpal. Deterministic compute only.</span></div>
         <div class="core-rows">
           <div class="core-row">
-            <div class="rlabel">document</div>
+            <div class="rlabel">rungs 1–4</div>
             <div class="core-cells">
-              <div class="cell hot">dsl/<small>SoundDoc, Node graph, validate</small></div>
+              <div class="cell hot">dsl/<small>Value, Node, SoundDoc, validate</small></div>
               <div class="cell">patch<small>doc + named params</small></div>
               <div class="cell">edit<small>path-addressed edits</small></div>
               <div class="cell">vary<small>mutate / humanize</small></div>
             </div>
           </div>
           <div class="core-row">
-            <div class="rlabel">render</div>
+            <div class="rlabel">rung 5</div>
             <div class="core-cells">
               <div class="cell hot">render/<small>offline bounce (osc, seq, kit, effects)</small></div>
               <div class="cell hot">streaming/<small>real-time, byte-identical to offline</small></div>
@@ -268,18 +400,18 @@
             </div>
           </div>
           <div class="core-row">
-            <div class="rlabel">play live</div>
+            <div class="rlabel">rung 6</div>
             <div class="core-cells">
               <div class="cell hot">runtime/<small>AudioSource seam, Engine, SPSC ring, Mixer</small></div>
-              <div class="cell">instrument/<small>notes, voices, gated env</small></div>
-              <div class="cell">drumkit<small>GM drum map</small></div>
-              <div class="cell">adaptive<small>game music: stems, stingers</small></div>
             </div>
           </div>
           <div class="core-row">
-            <div class="rlabel">compose</div>
+            <div class="rlabel">rung 7</div>
             <div class="core-cells">
-              <div class="cell">song<small>tracks / patterns / arrangement → SoundDoc</small></div>
+              <div class="cell">instrument/<small>notes, voices, gated env</small></div>
+              <div class="cell">drumkit<small>GM drum map</small></div>
+              <div class="cell">adaptive<small>game music: stems, stingers</small></div>
+              <div class="cell">song<small>tracks / patterns → SoundDoc</small></div>
               <div class="cell">catalog<small>ready-made voices</small></div>
               <div class="cell">presets<small>factory instruments</small></div>
             </div>
@@ -295,24 +427,6 @@
       </div>
     </div>
   </div>
-  <p class="note">The one seam to remember: <code>runtime::AudioSource</code> — “fill this
-  interleaved-stereo buffer.” Every live thing (Engine, Mixer, Instrument, AdaptiveMusic, the
-  streaming renderer) implements it, and every output adapter (the CLI’s bounce excepted) only
-  ever talks to that trait. It is why the engine never depends on a sound card.</p>
-
-  <h2>how a sound flows</h2>
-  <pre><code>you write            the engine                       you look at
-─────────────        ──────────────────────────       ─────────────────
-blip.json   ──►  <span class="a">dsl</span>: parse + validate  ──►  <span class="a">render</span>  ──►  blip.wav
-{ "root": {          (loud errors, NaN-proof)   │         blip.png       <span class="c">◄─ spectrogram</span>
-  "type":"mul",                                 │         blip_wave.png
-  "inputs":[…] }}                               └──►  <span class="a">analysis</span> ──►  blip.stats.json
-        ▲                                                      │
-        └──────────────  refine the JSON, re-render  ◄─────────┘</code></pre>
-  <p>That loop is the product. The CLI (<code>tono render</code>) is its most direct form; the
-  desktop studio runs the same loop per grid edit; <code>tono-py</code> runs it from Python. The
-  live paths (<code>streaming</code>, <code>runtime</code>) exist so what you audition in real
-  time is bit-for-bit what the offline bounce will ship.</p>
 
   <h2>start here</h2>
   <ol class="steps">
@@ -324,8 +438,9 @@ blip.json   ──►  <span class="a">dsl</span>: parse + validate  ──►  
 make hooks         <span class="c"># install pre-commit / pre-push gates once per clone</span></code></pre>
     </li>
     <li>
-      <h3>Render your first document</h3>
-      <p>Write a doc, render it, open the PNGs. This is the authoring loop every face wraps.</p>
+      <h3>Climb rungs 1–4 by hand: render your first document</h3>
+      <p>Write the bleep from the ladder, render it, open the PNGs. This is the authoring loop
+      every face wraps.</p>
       <pre><code>cat &gt; blip.json &lt;&lt;'EOF'
 { "name": "blip", "duration": 0.3, "engine": 4,
   "root": { "type": "mul", "inputs": [
@@ -334,6 +449,8 @@ make hooks         <span class="c"># install pre-commit / pre-push gates once pe
 EOF
 cargo run -- render blip.json -o out/
 open out/blip.png    <span class="c"># the spectrogram; out/blip.stats.json has the numbers</span></code></pre>
+      <p>Then change <code>"freq": 880</code> to <code>"A5"</code>, then to a
+      <code>slide</code> modulator, and re-render — you have now used every form of rung 1.</p>
     </li>
     <li>
       <h3>Learn the node vocabulary</h3>
@@ -342,29 +459,30 @@ open out/blip.png    <span class="c"># the spectrogram; out/blip.stats.json has 
       open; the doc comments are the source of truth.</p>
     </li>
     <li>
-      <h3>Hear it live from code</h3>
-      <p>The tono-play examples are the guided tour of the higher layers — sounds, instruments,
-      voice management, buses, songs, adaptive game music.</p>
+      <h3>Hear rungs 6–7 live from code</h3>
+      <p>The tono-play examples are the guided tour of the layers — sounds, instruments, voice
+      management, buses, songs, adaptive game music.</p>
       <pre><code>make play                            <span class="c"># the playground walkthrough</span>
 make play EXAMPLE=band               <span class="c"># catalog + fluent song builder</span>
 make play EXAMPLE=adaptive           <span class="c"># intensity-driven stems + stinger</span>
 ls crates/tono-play/examples/        <span class="c"># all ten</span></code></pre>
     </li>
     <li>
-      <h3>Read the core in dependency order</h3>
-      <p>Each layer only uses the ones before it: <code>dsl</code> →
-      <code>render</code> → <code>streaming</code> → <code>runtime</code> →
-      <code>instrument</code>/<code>adaptive</code> → <code>song</code>/<code>catalog</code>.
-      Start at <code>dsl/mod.rs</code> (SoundDoc) and <code>render/mod.rs</code>
-      (<code>render_product</code>) — everything else is a consumer of those two.</p>
+      <h3>Read the core in ladder order</h3>
+      <p>Each layer only uses the ones before it: <code>dsl</code> → <code>render</code> →
+      <code>streaming</code> → <code>runtime</code> → <code>instrument</code>/<code>adaptive</code>
+      → <code>song</code>/<code>catalog</code>. Start at <code>dsl/mod.rs</code> (SoundDoc) and
+      <code>render/mod.rs</code> (<code>render_product</code>) — everything else is a consumer of
+      those two.</p>
     </li>
     <li>
       <h3>Make a change safely</h3>
-      <p>Adding a node type touches four places: <code>dsl/node.rs</code> (the variant),
-      <code>dsl/validate.rs</code> (its checks), <code>render/</code> (offline kernel),
-      <code>streaming/</code> (real-time mirror — or let it fall back to the Player). Changing
-      how an existing node <em>sounds</em> is different: that must go behind a new
-      <code>engine</code> revision so old documents keep their bytes. The golden tests arbitrate.</p>
+      <p>Adding a node type touches the four places the ladder predicts:
+      <code>dsl/node.rs</code> (the variant, rung 2), <code>dsl/validate.rs</code> (its rules),
+      <code>render/</code> (the offline kernel, rung 5), <code>streaming/</code> (the real-time
+      mirror — or let it fall back to the Player). Changing how an existing node
+      <em>sounds</em> is different: that must go behind a new <code>engine</code> revision so old
+      documents keep their bytes. The golden tests arbitrate.</p>
       <pre><code>make verify          <span class="c"># default crates (CI: ubuntu + macos)</span>
 make verify-native   <span class="c"># tono-desktop / tono-play / tono-py + all examples</span></code></pre>
     </li>
