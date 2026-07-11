@@ -1,6 +1,6 @@
 //! Play a beat on the drum kit.
 //!
-//!     cargo run -p tono-play --example drums
+//!     make play EXAMPLE=drums   (or `cargo run -p tono-play --example drums`)
 
 use std::thread::sleep;
 use std::time::Duration;

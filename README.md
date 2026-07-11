@@ -159,7 +159,7 @@ One `SoundDoc`, rendered byte-identically by every face:
   editing, per-track faders, undo, and LUFS/spectrogram feedback per edit.
 - **A programmatic playground** (`make play`) — hear a sound, instrument, song,
   bus chain, or adaptive-music arc from a few lines of Rust
-  (`cargo run -p tono-play --example buses` / `voices` / `interactive_music`).
+  (`make play EXAMPLE=buses` / `voices` / `interactive_music`).
 
 ## Determinism
 

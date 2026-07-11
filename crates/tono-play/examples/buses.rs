@@ -1,6 +1,6 @@
 //! Live DSP effects on mixer buses.
 //!
-//!     cargo run -p tono-play --example buses
+//!     make play EXAMPLE=buses   (or `cargo run -p tono-play --example buses`)
 //!
 //! Two input buses — a "music" bus with an EQ + compressor insert, and a "sfx"
 //! bus that sends into a shared reverb return — summing through a master

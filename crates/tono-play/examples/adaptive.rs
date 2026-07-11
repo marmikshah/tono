@@ -1,6 +1,6 @@
 //! Adaptive game music: stems fade in as the action heats up, plus a stinger.
 //!
-//!     cargo run -p tono-play --example adaptive
+//!     make play EXAMPLE=adaptive   (or `cargo run -p tono-play --example adaptive`)
 //!
 //! Three looping stems on one intensity knob — drums always play, bass joins at
 //! mid intensity, the lead swells in at high intensity — with a one-shot stinger

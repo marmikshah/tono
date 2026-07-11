@@ -1,7 +1,7 @@
 //! A full multi-instrument song, composed with the catalog + fluent builder.
 //!
-//!     cargo run -p tono-play --example lofi                # hear it live
-//!     cargo run -p tono-play --example lofi -- song.json   # write the SoundDoc
+//!     make play EXAMPLE=lofi                               # hear it live
+//!     cargo run -p tono-play --example lofi -- song.json  # write the SoundDoc
 //!         # then: tono render song.json -o out/            # → audio + images
 //!
 //! A warm Am–F–C–G loop at 84 bpm: mellow-piano chords, a string pad, a fingered

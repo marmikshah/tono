@@ -1,6 +1,6 @@
 //! Voice management: a flood of one-shots stays clean under a polyphony cap.
 //!
-//!     cargo run -p tono-play --example voices
+//!     make play EXAMPLE=voices   (or `cargo run -p tono-play --example voices`)
 //!
 //! Fires far more SFX than the voice budget. Without a cap they'd pile up and
 //! clip; `set_max_voices` steals the lowest-priority sounding voice instead, so a
