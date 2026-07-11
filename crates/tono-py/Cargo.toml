@@ -10,8 +10,9 @@ publish = false
 
 [lib]
 name = "tono"
-# cdylib for the Python extension module; rlib so the seam is unit-testable.
-crate-type = ["cdylib", "rlib"]
+# cdylib only: the crate has no Rust tests (smoke coverage is Python-side), and
+# an rlib here collides with the root crate's libtono.rlib in workspace builds.
+crate-type = ["cdylib"]
 
 [dependencies]
 tono-core = { workspace = true }
