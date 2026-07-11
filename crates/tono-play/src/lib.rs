@@ -71,17 +71,35 @@ impl<S: AudioSource + Send + 'static> Speaker<S> {
                 &stream_config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     let chans = channels.max(1);
-                    let frames = data.len() / chans;
-                    if scratch.len() < frames * 2 {
-                        scratch.resize(frames * 2, 0.0);
+                    // Two audio-thread rules, both load-bearing on the C callback:
+                    //   1. Never block — `try_lock`, not `lock`; if `control` holds
+                    //      the source, output one silent block rather than stall.
+                    //   2. Never unwind into cpal's C frame (UB) — contain any
+                    //      panic in the render path and fall back to silence.
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let frames = data.len() / chans;
+                        if scratch.len() < frames * 2 {
+                            scratch.resize(frames * 2, 0.0);
+                        }
+                        let st = &mut scratch[..frames * 2];
+                        let locked = match cb.try_lock() {
+                            Ok(s) => Some(s),
+                            // A prior panic poisoned it; the source is plain audio
+                            // state, so recover and keep playing.
+                            Err(std::sync::TryLockError::Poisoned(p)) => Some(p.into_inner()),
+                            Err(std::sync::TryLockError::WouldBlock) => None,
+                        };
+                        if let Some(mut s) = locked {
+                            s.fill(st);
+                            drop(s);
+                            tono_core::runtime::write_interleaved(data, chans, st);
+                        } else {
+                            data.fill(0.0);
+                        }
+                    }));
+                    if result.is_err() {
+                        data.fill(0.0);
                     }
-                    let st = &mut scratch[..frames * 2];
-                    // A panic elsewhere poisons the lock; the source is plain
-                    // audio state, so keep playing rather than go silent.
-                    let mut s = cb.lock().unwrap_or_else(|p| p.into_inner());
-                    s.fill(st);
-                    drop(s);
-                    tono_core::runtime::write_interleaved(data, chans, st);
                 },
                 on_err,
                 None,
@@ -103,8 +121,10 @@ impl<S: AudioSource + Send + 'static> Speaker<S> {
         self.sample_rate
     }
 
-    /// Drive the playing source (e.g. `instrument.note_on(...)`). Briefly locks
-    /// the audio thread — fine for a playground/prototype.
+    /// Drive the playing source (e.g. `instrument.note_on(...)`). Holds the
+    /// source lock while `f` runs; the audio thread `try_lock`s, so a long `f`
+    /// costs at most a silent block rather than a stall — fine for a
+    /// playground/prototype.
     pub fn control<R>(&self, f: impl FnOnce(&mut S) -> R) -> R {
         // Recover from a poisoned lock (a panic on another thread) — the
         // source is plain audio state and controlling it must not cascade

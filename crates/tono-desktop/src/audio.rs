@@ -155,7 +155,16 @@ fn build_stream() -> Result<(cpal::Stream, AudioHandle)> {
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device.build_output_stream(
             &config,
-            move |data: &mut [f32], _| mix(&cb_deck, data, channels, &mut now, &mut old),
+            move |data: &mut [f32], _| {
+                // Never unwind into cpal's C callback (UB): contain any panic in
+                // the mix path and fall back to silence.
+                let guarded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    mix(&cb_deck, data, channels, &mut now, &mut old)
+                }));
+                if guarded.is_err() {
+                    data.fill(0.0);
+                }
+            },
             err_fn,
             None,
         )?,
