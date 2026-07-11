@@ -16,7 +16,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 tono-core = { workspace = true }
-cpal = { workspace = true }
+tono-play = { path = "../tono-play" }
 serde_json = { workspace = true }
 # abi3-py39: one wheel per platform covers every CPython 3.9+. `extension-module`
 # is enabled only for the wheel build (see pyproject [tool.maturin].features), so
