@@ -45,7 +45,7 @@ python-test: ## Run the Python determinism smoke test (build the extension first
 python-smoke: ## Build the extension as a wheel, install it, run the smoke test (what the Python workflow runs)
 	python3 -m pip install --upgrade pip maturin numpy
 	maturin build --out dist -m crates/tono-py/Cargo.toml
-	python3 -m pip install --no-index --find-links dist --force-reinstall tono
+	python3 -m pip install --no-index --find-links dist --force-reinstall --no-deps tono
 	python3 crates/tono-py/tests/smoke.py
 
 test: ## Run the test suite
