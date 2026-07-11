@@ -583,7 +583,7 @@ fn seq_note_signal(
                 sub_phase -= sub_phase.floor();
             }
         }
-        SeqWave::Kit => out = kit_drum(f, note, sr, rng, voice.kit),
+        SeqWave::Kit => out = kit_drum(f, sr, rng, voice.kit),
         // Handled wholesale in sampler_seq (shared synthesizer, polyphony).
         SeqWave::Sampler => unreachable!("sampler renders via sampler_seq"),
         SeqWave::Cowbell => {

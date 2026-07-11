@@ -11,21 +11,19 @@ mod seq;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use effects::{drive_antideriv, drive_curve};
+pub(crate) use effects::{FilterKind, biquad_coeffs, drive_antideriv, drive_curve};
 pub(crate) use osc::{osc, poly_blep};
 pub(crate) use seq::seq_to_signal;
 
 use crate::dsl::{
-    Adsr, AutoLane, AutoPoint, AutoTarget, Curve, Modulator, Node, Normalize, Playback, SeqWave,
-    Shape, SoundDoc, Stereo, Value,
+    Adsr, AutoLane, AutoTarget, Curve, Modulator, Node, Normalize, Playback, SeqWave, Shape,
+    SoundDoc, Stereo, Value,
 };
 use crate::dsp::{
-    Rng, db_to_lin, loudness_lufs, loudness_lufs_gated, peak_limit, true_peak,
-    true_peak_oversampled,
+    Rng, db_to_lin, layer_stream_key, loudness_lufs, loudness_lufs_gated, node_path, node_seed,
+    peak_limit, true_peak, true_peak_oversampled,
 };
-use effects::{
-    FilterKind, biquad, chorus, compress, drive_adaa, flanger, modal_bank, phaser, reverb,
-};
+use effects::{biquad, chorus, compress, drive_adaa, flanger, modal_bank, phaser, reverb};
 use osc::{
     dust_signal, fm_signal, impact_signal, noise_signal, osc_signal, saw_signal, square_signal,
     super_signal, tri_signal,
@@ -62,8 +60,6 @@ fn track_stream_seed(seed: u64, i: u64) -> u64 {
 
 /// The master bus's stream key (validate rejects a layer id hashing to it).
 const MASTER_STREAM: u64 = u64::MAX;
-
-use crate::dsp::{layer_stream_key, node_path, node_seed};
 
 /// True when a track renders in native stereo (a sampler seq) — a cheap shape
 /// test; the actual rendering happens in [`track_native_stereo`].
@@ -125,30 +121,33 @@ fn lane_for(
     }
     let mut pts = lane.points.clone();
     pts.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
+    // Linear interpolation over the sorted breakpoints, holding flat past
+    // either end. The sample time is strictly increasing, so a persistent
+    // segment cursor replaces a from-zero scan per sample (O(n + p), not
+    // O(n·p)). Strict `>` in the advance keeps the exact segment the scan
+    // would pick — a sample landing on a breakpoint interpolates in the
+    // earlier segment, so the floats (and the rendered bytes) are unchanged.
+    let mut idx = 0;
     Some(
         (0..n)
-            .map(|i| eval_lane(&pts, i as f32 / sr as f32))
+            .map(|i| {
+                let t = i as f32 / sr as f32;
+                if t <= pts[0].t {
+                    return pts[0].v;
+                }
+                let last = &pts[pts.len() - 1];
+                if t >= last.t {
+                    return last.v;
+                }
+                while t > pts[idx + 1].t {
+                    idx += 1;
+                }
+                let (w0, w1) = (&pts[idx], &pts[idx + 1]);
+                let span = (w1.t - w0.t).max(1e-9);
+                w0.v + (w1.v - w0.v) * ((t - w0.t) / span)
+            })
             .collect(),
     )
-}
-
-/// Linear interpolation over sorted breakpoints; holds flat past either end.
-fn eval_lane(pts: &[AutoPoint], t: f32) -> f32 {
-    let first = &pts[0];
-    if t <= first.t {
-        return first.v;
-    }
-    let last = &pts[pts.len() - 1];
-    if t >= last.t {
-        return last.v;
-    }
-    for w in pts.windows(2) {
-        if t >= w[0].t && t <= w[1].t {
-            let span = (w[1].t - w[0].t).max(1e-9);
-            return w[0].v + (w[1].v - w[0].v) * ((t - w[0].t) / span);
-        }
-    }
-    last.v
 }
 
 /// Render a `tracks` document to a finished stereo pair: each track is

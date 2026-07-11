@@ -2,7 +2,7 @@
 //! kit styles, plus the shared cowbell/metallic partial banks.
 
 use super::Signal;
-use crate::dsl::{KitStyle, SeqNote};
+use crate::dsl::KitStyle;
 use crate::dsp::Rng;
 use std::f32::consts::TAU;
 
@@ -18,22 +18,16 @@ pub(super) fn cowbell_sample(f: f32, t: f32) -> f32 {
 /// One General-MIDI-mapped drum hit: the note's onset pitch picks the voice.
 /// Synthesize one drum hit for the selected kit style. `Classic` is the original
 /// kit, byte-frozen; the other styles are alternate synthesized voicings.
-pub(super) fn kit_drum(
-    f: &[f32],
-    note: &SeqNote,
-    sr: u32,
-    rng: &mut Rng,
-    style: KitStyle,
-) -> Signal {
+pub(super) fn kit_drum(f: &[f32], sr: u32, rng: &mut Rng, style: KitStyle) -> Signal {
     match style {
-        KitStyle::Classic => kit_drum_classic(f, note, sr, rng),
-        KitStyle::Acoustic => kit_drum_acoustic(f, note, sr, rng),
-        KitStyle::Electronic => kit_drum_electronic(f, note, sr, rng),
-        KitStyle::Eight08 => kit_drum_808(f, note, sr, rng),
+        KitStyle::Classic => kit_drum_classic(f, sr, rng),
+        KitStyle::Acoustic => kit_drum_acoustic(f, sr, rng),
+        KitStyle::Electronic => kit_drum_electronic(f, sr, rng),
+        KitStyle::Eight08 => kit_drum_808(f, sr, rng),
     }
 }
 
-fn kit_drum_classic(f: &[f32], _note: &SeqNote, sr: u32, rng: &mut Rng) -> Signal {
+fn kit_drum_classic(f: &[f32], sr: u32, rng: &mut Rng) -> Signal {
     let srf = sr as f32;
     let n = f.len();
     // Recover the MIDI number from the onset frequency (pitch is wire-encoded
@@ -99,7 +93,7 @@ fn kit_drum_classic(f: &[f32], _note: &SeqNote, sr: u32, rng: &mut Rng) -> Signa
 
 /// Deeper, roomier acoustic kit: pitch-dropping kick with a beater knock, a
 /// tuned-head snare with crack and buzz, ringing toms, shimmering cymbals.
-fn kit_drum_acoustic(f: &[f32], _note: &SeqNote, sr: u32, rng: &mut Rng) -> Signal {
+fn kit_drum_acoustic(f: &[f32], sr: u32, rng: &mut Rng) -> Signal {
     let srf = sr as f32;
     let n = f.len();
     let midi = (69.0 + 12.0 * (f[0].max(8.0) / 440.0).log2()).round() as i32;
@@ -249,7 +243,7 @@ fn kit_drum_acoustic(f: &[f32], _note: &SeqNote, sr: u32, rng: &mut Rng) -> Sign
 
 /// Clean synthesized electronic kit: driven synth kick, gated snare, zappy toms,
 /// glassy super-bright hats and cymbals.
-fn kit_drum_electronic(f: &[f32], _note: &SeqNote, sr: u32, rng: &mut Rng) -> Signal {
+fn kit_drum_electronic(f: &[f32], sr: u32, rng: &mut Rng) -> Signal {
     let srf = sr as f32;
     let n = f.len();
     let midi = (69.0 + 12.0 * (f[0].max(8.0) / 440.0).log2()).round() as i32;
@@ -351,7 +345,7 @@ fn metal_808(t: f32) -> f32 {
 
 /// 808-style kit: a long booming sub-sine kick, papery clap, snappy snare, tick
 /// clave, ringy square cowbell, buzzy metallic hats/cymbals.
-fn kit_drum_808(f: &[f32], _note: &SeqNote, sr: u32, rng: &mut Rng) -> Signal {
+fn kit_drum_808(f: &[f32], sr: u32, rng: &mut Rng) -> Signal {
     let srf = sr as f32;
     let n = f.len();
     let midi = (69.0 + 12.0 * (f[0].max(8.0) / 440.0).log2()).round() as i32;

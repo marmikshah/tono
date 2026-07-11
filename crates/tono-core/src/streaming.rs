@@ -37,7 +37,10 @@ use crate::dsl::{
     SuperWave, Value, note_to_hz,
 };
 use crate::dsp::{Rng, adsr_env, node_path, node_seed};
-use crate::render::{drive_antideriv, drive_curve, osc, poly_blep, rand_seed, seq_to_signal};
+use crate::render::{
+    FilterKind, biquad_coeffs, drive_antideriv, drive_curve, osc, poly_blep, rand_seed,
+    seq_to_signal,
+};
 
 /// A per-sample evaluator for a dsl [`Value`], byte-identical to `eval_value` at
 /// the given absolute sample index. Const/Note are constant; the modulators match
@@ -336,7 +339,7 @@ enum Proc {
     Biquad {
         // The filter spec, kept so a live cutoff sweep can recompute the
         // coefficients without a rebuild (see `Proc::set_cutoff`).
-        kind: Filt,
+        kind: FilterKind,
         fc: f32,
         q: f32,
         sr: u32,
@@ -855,93 +858,11 @@ impl Proc {
     }
 }
 
-/// The RBJ biquad kinds we stream (constant cutoff), each with its shelf/peak gain.
-#[derive(Clone, Copy)]
-enum Filt {
-    Low,
-    High,
-    Band,
-    Notch,
-    Peak(f32),
-    LowShelf(f32),
-    HighShelf(f32),
-}
-
-/// The (a0-normalised) biquad coefficients `(b0, b1, b2, a1, a2)` for a constant
-/// cutoff — identical values to the offline `biquad`. Pure, so a live cutoff
-/// sweep can recompute them (see [`Proc::set_cutoff`]).
-fn biquad_coeffs(kind: Filt, fc: f32, q: f32, sr: u32) -> (f32, f32, f32, f32, f32) {
-    let srf = sr as f32;
-    let q = q.max(0.05);
-    let nyq = srf / 2.0;
-    // `.max(20.0)` keeps the clamp bounds ordered at absurdly low sample
-    // rates (an unvalidated doc must not panic) — same guard as offline.
-    let f = fc.clamp(20.0, (nyq - 100.0).max(20.0));
-    let w0 = TAU * f / srf;
-    let (sin, cos) = w0.sin_cos();
-    let alpha = sin / (2.0 * q);
-    let amp = match kind {
-        Filt::Peak(g) | Filt::LowShelf(g) | Filt::HighShelf(g) => 10f32.powf(g / 40.0),
-        _ => 1.0,
-    };
-    let (b0, b1, b2, a0, a1, a2) = match kind {
-        Filt::Low => (
-            (1.0 - cos) / 2.0,
-            1.0 - cos,
-            (1.0 - cos) / 2.0,
-            1.0 + alpha,
-            -2.0 * cos,
-            1.0 - alpha,
-        ),
-        Filt::High => (
-            (1.0 + cos) / 2.0,
-            -(1.0 + cos),
-            (1.0 + cos) / 2.0,
-            1.0 + alpha,
-            -2.0 * cos,
-            1.0 - alpha,
-        ),
-        Filt::Band => (alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
-        Filt::Notch => (1.0, -2.0 * cos, 1.0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
-        Filt::Peak(_) => (
-            1.0 + alpha * amp,
-            -2.0 * cos,
-            1.0 - alpha * amp,
-            1.0 + alpha / amp,
-            -2.0 * cos,
-            1.0 - alpha / amp,
-        ),
-        Filt::LowShelf(_) => {
-            let s = 2.0 * amp.sqrt() * alpha;
-            let (ap1, am1) = (amp + 1.0, amp - 1.0);
-            (
-                amp * (ap1 - am1 * cos + s),
-                2.0 * amp * (am1 - ap1 * cos),
-                amp * (ap1 - am1 * cos - s),
-                ap1 + am1 * cos + s,
-                -2.0 * (am1 + ap1 * cos),
-                ap1 + am1 * cos - s,
-            )
-        }
-        Filt::HighShelf(_) => {
-            let s = 2.0 * amp.sqrt() * alpha;
-            let (ap1, am1) = (amp + 1.0, amp - 1.0);
-            (
-                amp * (ap1 + am1 * cos + s),
-                -2.0 * amp * (am1 + ap1 * cos),
-                amp * (ap1 + am1 * cos - s),
-                ap1 - am1 * cos + s,
-                2.0 * (am1 - ap1 * cos),
-                ap1 - am1 * cos - s,
-            )
-        }
-    };
-    (b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0)
-}
-
 /// Build a streaming biquad, keeping its spec so [`Proc::set_cutoff`] can
-/// recompute the coefficients for a live cutoff sweep.
-fn biquad(kind: Filt, fc: f32, q: f32, sr: u32) -> Proc {
+/// recompute the coefficients for a live cutoff sweep. The coefficients come
+/// from the offline renderer's own [`biquad_coeffs`] table — one table, both
+/// paths, byte-identical by construction.
+fn biquad(kind: FilterKind, fc: f32, q: f32, sr: u32) -> Proc {
     let (b0, b1, b2, a1, a2) = biquad_coeffs(kind, fc, q, sr);
     Proc::Biquad {
         kind,
@@ -1110,16 +1031,18 @@ fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Pr
     let v = |val: &Value| Val::build(val, sr, n);
     Some(match node {
         Node::Gain { amount } => Proc::Gain(cst(amount)?),
-        Node::Lowpass { cutoff, q } => biquad(Filt::Low, cst(cutoff)?, *q, sr),
-        Node::Highpass { cutoff, q } => biquad(Filt::High, cst(cutoff)?, *q, sr),
-        Node::Bandpass { cutoff, q } => biquad(Filt::Band, cst(cutoff)?, *q, sr),
-        Node::Notch { cutoff, q } => biquad(Filt::Notch, cst(cutoff)?, *q, sr),
-        Node::Peak { cutoff, q, gain_db } => biquad(Filt::Peak(*gain_db), cst(cutoff)?, *q, sr),
+        Node::Lowpass { cutoff, q } => biquad(FilterKind::Low, cst(cutoff)?, *q, sr),
+        Node::Highpass { cutoff, q } => biquad(FilterKind::High, cst(cutoff)?, *q, sr),
+        Node::Bandpass { cutoff, q } => biquad(FilterKind::Band, cst(cutoff)?, *q, sr),
+        Node::Notch { cutoff, q } => biquad(FilterKind::Notch, cst(cutoff)?, *q, sr),
+        Node::Peak { cutoff, q, gain_db } => {
+            biquad(FilterKind::Peak(*gain_db), cst(cutoff)?, *q, sr)
+        }
         Node::Lowshelf { cutoff, gain_db } => {
-            biquad(Filt::LowShelf(*gain_db), cst(cutoff)?, 0.707, sr)
+            biquad(FilterKind::LowShelf(*gain_db), cst(cutoff)?, 0.707, sr)
         }
         Node::Highshelf { cutoff, gain_db } => {
-            biquad(Filt::HighShelf(*gain_db), cst(cutoff)?, 0.707, sr)
+            biquad(FilterKind::HighShelf(*gain_db), cst(cutoff)?, 0.707, sr)
         }
         Node::Bitcrush { bits } => {
             let levels = (1u32 << *bits as u32) as f32;
