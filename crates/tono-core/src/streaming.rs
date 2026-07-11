@@ -101,7 +101,10 @@ impl Val {
                 } => Val::Slide {
                     from: *from,
                     to: *to,
-                    secs: *secs,
+                    // Floor `secs` so an unvalidated `secs == 0` can't make
+                    // `t/secs` a NaN that then poisons the whole stream —
+                    // the same guard the offline renderer applies.
+                    secs: secs.max(1e-6),
                     curve: *curve,
                     srf,
                 },
@@ -117,6 +120,9 @@ impl Val {
                     center: *center,
                     srf,
                 },
+                // Empty steps would divide by zero in eval; an unvalidated doc
+                // must not panic (the offline path yields 0.0 the same way).
+                Modulator::Arp { steps, .. } if steps.is_empty() => Val::Const(0.0),
                 Modulator::Arp { steps, rate } => Val::Arp {
                     steps: steps.clone(),
                     rate: *rate,
@@ -868,7 +874,9 @@ fn biquad_coeffs(kind: Filt, fc: f32, q: f32, sr: u32) -> (f32, f32, f32, f32, f
     let srf = sr as f32;
     let q = q.max(0.05);
     let nyq = srf / 2.0;
-    let f = fc.clamp(20.0, nyq - 100.0);
+    // `.max(20.0)` keeps the clamp bounds ordered at absurdly low sample
+    // rates (an unvalidated doc must not panic) — same guard as offline.
+    let f = fc.clamp(20.0, (nyq - 100.0).max(20.0));
     let w0 = TAU * f / srf;
     let (sin, cos) = w0.sin_cos();
     let alpha = sin / (2.0 * q);
@@ -1168,6 +1176,7 @@ fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Pr
                     let decay = m.decay.max(1e-3);
                     let w0 = TAU * f0 / srf;
                     let (sin0, cos0) = (w0.sin(), w0.cos());
+                    // r so the ring reaches −60 dB (×0.001) after `decay` seconds.
                     let r = (-6.907_755 / (decay * srf)).exp();
                     ModalMode {
                         a1: 2.0 * r * cos0,
