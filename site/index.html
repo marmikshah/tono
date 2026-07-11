@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tono — game audio as a pure function</title>
+<meta name="description" content="A deterministic synthesis engine in Rust: author sounds as data, render byte-identical audio. Instruments, songs, zero-asset SFX, live DSP buses, adaptive music. Rust + Python + CLI.">
+<link rel="icon" href="img/logo.png">
+<style>
+  :root {
+    --bg: #100e17; --surface: #17141f; --surface-2: #1e1a29;
+    --line: #2a2438; --ink: #ece9f4; --ink-2: #b8b1cc; --muted: #8a8299;
+    --accent: #a488f0; --accent-soft: #241d38; --code-bg: #1b1727;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f7f5fb; --surface: #ffffff; --surface-2: #f0ecf7;
+      --line: #e2dcef; --ink: #1a1626; --ink-2: #4a4360; --muted: #7a7391;
+      --accent: #6b46d9; --accent-soft: #efeafc; --code-bg: #f4f1fa;
+      color-scheme: light;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 17px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header { text-align: center; padding: 72px 24px 40px;
+    background: radial-gradient(90% 60% at 50% 0%, var(--accent-soft), transparent 70%); }
+  header img.logo { width: 96px; image-rendering: pixelated; }
+  header img.wordmark { width: 300px; max-width: 80vw; display: block; margin: 18px auto 0; }
+  .tagline { font-size: clamp(19px, 3vw, 24px); font-weight: 650; letter-spacing: -.01em;
+    max-width: 34ch; margin: 22px auto 10px; text-wrap: balance; }
+  .sub { color: var(--ink-2); max-width: 52ch; margin: 0 auto; }
+  .cta { margin-top: 26px; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 9px 18px; border-radius: 9px; font-weight: 600;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: transparent; }
+  .btn:hover { text-decoration: none; filter: brightness(1.08); }
+
+  section { padding: 44px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 26px; letter-spacing: -.02em; margin: 0 0 6px; }
+  .lede { color: var(--ink-2); margin: 0 0 24px; }
+
+  .spectro { width: 100%; border-radius: 12px; border: 1px solid var(--line); display: block; }
+  .caption { color: var(--muted); font-size: 13.5px; text-align: center; margin-top: 8px; }
+
+  .tracks { display: grid; gap: 10px; margin-top: 8px; }
+  .track { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: center;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
+  .track b { font-size: 15.5px; }
+  .track .how { grid-column: 1 / -1; color: var(--muted); font-size: 13.5px; }
+  .track audio { width: 240px; max-width: 38vw; height: 34px; }
+
+  .pillars { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+  .pillar { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .pillar h3 { margin: 0 0 6px; font-size: 16.5px; color: var(--accent); }
+  .pillar p { margin: 0; font-size: 14.5px; color: var(--ink-2); }
+
+  pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px; overflow-x: auto; font: 13px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    color: var(--ink); }
+  pre .c { color: var(--muted); }
+  pre .k { color: var(--accent); }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 760px) { .cols { grid-template-columns: 1fr; } }
+  .cols h3 { font-size: 15px; margin: 0 0 8px; color: var(--ink-2); }
+
+  footer { border-top: 1px solid var(--line); padding: 34px 24px 56px; text-align: center; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <img class="logo" src="img/logo.png" alt="tono logo">
+  <img class="wordmark" src="img/logo-wordmark.png" alt="tono">
+  <p class="tagline">Game audio as a pure function — procedural, deterministic, zero-asset.</p>
+  <p class="sub">Author a synthesis graph; get byte-identical audio from Rust, Python, a CLI, or a live keyboard. No samples, no WAVs shipped.</p>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/marmikshah/tono">GitHub</a>
+    <a class="btn" href="https://crates.io/crates/tono-core">crates.io</a>
+    <a class="btn" href="https://github.com/marmikshah/tono/blob/master/docs/cookbook.md">Cookbook</a>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section id="hear">
+  <h2>Hear it</h2>
+  <p class="lede">Everything below was rendered by the engine — recognizable classics rebuilt from scratch, plus full pieces.</p>
+  <img class="spectro" src="img/river-flows-spectrogram.png" alt="spectrogram of River Flows in You — 800 notes on the sampled piano">
+  <p class="caption">The spectrogram the engine drew of its own render — analysis is built in.</p>
+  <div class="tracks">
+    <div class="track"><b>retro-coin</b><audio controls preload="none" src="audio/retro-coin.mp4"></audio>
+      <span class="how">B5 grace note into a held E6 — the interval <em>is</em> the sound</span></div>
+    <div class="track"><b>jump-8bit</b><audio controls preload="none" src="audio/jump-8bit.mp4"></audio>
+      <span class="how">exponential square sweep, gone at sustain 0</span></div>
+    <div class="track"><b>waka</b><audio controls preload="none" src="audio/waka.mp4"></audio>
+      <span class="how">per-note pitch slides alternating up/down — the chomp drawn into the notes</span></div>
+    <div class="track"><b>nokia-tune</b><audio controls preload="none" src="audio/nokia-tune.mp4"></audio>
+      <span class="how">13 notes of Gran Vals on the Karplus-Strong pluck</span></div>
+    <div class="track"><b>deep-note</b><audio controls preload="none" src="audio/deep-note.mp4"></audio>
+      <span class="how">supersaw tracks gliding from a scattered cluster onto a five-octave D chord</span></div>
+    <div class="track"><b>river-flows-in-you</b><audio controls preload="none" src="audio/river-flows-in-you.mp4"></audio>
+      <span class="how">a complete piano piece — 800 notes on the sampled grand</span></div>
+    <div class="track"><b>band-demo</b><audio controls preload="none" src="audio/band-demo.mp4"></audio>
+      <span class="how">four instruments, one groove, mixed on the stereo bus</span></div>
+  </div>
+</section>
+
+<section id="what">
+  <h2>One engine, four pillars</h2>
+  <p class="lede">A sound is a symbolic graph; rendering it is a pure function of <code>(graph, seed, sample_rate)</code>.</p>
+  <div class="pillars">
+    <div class="pillar"><h3>Deterministic</h3>
+      <p>Byte-identical renders, offline or streamed live — audio you can test, diff, and cache. A golden corpus and a fuzzer pin it in CI.</p></div>
+    <div class="pillar"><h3>Zero-asset SFX</h3>
+      <p>A patch renders infinite per-instance variations from named parameters — impacts that scale with collision force, no sample library.</p></div>
+    <div class="pillar"><h3>Game runtime</h3>
+      <p>Live DSP buses (reverb/EQ/compressor inserts + sends), polyphony caps with priority stealing, and an embeddable mixer.</p></div>
+    <div class="pillar"><h3>Adaptive music</h3>
+      <p>Beat-quantized section switches, intensity-layered stems, stingers landing on the downbeat — a score that reacts to play.</p></div>
+  </div>
+</section>
+
+<section id="code">
+  <h2>In a few lines</h2>
+  <div class="cols">
+    <div>
+      <h3>Rust — interactive music</h3>
+<pre><span class="k">use</span> tono_core::adaptive::{AdaptiveMusic, Quantize};
+
+<span class="k">let mut</span> music = AdaptiveMusic::new(48_000);
+music.set_tempo(120.0, 4);
+music.add_section(<span class="c">"explore"</span>, &explore);
+<span class="k">let</span> battle = music.add_section(<span class="c">"battle"</span>, &battle);
+
+<span class="c">// combat! — swaps on the next bar</span>
+music.transition_to(battle, Quantize::Bar);
+music.set_intensity(0.9);
+music.stinger_at(&boss_hit, Quantize::Bar);</pre>
+    </div>
+    <div>
+      <h3>Python — live playback</h3>
+<pre><span class="k">import</span> tono
+
+engine = tono.Engine(48000)
+engine.drumkit().note_on(36, 1.0)  <span class="c"># kick</span>
+engine.instrument(<span class="c">"warm_lead"</span>).note_on(<span class="c">"C4"</span>, 0.9)
+
+impact = engine.load_patch(open(<span class="c">"impact.patch.json"</span>).read())
+impact.trigger(hardness=0.8, size=0.3)  <span class="c"># zero WAVs</span></pre>
+    </div>
+  </div>
+  <p class="caption">The CLI closes the loop: <code>tono render doc.json</code> → audio + spectrogram + waveform + LUFS stats. Author sound by inspection.</p>
+</section>
+
+</main>
+
+<footer>
+  <a href="https://github.com/marmikshah/tono">github.com/marmikshah/tono</a> · MIT ·
+  built with <a href="https://github.com/marmikshah/tono/blob/master/docs/ROADMAP.md">a roadmap</a>
+</footer>
+
+</body>
+</html>
