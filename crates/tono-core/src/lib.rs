@@ -49,7 +49,9 @@ pub use player as stream;
 pub mod prelude {
     #[cfg(feature = "analysis")]
     pub use crate::analysis::{Analysis, stats, stats_stereo};
-    pub use crate::catalog::{Bass, Drums, GrandPiano, Guitar, Voice};
+    pub use crate::catalog::{
+        Bass, Drums, ElectricPiano, GrandPiano, Guitar, Organ, Strings, Voice,
+    };
     pub use crate::dsl::{Adsr, ENGINE_VERSION, Node, SeqNote, SeqWave, SoundDoc, Value};
     pub use crate::instrument::{Instrument, InstrumentDesign, Note};
     pub use crate::patch::Patch;

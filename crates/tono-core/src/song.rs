@@ -924,11 +924,7 @@ mod tests {
         song.tracks[0].notes.push(note(17, 4, "C2")); // ends at step 21 → bar 2
         assert_eq!(song.length_bars(), 2);
     }
-}
 
-#[cfg(test)]
-mod slug_tests {
-    use super::slugify;
     #[test]
     fn slugifies_names() {
         assert_eq!(slugify("Mellow Piano"), "mellow_piano");
