@@ -67,7 +67,7 @@ verify: pre-commit-checks test ## Exactly what CI runs (fmt --check + clippy + t
 
 site: ## Assemble the GitHub Pages site into _site/ (what the Pages workflow deploys)
 	mkdir -p _site/audio _site/img
-	cp site/index.html _site/
+	cp site/index.html site/architecture.html _site/
 	cp docs/examples/audio/*.mp4 _site/audio/
 	cp docs/logo.png docs/logo-wordmark.png docs/river-flows-spectrogram.png _site/img/
 

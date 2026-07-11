@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Architecture map and getting-started guide for tono — the deterministic synthesis-graph audio engine.">
+<title>tono — architecture &amp; getting started</title>
+<link rel="icon" href="img/logo.png">
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --surface: #fbfcfd;
+    --surface-2: #e9edf1;
+    --ink: #232a31;
+    --ink-soft: #58636e;
+    --ink-faint: #8a95a0;
+    --line: #d4dbe2;
+    --accent: #22827d;
+    --accent-ink: #135b57;
+    --accent-soft: #d9edec;
+    --path: #b06f1f;
+    --path-soft: #f3e7d3;
+    --code-bg: #eaeef2;
+    --good: #2e7d4f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c;
+      --surface: #1b1f26;
+      --surface-2: #232830;
+      --ink: #dde3e8;
+      --ink-soft: #9aa5b0;
+      --ink-faint: #6b7681;
+      --line: #303740;
+      --accent: #52c7bf;
+      --accent-ink: #7fd8d2;
+      --accent-soft: #1d3a38;
+      --path: #d99b47;
+      --path-soft: #3a2e1a;
+      --code-bg: #232830;
+      --good: #6fbf8f;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171c; --surface: #1b1f26; --surface-2: #232830;
+    --ink: #dde3e8; --ink-soft: #9aa5b0; --ink-faint: #6b7681;
+    --line: #303740; --accent: #52c7bf; --accent-ink: #7fd8d2;
+    --accent-soft: #1d3a38; --path: #d99b47; --path-soft: #3a2e1a;
+    --code-bg: #232830; --good: #6fbf8f;
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f6f8; --surface: #fbfcfd; --surface-2: #e9edf1;
+    --ink: #232a31; --ink-soft: #58636e; --ink-faint: #8a95a0;
+    --line: #d4dbe2; --accent: #22827d; --accent-ink: #135b57;
+    --accent-soft: #d9edec; --path: #b06f1f; --path-soft: #f3e7d3;
+    --code-bg: #eaeef2; --good: #2e7d4f;
+  }
+
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  main { max-width: 880px; margin: 0 auto; padding: 48px 24px 96px; }
+
+  h1, h2, h3, .mono {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 4px; letter-spacing: -0.02em; text-wrap: balance; }
+  h2 { font-size: 1.15rem; margin: 56px 0 12px; letter-spacing: -0.01em; }
+  h2::before { content: "// "; color: var(--accent); }
+  h3 { font-size: 0.95rem; margin: 28px 0 8px; color: var(--ink); }
+  p { max-width: 68ch; margin: 0 0 14px; }
+  a { color: var(--accent-ink); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .kicker {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 16px;
+  }
+  .lede { font-size: 1.06rem; color: var(--ink-soft); max-width: 64ch; }
+
+  code, pre {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    font-size: 0.86em;
+  }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px;
+    padding: 14px 16px; overflow-x: auto; line-height: 1.55; margin: 12px 0 20px;
+  }
+  pre code { background: none; padding: 0; }
+  pre .c { color: var(--ink-faint); }
+  pre .a { color: var(--accent-ink); font-weight: 600; }
+
+  /* ---- invariant callout ---- */
+  .invariant {
+    border: 1px solid var(--accent); border-radius: 8px;
+    background: var(--accent-soft); padding: 18px 20px; margin: 28px 0;
+  }
+  .invariant .label {
+    font-family: ui-monospace, Menlo, monospace; font-size: 0.7rem;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent-ink);
+    margin-bottom: 6px;
+  }
+  .invariant p { margin: 0; max-width: none; }
+  .invariant .formula {
+    font-family: ui-monospace, Menlo, monospace; font-size: 0.95rem;
+    display: block; margin: 8px 0 10px; color: var(--ink);
+  }
+
+  /* ---- architecture diagram ---- */
+  .diagram { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 20px; margin: 20px 0 8px; overflow-x: auto; }
+  .diagram-inner { min-width: 640px; display: flex; flex-direction: column; gap: 0; }
+  .tier-label {
+    font-family: ui-monospace, Menlo, monospace; font-size: 0.68rem;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint);
+    margin: 0 0 8px;
+  }
+  .faces { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .box {
+    border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2);
+    padding: 10px 12px; font-size: 0.85rem; line-height: 1.45;
+  }
+  .box .name { font-family: ui-monospace, Menlo, monospace; font-weight: 700; font-size: 0.82rem; display: block; }
+  .box .role { color: var(--ink-soft); font-size: 0.78rem; display: block; }
+  .box .run { color: var(--accent-ink); font-family: ui-monospace, Menlo, monospace; font-size: 0.74rem; display: block; margin-top: 4px; }
+  .flow-arrow {
+    text-align: center; color: var(--ink-faint); font-family: ui-monospace, Menlo, monospace;
+    font-size: 0.75rem; padding: 8px 0; letter-spacing: 0.06em;
+  }
+  .core {
+    border: 1.5px solid var(--accent); border-radius: 8px; padding: 14px;
+    background: var(--surface);
+  }
+  .core-title {
+    font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; font-weight: 700;
+    color: var(--accent-ink); margin-bottom: 10px;
+  }
+  .core-title span { color: var(--ink-faint); font-weight: 400; }
+  .core-rows { display: flex; flex-direction: column; gap: 8px; }
+  .core-row { display: grid; grid-template-columns: 118px 1fr; gap: 10px; align-items: stretch; }
+  .core-row .rlabel {
+    font-family: ui-monospace, Menlo, monospace; font-size: 0.7rem; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--ink-faint); align-self: center;
+  }
+  .core-cells { display: flex; flex-wrap: wrap; gap: 8px; }
+  .cell {
+    border: 1px solid var(--line); border-radius: 5px; background: var(--surface-2);
+    padding: 6px 10px; font-family: ui-monospace, Menlo, monospace; font-size: 0.76rem;
+  }
+  .cell small { display: block; font-family: system-ui, sans-serif; font-size: 0.72rem; color: var(--ink-soft); }
+  .cell.hot { border-color: var(--accent); }
+
+  /* ---- start path ---- */
+  .steps { counter-reset: step; display: flex; flex-direction: column; gap: 14px; margin: 20px 0; padding: 0; list-style: none; }
+  .steps li {
+    counter-increment: step; position: relative;
+    border: 1px solid var(--line); border-left: 3px solid var(--path);
+    border-radius: 6px; background: var(--surface); padding: 14px 18px 14px 58px;
+  }
+  .steps li::before {
+    content: counter(step);
+    position: absolute; left: 16px; top: 15px;
+    font-family: ui-monospace, Menlo, monospace; font-weight: 700; font-size: 0.9rem;
+    color: var(--path); background: var(--path-soft);
+    width: 26px; height: 26px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .steps h3 { margin: 0 0 6px; font-size: 0.92rem; }
+  .steps p { margin: 0 0 8px; font-size: 0.92rem; color: var(--ink-soft); }
+  .steps pre { margin: 8px 0 0; }
+
+  /* ---- reference table ---- */
+  table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; margin: 16px 0; }
+  th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  th {
+    font-family: ui-monospace, Menlo, monospace; font-size: 0.7rem; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--ink-faint); background: var(--surface-2);
+    font-weight: 600;
+  }
+  td:first-child { font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; white-space: nowrap; }
+  tbody tr { background: var(--surface); }
+
+  .note { font-size: 0.85rem; color: var(--ink-faint); max-width: 68ch; }
+  .footer { margin-top: 64px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 0.8rem; color: var(--ink-faint); }
+</style>
+</head>
+<body>
+
+<main>
+  <div class="kicker">tono · repo guide · v2.0.0</div>
+  <h1>One engine, several faces</h1>
+  <p class="lede">tono is a deterministic synthesis-graph engine: you describe a sound as a JSON
+  document, the engine renders it to audio and hands back a spectrogram, a waveform, and numeric
+  stats — so sound is authored by <em>inspection</em>, in a write → render → look → refine loop.
+  Everything else in the repo is a different way of driving that one engine.</p>
+
+  <div class="invariant">
+    <div class="label">The invariant that shapes everything</div>
+    <span class="formula">render(graph, seed, sample_rate) → byte-identical audio, forever</span>
+    <p>The same document renders the same bytes on every run — and the real-time streaming path
+    matches the offline bounce bit-for-bit. A golden corpus
+    (<code>crates/tono-core/tests/golden.rs</code>) pins the hashes in CI. Kernel improvements that
+    would change output ship behind a document <code>engine</code> revision (currently 4), so old
+    sounds never silently change. If a change you make shifts a golden hash, that is the suite
+    telling you that you changed synthesis math, not organisation.</p>
+  </div>
+
+  <h2>the map</h2>
+  <p>Cargo workspace. The root crate is the CLI; the pure engine and the native faces live under
+  <code>crates/</code>. The three cpal-based crates are <strong>off the default build</strong> —
+  <code>make verify</code> never compiles them; <code>make verify-native</code> is their gate.</p>
+
+  <div class="diagram">
+    <div class="diagram-inner">
+      <p class="tier-label">Faces — thin shells, each one entry point</p>
+      <div class="faces">
+        <div class="box">
+          <span class="name">tono <span style="font-weight:400">(root, src/)</span></span>
+          <span class="role">CLI: render → wav/flac/ogg + images + stats; MIDI export</span>
+          <span class="run">cargo run -- render f.json</span>
+        </div>
+        <div class="box">
+          <span class="name">tono-play</span>
+          <span class="role">code playground: Speaker, play_doc, 10 examples</span>
+          <span class="run">make play EXAMPLE=drums</span>
+        </div>
+        <div class="box">
+          <span class="name">tono-desktop</span>
+          <span class="role">Tauri pattern station: step grid, live audio</span>
+          <span class="run">make desktop</span>
+        </div>
+        <div class="box">
+          <span class="name">tono-py</span>
+          <span class="role">PyO3 bindings: numpy pull + live Engine</span>
+          <span class="run">make python</span>
+        </div>
+      </div>
+      <div class="flow-arrow">│ all four depend on ▼ (and tono-desktop/py stream through tono-play's Speaker)</div>
+      <div class="core">
+        <div class="core-title">crates/tono-core <span>— the pure engine. No I/O, no transport, no cpal. Everything below is deterministic compute.</span></div>
+        <div class="core-rows">
+          <div class="core-row">
+            <div class="rlabel">document</div>
+            <div class="core-cells">
+              <div class="cell hot">dsl/<small>SoundDoc, Node graph, validate</small></div>
+              <div class="cell">patch<small>doc + named params</small></div>
+              <div class="cell">edit<small>path-addressed edits</small></div>
+              <div class="cell">vary<small>mutate / humanize</small></div>
+            </div>
+          </div>
+          <div class="core-row">
+            <div class="rlabel">render</div>
+            <div class="core-cells">
+              <div class="cell hot">render/<small>offline bounce (osc, seq, kit, effects)</small></div>
+              <div class="cell hot">streaming/<small>real-time, byte-identical to offline</small></div>
+              <div class="cell">dsp<small>RNG, loudness, limiters</small></div>
+              <div class="cell">player<small>buffer playback</small></div>
+            </div>
+          </div>
+          <div class="core-row">
+            <div class="rlabel">play live</div>
+            <div class="core-cells">
+              <div class="cell hot">runtime/<small>AudioSource seam, Engine, SPSC ring, Mixer</small></div>
+              <div class="cell">instrument/<small>notes, voices, gated env</small></div>
+              <div class="cell">drumkit<small>GM drum map</small></div>
+              <div class="cell">adaptive<small>game music: stems, stingers</small></div>
+            </div>
+          </div>
+          <div class="core-row">
+            <div class="rlabel">compose</div>
+            <div class="core-cells">
+              <div class="cell">song<small>tracks / patterns / arrangement → SoundDoc</small></div>
+              <div class="cell">catalog<small>ready-made voices</small></div>
+              <div class="cell">presets<small>factory instruments</small></div>
+            </div>
+          </div>
+          <div class="core-row">
+            <div class="rlabel">feedback</div>
+            <div class="core-cells">
+              <div class="cell">analysis<small>STFT, spectrogram, LUFS, transients</small></div>
+              <div class="cell">review<small>grade a sound against its archetype</small></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="note">The one seam to remember: <code>runtime::AudioSource</code> — “fill this
+  interleaved-stereo buffer.” Every live thing (Engine, Mixer, Instrument, AdaptiveMusic, the
+  streaming renderer) implements it, and every output adapter (the CLI’s bounce excepted) only
+  ever talks to that trait. It is why the engine never depends on a sound card.</p>
+
+  <h2>how a sound flows</h2>
+  <pre><code>you write            the engine                       you look at
+─────────────        ──────────────────────────       ─────────────────
+blip.json   ──►  <span class="a">dsl</span>: parse + validate  ──►  <span class="a">render</span>  ──►  blip.wav
+{ "root": {          (loud errors, NaN-proof)   │         blip.png       <span class="c">◄─ spectrogram</span>
+  "type":"mul",                                 │         blip_wave.png
+  "inputs":[…] }}                               └──►  <span class="a">analysis</span> ──►  blip.stats.json
+        ▲                                                      │
+        └──────────────  refine the JSON, re-render  ◄─────────┘</code></pre>
+  <p>That loop is the product. The CLI (<code>tono render</code>) is its most direct form; the
+  desktop studio runs the same loop per grid edit; <code>tono-py</code> runs it from Python. The
+  live paths (<code>streaming</code>, <code>runtime</code>) exist so what you audition in real
+  time is bit-for-bit what the offline bounce will ship.</p>
+
+  <h2>start here</h2>
+  <ol class="steps">
+    <li>
+      <h3>Build and prove the invariant to yourself</h3>
+      <p>One command runs exactly what CI runs — fmt, clippy, all 250+ tests including the golden
+      corpus and the offline/streaming byte-identity fuzz.</p>
+      <pre><code>make verify        <span class="c"># the default-build gate</span>
+make hooks         <span class="c"># install pre-commit / pre-push gates once per clone</span></code></pre>
+    </li>
+    <li>
+      <h3>Render your first document</h3>
+      <p>Write a doc, render it, open the PNGs. This is the authoring loop every face wraps.</p>
+      <pre><code>cat &gt; blip.json &lt;&lt;'EOF'
+{ "name": "blip", "duration": 0.3, "engine": 4,
+  "root": { "type": "mul", "inputs": [
+    { "type": "sine", "freq": 880 },
+    { "type": "env", "a": 0.002, "d": 0.08, "s": 0.0, "r": 0.05 } ] } }
+EOF
+cargo run -- render blip.json -o out/
+open out/blip.png    <span class="c"># the spectrogram; out/blip.stats.json has the numbers</span></code></pre>
+    </li>
+    <li>
+      <h3>Learn the node vocabulary</h3>
+      <p>docs/cookbook.md is the DSL reference — every node type, the engine revisions, recipes
+      for SFX, loops, and full songs. Skim it with <code>crates/tono-core/src/dsl/node.rs</code>
+      open; the doc comments are the source of truth.</p>
+    </li>
+    <li>
+      <h3>Hear it live from code</h3>
+      <p>The tono-play examples are the guided tour of the higher layers — sounds, instruments,
+      voice management, buses, songs, adaptive game music.</p>
+      <pre><code>make play                            <span class="c"># the playground walkthrough</span>
+make play EXAMPLE=band               <span class="c"># catalog + fluent song builder</span>
+make play EXAMPLE=adaptive           <span class="c"># intensity-driven stems + stinger</span>
+ls crates/tono-play/examples/        <span class="c"># all ten</span></code></pre>
+    </li>
+    <li>
+      <h3>Read the core in dependency order</h3>
+      <p>Each layer only uses the ones before it: <code>dsl</code> →
+      <code>render</code> → <code>streaming</code> → <code>runtime</code> →
+      <code>instrument</code>/<code>adaptive</code> → <code>song</code>/<code>catalog</code>.
+      Start at <code>dsl/mod.rs</code> (SoundDoc) and <code>render/mod.rs</code>
+      (<code>render_product</code>) — everything else is a consumer of those two.</p>
+    </li>
+    <li>
+      <h3>Make a change safely</h3>
+      <p>Adding a node type touches four places: <code>dsl/node.rs</code> (the variant),
+      <code>dsl/validate.rs</code> (its checks), <code>render/</code> (offline kernel),
+      <code>streaming/</code> (real-time mirror — or let it fall back to the Player). Changing
+      how an existing node <em>sounds</em> is different: that must go behind a new
+      <code>engine</code> revision so old documents keep their bytes. The golden tests arbitrate.</p>
+      <pre><code>make verify          <span class="c"># default crates (CI: ubuntu + macos)</span>
+make verify-native   <span class="c"># tono-desktop / tono-play / tono-py + all examples</span></code></pre>
+    </li>
+  </ol>
+
+  <h2>where things live</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>I want to…</th><th>Go to</th></tr></thead>
+      <tbody>
+        <tr><td>add / change a node type</td><td><code>dsl/node.rs</code> + <code>dsl/validate.rs</code> + <code>render/</code> (+ <code>streaming/</code> for the live path)</td></tr>
+        <tr><td>change synthesis math</td><td>gate it behind the next <code>engine</code> revision (<code>dsl/mod.rs::ENGINE_VERSION</code>); goldens must not shift for old docs</td></tr>
+        <tr><td>drive audio from a game</td><td><code>runtime/</code> — <code>Engine::load</code>/<code>play</code>, <code>Engine::split</code> for the wait-free audio-thread seam, <code>Mixer</code> for buses</td></tr>
+        <tr><td>build playable instruments</td><td><code>instrument/</code> (design + live voice pool), <code>presets.rs</code> for factory patches</td></tr>
+        <tr><td>write music in code</td><td><code>song.rs</code> + <code>catalog.rs</code> — compiles to an ordinary SoundDoc</td></tr>
+        <tr><td>adaptive game music</td><td><code>adaptive.rs</code> — intensity stems, beat-quantized transitions, stingers, ducking</td></tr>
+        <tr><td>speaker output in Rust</td><td><code>tono-play::Speaker</code> — the one cpal shim; desktop and py stream through it too</td></tr>
+        <tr><td>analyze / grade a render</td><td><code>analysis.rs</code> (numbers + images), <code>review.rs</code> (pass/warn/fail against an archetype)</td></tr>
+        <tr><td>understand any workflow</td><td><code>Makefile</code> — every action is a make target; CLAUDE.md is the contributor brief</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    tono v2.0.0 · workspace: tono (CLI) · tono-core · tono-play · tono-desktop · tono-py ·
+    gates: <span class="mono">make verify</span> + <span class="mono">make verify-native</span> ·
+    reference: <a href="https://github.com/marmikshah/tono/blob/master/docs/cookbook.md">cookbook</a>, <a href="https://github.com/marmikshah/tono/blob/master/docs/runtime.md">runtime.md</a>, <a href="https://github.com/marmikshah/tono/blob/master/docs/ROADMAP.md">roadmap</a> · <a href="index.html">← back to the showcase</a>
+  </div>
+</main>
+
+</body>
+</html>
