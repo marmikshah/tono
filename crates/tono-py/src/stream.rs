@@ -117,13 +117,20 @@ fn run_stream(
             .build_output_stream(
                 &stream_config,
                 move |data: &mut [f32], _| {
-                    let frames = data.len() / channels;
-                    if scratch.len() < frames * 2 {
-                        scratch.resize(frames * 2, 0.0);
+                    // Never unwind into cpal's C callback (UB): contain any panic
+                    // in the render path and fall back to silence.
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let frames = data.len() / channels;
+                        if scratch.len() < frames * 2 {
+                            scratch.resize(frames * 2, 0.0);
+                        }
+                        let interleaved = &mut scratch[..frames * 2];
+                        renderer.fill(interleaved);
+                        tono_core::runtime::write_interleaved(data, channels, interleaved);
+                    }));
+                    if result.is_err() {
+                        data.fill(0.0);
                     }
-                    let interleaved = &mut scratch[..frames * 2];
-                    renderer.fill(interleaved);
-                    tono_core::runtime::write_interleaved(data, channels, interleaved);
                 },
                 |err| eprintln!("tono audio stream error: {err}"),
                 None,
@@ -201,16 +208,26 @@ impl Engine {
         // Pump thread: keeps the ring fed off the audio thread.
         let pump = {
             let shared = shared.clone();
-            let stop = stop.clone();
-            thread::Builder::new()
+            let stop_pump = stop.clone();
+            let spawned = thread::Builder::new()
                 .name("tono-pump".into())
                 .spawn(move || {
-                    while !stop.load(Ordering::Relaxed) {
+                    while !stop_pump.load(Ordering::Relaxed) {
                         lock(&shared).pump(RING_FRAMES);
                         thread::sleep(PUMP_TICK);
                     }
-                })
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
+                });
+            match spawned {
+                Ok(handle) => handle,
+                Err(e) => {
+                    // The audio thread is already live and playing the stream —
+                    // tear it down so it isn't leaked (parked forever with the
+                    // stream sounding) on this error path.
+                    stop.store(true, Ordering::Relaxed);
+                    let _ = audio.join();
+                    return Err(PyRuntimeError::new_err(e.to_string()));
+                }
+            }
         };
 
         Ok(Engine {
