@@ -33,8 +33,7 @@ impl LoopBuffer {
     /// a `loop` playback so its tail meets its head, or trim it with
     /// [`from_stereo`](Self::from_stereo).)
     pub fn from_doc(doc: &SoundDoc) -> Self {
-        let p = render::render_product(doc);
-        let (left, right) = p.stereo.unwrap_or_else(|| (p.mono.clone(), p.mono));
+        let (left, right) = render_stereo(doc);
         LoopBuffer::from_stereo(left, right)
     }
 
@@ -57,8 +56,7 @@ impl LoopBuffer {
     /// loop grid so their layered cross-fades stay sample-aligned (never drift
     /// phase). See [`AdaptiveMusic::add_stem_set`].
     pub fn from_doc_len(doc: &SoundDoc, frames: usize) -> Self {
-        let p = render::render_product(doc);
-        let (mut left, mut right) = p.stereo.unwrap_or_else(|| (p.mono.clone(), p.mono));
+        let (mut left, mut right) = render_stereo(doc);
         left.resize(frames, 0.0);
         right.resize(frames, 0.0);
         LoopBuffer {
@@ -78,9 +76,14 @@ impl AudioSource for LoopBuffer {
             return frames;
         }
         for f in 0..frames {
-            out[f * 2] = self.left[self.pos % n];
-            out[f * 2 + 1] = self.right[self.pos % n];
+            out[f * 2] = self.left[self.pos];
+            out[f * 2 + 1] = self.right[self.pos];
+            // Wrap eagerly so `pos` stays in `0..n` — no modulo on the hot
+            // loop, and no usize overflow on very long sessions.
             self.pos += 1;
+            if self.pos == n {
+                self.pos = 0;
+            }
         }
         frames
     }
@@ -104,6 +107,35 @@ struct Stinger {
     pos: usize,
 }
 
+impl Stinger {
+    /// Channels of unequal length are truncated to the shorter one, so `fill`
+    /// can index both directly and the spent-stinger cull is exact.
+    fn new(mut left: Vec<f32>, mut right: Vec<f32>) -> Self {
+        let n = left.len().min(right.len());
+        left.truncate(n);
+        right.truncate(n);
+        Stinger {
+            left,
+            right,
+            pos: 0,
+        }
+    }
+}
+
+/// Duck attack time — a couple of ms is fast enough to feel instant without
+/// the click a gain step would make.
+const DUCK_ATTACK_SECS: f32 = 0.002;
+/// Snap threshold (~-80 dB from target) so the exponential ramps land exactly
+/// instead of asymptoting forever.
+const DUCK_SNAP_EPSILON: f32 = 1e-4;
+
+/// Render a doc once and return its stereo pair (mono duplicated when the doc
+/// has no stereo treatment).
+fn render_stereo(doc: &SoundDoc) -> (Vec<f32>, Vec<f32>) {
+    let p = render::render_product(doc);
+    p.stereo.unwrap_or_else(|| (p.mono.clone(), p.mono))
+}
+
 /// When a scheduled change takes effect, relative to the musical clock. Anything
 /// but [`Immediate`](Quantize::Immediate) needs a tempo ([`set_tempo`](AdaptiveMusic::set_tempo));
 /// without one it degrades to `Immediate`.
@@ -115,7 +147,9 @@ pub enum Quantize {
     Beat,
     /// Apply on the next bar boundary.
     Bar,
-    /// Apply on the boundary `n` bars from now (`0`/`1` = the next bar).
+    /// Apply on the next `n`-bar grid boundary (bars counted from the last
+    /// reset, so `Bars(2)` at 0.5 bars in fires at bar 2 — the grid keeps
+    /// repeated schedules deterministic). `0`/`1` = the next bar.
     Bars(u32),
 }
 
@@ -238,17 +272,25 @@ impl AdaptiveMusic {
     /// **provably sample-identical in length** (author each `doc` to
     /// `duration_beats` so the fit is a trim, not a silent pad).
     pub fn add_stem_set(&mut self, stems: &[(&SoundDoc, f32)], duration_beats: f64) -> usize {
-        let grid = self
+        let tempo_grid = self
             .frames_per_beat()
             .map(|fpb| (duration_beats * fpb).round() as usize)
-            .filter(|f| *f > 0)
-            .or_else(|| {
-                stems
-                    .first()
-                    .map(|(doc, _)| render::render_product(doc).mono.len())
-            })
-            .unwrap_or(0);
-        for (doc, fade_in_at) in stems {
+            .filter(|f| *f > 0);
+        let Some(((first_doc, first_fade), rest)) = stems.split_first() else {
+            return tempo_grid.unwrap_or(0);
+        };
+        if let Some(grid) = tempo_grid {
+            for (doc, fade_in_at) in stems {
+                self.add_layer(LoopBuffer::from_doc_len(doc, grid), *fade_in_at);
+            }
+            return grid;
+        }
+        // No tempo: the first stem's natural length is the grid — render it
+        // once and reuse the buffers rather than rendering again for length.
+        let (left, right) = render_stereo(first_doc);
+        let grid = left.len();
+        self.add_layer(LoopBuffer::from_stereo(left, right), *first_fade);
+        for (doc, fade_in_at) in rest {
             self.add_layer(LoopBuffer::from_doc_len(doc, grid), *fade_in_at);
         }
         grid
@@ -268,19 +310,14 @@ impl AdaptiveMusic {
 
     /// Fire a one-shot stinger over the bed (rendered now, mixed until it ends).
     pub fn stinger(&mut self, doc: &SoundDoc) {
-        let p = render::render_product(doc);
-        let (left, right) = p.stereo.unwrap_or_else(|| (p.mono.clone(), p.mono));
+        let (left, right) = render_stereo(doc);
         self.stinger_stereo(left, right);
     }
 
     /// Fire a stinger from pre-rendered stereo — render off the audio thread and
     /// hand the buffers in, so a real-time caller never renders under a lock.
     pub fn stinger_stereo(&mut self, left: Vec<f32>, right: Vec<f32>) {
-        self.stingers.push(Stinger {
-            left,
-            right,
-            pos: 0,
-        });
+        self.stingers.push(Stinger::new(left, right));
     }
 
     /// The current intensity.
@@ -357,7 +394,7 @@ impl AdaptiveMusic {
         self.duck_target = (1.0 - depth).clamp(0.0, 1.0);
         let secs = release.as_secs_f32().max(1.0 / self.sample_rate as f32);
         self.duck_coeff = 1.0 - (-1.0 / (secs * self.sample_rate as f32)).exp();
-        let attack = 0.002 * self.sample_rate as f32;
+        let attack = DUCK_ATTACK_SECS * self.sample_rate as f32;
         self.duck_attack = 1.0 - (-1.0 / attack).exp();
     }
 
@@ -415,38 +452,42 @@ impl AdaptiveMusic {
         self.pending.push(Scheduled { fire_at, action });
     }
 
+    /// Apply `action` now if the `q` boundary is already here, else defer it —
+    /// the one immediate-vs-scheduled decision every quantized entry point and
+    /// [`fire_due`](Self::fire_due) share.
+    fn apply_or_schedule(&mut self, q: Quantize, action: Action) {
+        if self.fire_frame(q) <= self.position {
+            self.apply(action);
+        } else {
+            self.schedule(q, action);
+        }
+    }
+
+    /// Perform an [`Action`] now.
+    fn apply(&mut self, action: Action) {
+        match action {
+            Action::SetIntensity(x) => self.set_intensity(x),
+            Action::Stinger(st) => self.stingers.push(st),
+            Action::Transition { to } => self.begin_transition(to),
+        }
+    }
+
     /// Set the intensity on a beat/bar boundary (see [`set_intensity`](Self::set_intensity)).
     pub fn set_intensity_at(&mut self, x: f32, q: Quantize) {
-        if self.fire_frame(q) <= self.position {
-            self.set_intensity(x);
-        } else {
-            self.schedule(q, Action::SetIntensity(x));
-        }
+        self.apply_or_schedule(q, Action::SetIntensity(x));
     }
 
     /// Fire a stinger on a beat/bar boundary. The stinger is **rendered now** (off
     /// the audio thread); only its playback is deferred to the boundary.
     pub fn stinger_at(&mut self, doc: &SoundDoc, q: Quantize) {
-        let p = render::render_product(doc);
-        let (left, right) = p.stereo.unwrap_or_else(|| (p.mono.clone(), p.mono));
+        let (left, right) = render_stereo(doc);
         self.stinger_stereo_at(left, right, q);
     }
 
     /// Schedule a stinger from pre-rendered stereo — render off the audio thread
     /// and hand the buffers in, so a real-time caller never renders under a lock.
     pub fn stinger_stereo_at(&mut self, left: Vec<f32>, right: Vec<f32>, q: Quantize) {
-        if self.fire_frame(q) <= self.position {
-            self.stinger_stereo(left, right);
-            return;
-        }
-        self.schedule(
-            q,
-            Action::Stinger(Stinger {
-                left,
-                right,
-                pos: 0,
-            }),
-        );
+        self.apply_or_schedule(q, Action::Stinger(Stinger::new(left, right)));
     }
 
     // ---- Horizontal sections ----
@@ -487,11 +528,7 @@ impl AdaptiveMusic {
         if self.current_section == Some(section) {
             return;
         }
-        if self.fire_frame(q) <= self.position {
-            self.begin_transition(section);
-        } else {
-            self.schedule(q, Action::Transition { to: section });
-        }
+        self.apply_or_schedule(q, Action::Transition { to: section });
     }
 
     /// Start the section cross-fade now: rewind the target to its head so it enters
@@ -543,11 +580,7 @@ impl AdaptiveMusic {
         }
         due.sort_by_key(|s| s.fire_at);
         for s in due {
-            match s.action {
-                Action::SetIntensity(x) => self.set_intensity(x),
-                Action::Stinger(st) => self.stingers.push(st),
-                Action::Transition { to } => self.begin_transition(to),
-            }
+            self.apply(s.action);
         }
     }
 }
@@ -609,12 +642,12 @@ impl AudioSource for AdaptiveMusic {
             }
         }
         for st in &mut self.stingers {
-            for f in 0..frames {
-                let (Some(&l), Some(&r)) = (st.left.get(st.pos), st.right.get(st.pos)) else {
-                    break;
-                };
-                out[f * 2] += l;
-                out[f * 2 + 1] += r;
+            // Channels are equal length by construction (`Stinger::new`), so
+            // direct indexing is safe and the cull below is exact.
+            let n = (st.left.len() - st.pos).min(frames);
+            for f in 0..n {
+                out[f * 2] += st.left[st.pos];
+                out[f * 2 + 1] += st.right[st.pos];
                 st.pos += 1;
             }
         }
@@ -626,7 +659,7 @@ impl AudioSource for AdaptiveMusic {
                 if self.duck_gain > self.duck_target {
                     // Attack: ramp down to the floor over a few ms (no click).
                     self.duck_gain += (self.duck_target - self.duck_gain) * self.duck_attack;
-                    if self.duck_gain <= self.duck_target + 1e-4 {
+                    if self.duck_gain <= self.duck_target + DUCK_SNAP_EPSILON {
                         self.duck_gain = self.duck_target;
                         // Floor reached — release from here on.
                         self.duck_target = 1.0;
@@ -635,7 +668,7 @@ impl AudioSource for AdaptiveMusic {
                     // Release: recover toward unity, snapping so it doesn't
                     // asymptote below 1.0 forever (a permanent tiny attenuation).
                     self.duck_gain += (1.0 - self.duck_gain) * self.duck_coeff;
-                    if self.duck_gain >= 1.0 - 1e-4 {
+                    if self.duck_gain >= 1.0 - DUCK_SNAP_EPSILON {
                         self.duck_gain = 1.0;
                     }
                 }
