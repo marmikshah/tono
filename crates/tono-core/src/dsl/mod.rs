@@ -11,7 +11,7 @@ mod tests;
 mod tracks;
 mod validate;
 
-pub use node::Node;
+pub use node::{BassKnobs, FmKnobs, Node, PianoKnobs, PluckKnobs, Sf2Knobs};
 pub use tracks::{AutoLane, AutoPoint, AutoTarget, Track};
 
 use schemars::JsonSchema;

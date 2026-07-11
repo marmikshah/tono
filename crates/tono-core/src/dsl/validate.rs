@@ -257,6 +257,85 @@ fn non_negative(name: &str, v: f32) -> Result<(), String> {
     Ok(())
 }
 
+impl crate::dsl::FmKnobs {
+    fn validate(&self) -> Result<(), String> {
+        positive("seq.fm_ratio", self.fm_ratio)?;
+        if !(0.0..=20.0).contains(&self.fm_index) {
+            return Err(format!(
+                "seq.fm_index must be in [0, 20], got {}",
+                self.fm_index
+            ));
+        }
+        positive("seq.fm_strike", self.fm_strike)
+    }
+}
+
+impl crate::dsl::PluckKnobs {
+    fn validate(&self) -> Result<(), String> {
+        if !(0.8..1.0).contains(&self.pluck_decay) {
+            return Err(format!(
+                "seq.pluck_decay must be in [0.8, 1), got {}",
+                self.pluck_decay
+            ));
+        }
+        in_unit("seq.pluck_body", self.pluck_body)?;
+        in_unit("seq.pluck_pick", self.pluck_pick)?;
+        if !(-1.0..=1.0).contains(&self.pluck_tone) {
+            return Err(format!(
+                "seq.pluck_tone must be in [-1, 1], got {}",
+                self.pluck_tone
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl crate::dsl::PianoKnobs {
+    fn validate(&self) -> Result<(), String> {
+        positive("seq.piano_hammer", self.piano_hammer)?;
+        positive("seq.piano_strike", self.piano_strike)?;
+        positive("seq.piano_inharm", self.piano_inharm)?;
+        non_negative("seq.piano_detune", self.piano_detune)?;
+        positive("seq.piano_decay", self.piano_decay)
+    }
+}
+
+impl crate::dsl::BassKnobs {
+    fn validate(&self) -> Result<(), String> {
+        positive("seq.bass_cutoff", self.bass_cutoff)?;
+        non_negative("seq.bass_env", self.bass_env)?;
+        non_negative("seq.bass_env_vel", self.bass_env_vel)?;
+        positive("seq.bass_decay", self.bass_decay)?;
+        non_negative("seq.bass_click", self.bass_click)?;
+        non_negative("seq.bass_body", self.bass_body)?;
+        non_negative("seq.bass_sub", self.bass_sub)?;
+        positive("seq.bass_sub_ratio", self.bass_sub_ratio)?;
+        in_unit("seq.bass_drive", self.bass_drive)?;
+        positive("seq.bass_body_decay", self.bass_body_decay)
+    }
+}
+
+impl crate::dsl::Sf2Knobs {
+    /// Only meaningful when the seq's wave is `sampler` — the caller gates it.
+    fn validate(&self) -> Result<(), String> {
+        if self.sf2.is_empty() {
+            return Err(
+                "seq.sf2 must point at a SoundFont (.sf2) file when wave is 'sampler'".into(),
+            );
+        }
+        if !std::path::Path::new(&self.sf2).exists() {
+            return Err(format!("seq.sf2: no such file '{}'", self.sf2));
+        }
+        if self.sf2_preset > 127 {
+            return Err(format!(
+                "seq.sf2_preset must be in 0..=127, got {}",
+                self.sf2_preset
+            ));
+        }
+        Ok(())
+    }
+}
+
 fn validate_value(v: &Value, what: &str) -> Result<(), String> {
     match v {
         Value::Const(c) => finite(what, *c),
@@ -366,32 +445,12 @@ fn validate_node(node: &Node) -> Result<(), String> {
             steps_per_beat,
             wave,
             duty,
-            fm_ratio,
-            fm_index,
-            fm_strike,
-            pluck_decay,
-            pluck_body,
-            pluck_pick,
-            pluck_tone,
-            piano_hammer,
-            piano_strike,
-            piano_inharm,
-            piano_detune,
-            piano_decay,
+            fm,
+            pluck,
+            piano,
             kit: _,
-            bass_cutoff,
-            bass_env,
-            bass_env_vel,
-            bass_decay,
-            bass_click,
-            bass_body,
-            bass_sub,
-            bass_sub_ratio,
-            bass_drive,
-            bass_body_decay,
+            bass,
             sf2,
-            sf2_preset,
-            sf2_bank: _,
             swing,
             humanize,
             env,
@@ -405,55 +464,14 @@ fn validate_node(node: &Node) -> Result<(), String> {
                 return Err("seq.notes must be non-empty".into());
             }
             validate_unit_value(duty, "seq.duty")?;
-            positive("seq.fm_ratio", *fm_ratio)?;
-            if !(0.0..=20.0).contains(fm_index) {
-                return Err(format!("seq.fm_index must be in [0, 20], got {fm_index}"));
-            }
-            positive("seq.fm_strike", *fm_strike)?;
-            if !(0.8..1.0).contains(pluck_decay) {
-                return Err(format!(
-                    "seq.pluck_decay must be in [0.8, 1), got {pluck_decay}"
-                ));
-            }
-            in_unit("seq.pluck_body", *pluck_body)?;
-            in_unit("seq.pluck_pick", *pluck_pick)?;
-            if !(-1.0..=1.0).contains(pluck_tone) {
-                return Err(format!(
-                    "seq.pluck_tone must be in [-1, 1], got {pluck_tone}"
-                ));
-            }
-            positive("seq.piano_hammer", *piano_hammer)?;
-            positive("seq.piano_strike", *piano_strike)?;
-            positive("seq.piano_inharm", *piano_inharm)?;
-            non_negative("seq.piano_detune", *piano_detune)?;
-            positive("seq.piano_decay", *piano_decay)?;
-            positive("seq.bass_cutoff", *bass_cutoff)?;
-            non_negative("seq.bass_env", *bass_env)?;
-            non_negative("seq.bass_env_vel", *bass_env_vel)?;
-            positive("seq.bass_decay", *bass_decay)?;
-            non_negative("seq.bass_click", *bass_click)?;
-            non_negative("seq.bass_body", *bass_body)?;
-            non_negative("seq.bass_sub", *bass_sub)?;
-            positive("seq.bass_sub_ratio", *bass_sub_ratio)?;
-            in_unit("seq.bass_drive", *bass_drive)?;
-            positive("seq.bass_body_decay", *bass_body_decay)?;
+            fm.validate()?;
+            pluck.validate()?;
+            piano.validate()?;
+            bass.validate()?;
             in_unit("seq.swing", *swing)?;
             in_unit("seq.humanize", *humanize)?;
             if *wave == SeqWave::Sampler {
-                if sf2.is_empty() {
-                    return Err(
-                        "seq.sf2 must point at a SoundFont (.sf2) file when wave is 'sampler'"
-                            .into(),
-                    );
-                }
-                if !std::path::Path::new(sf2).exists() {
-                    return Err(format!("seq.sf2: no such file '{sf2}'"));
-                }
-                if *sf2_preset > 127 {
-                    return Err(format!(
-                        "seq.sf2_preset must be in 0..=127, got {sf2_preset}"
-                    ));
-                }
+                sf2.validate()?;
             }
             env.validate("seq.env")?;
             for note in notes {

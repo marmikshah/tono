@@ -64,13 +64,13 @@ fn collect_seqs<'a>(node: &'a Node, out: &mut Vec<SeqRef<'a>>) {
             steps_per_beat,
             notes,
             wave,
-            sf2_bank,
+            sf2,
             ..
         } => out.push(SeqRef {
             bpm: *bpm,
             spb: (*steps_per_beat).max(1),
             notes,
-            drums: *wave == SeqWave::Kit || (*wave == SeqWave::Sampler && *sf2_bank == 128),
+            drums: *wave == SeqWave::Kit || (*wave == SeqWave::Sampler && sf2.sf2_bank == 128),
         }),
         Node::Tracks { tracks, .. } => {
             for t in tracks {

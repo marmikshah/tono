@@ -771,10 +771,13 @@ mod tests {
         let Node::Tracks { tracks, .. } = &doc.root else {
             panic!("tracks");
         };
-        let Node::Seq { pluck_decay, .. } = &tracks[0].node else {
+        let Node::Seq { pluck, .. } = &tracks[0].node else {
             panic!("seq");
         };
-        assert!((*pluck_decay - 0.965).abs() < 1e-6, "steel pluck_decay set");
+        assert!(
+            (pluck.pluck_decay - 0.965).abs() < 1e-6,
+            "steel pluck_decay set"
+        );
     }
 
     #[test]

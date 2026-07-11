@@ -3,7 +3,10 @@
 
 use super::kit::{cowbell_sample, kit_drum};
 use super::{Signal, adsr, eval_value, osc, poly_blep};
-use crate::dsl::{Adsr, KitStyle, Node, SeqNote, SeqWave, Shape, Value};
+use crate::dsl::{
+    Adsr, BassKnobs, FmKnobs, KitStyle, Node, PianoKnobs, PluckKnobs, SeqNote, SeqWave, Shape,
+    Value,
+};
 use crate::dsp::Rng;
 use std::f32::consts::TAU;
 
@@ -11,33 +14,12 @@ use std::f32::consts::TAU;
 pub(super) struct SeqVoice<'a> {
     pub(super) wave: SeqWave,
     pub(super) duty: &'a Value,
-    pub(super) fm_ratio: f32,
-    pub(super) fm_index: f32,
-    pub(super) fm_strike: f32,
-    pub(super) pluck_decay: f32,
-    // Guitar tone stages (the `pluck` voice).
-    pub(super) pluck_body: f32,
-    pub(super) pluck_pick: f32,
-    pub(super) pluck_tone: f32,
-    // Piano tone knobs (engine-3 additive `piano` voice).
-    pub(super) piano_hammer: f32,
-    pub(super) piano_strike: f32,
-    pub(super) piano_inharm: f32,
-    pub(super) piano_detune: f32,
-    pub(super) piano_decay: f32,
+    pub(super) fm: &'a FmKnobs,
+    pub(super) pluck: &'a PluckKnobs,
+    pub(super) piano: &'a PianoKnobs,
     // Drum-kit voicing (the `kit` wave).
     pub(super) kit: KitStyle,
-    // Bass tone knobs (the `bass` wave).
-    pub(super) bass_cutoff: f32,
-    pub(super) bass_env: f32,
-    pub(super) bass_env_vel: f32,
-    pub(super) bass_decay: f32,
-    pub(super) bass_click: f32,
-    pub(super) bass_body: f32,
-    pub(super) bass_sub: f32,
-    pub(super) bass_sub_ratio: f32,
-    pub(super) bass_drive: f32,
-    pub(super) bass_body_decay: f32,
+    pub(super) bass: &'a BassKnobs,
     // Read only by the SoundFont sampler path (feature = "sampler").
     #[cfg_attr(not(feature = "sampler"), allow(dead_code))]
     pub(super) sf2: &'a str,
@@ -66,32 +48,12 @@ impl<'a> SeqVoice<'a> {
             steps_per_beat,
             wave,
             duty,
-            fm_ratio,
-            fm_index,
-            fm_strike,
-            pluck_decay,
-            pluck_body,
-            pluck_pick,
-            pluck_tone,
-            piano_hammer,
-            piano_strike,
-            piano_inharm,
-            piano_detune,
-            piano_decay,
+            fm,
+            pluck,
+            piano,
             kit,
-            bass_cutoff,
-            bass_env,
-            bass_env_vel,
-            bass_decay,
-            bass_click,
-            bass_body,
-            bass_sub,
-            bass_sub_ratio,
-            bass_drive,
-            bass_body_decay,
+            bass,
             sf2,
-            sf2_preset,
-            sf2_bank,
             swing,
             humanize,
             env,
@@ -103,32 +65,14 @@ impl<'a> SeqVoice<'a> {
         let voice = SeqVoice {
             wave: *wave,
             duty,
-            fm_ratio: *fm_ratio,
-            fm_index: *fm_index,
-            fm_strike: *fm_strike,
-            pluck_decay: *pluck_decay,
-            pluck_body: *pluck_body,
-            pluck_pick: *pluck_pick,
-            pluck_tone: *pluck_tone,
-            piano_hammer: *piano_hammer,
-            piano_strike: *piano_strike,
-            piano_inharm: *piano_inharm,
-            piano_detune: *piano_detune,
-            piano_decay: *piano_decay,
+            fm,
+            pluck,
+            piano,
             kit: *kit,
-            bass_cutoff: *bass_cutoff,
-            bass_env: *bass_env,
-            bass_env_vel: *bass_env_vel,
-            bass_decay: *bass_decay,
-            bass_click: *bass_click,
-            bass_body: *bass_body,
-            bass_sub: *bass_sub,
-            bass_sub_ratio: *bass_sub_ratio,
-            bass_drive: *bass_drive,
-            bass_body_decay: *bass_body_decay,
-            sf2,
-            sf2_preset: *sf2_preset,
-            sf2_bank: *sf2_bank,
+            bass,
+            sf2: &sf2.sf2,
+            sf2_preset: sf2.sf2_preset,
+            sf2_bank: sf2.sf2_bank,
             swing: *swing,
             humanize: *humanize,
             env,
@@ -308,14 +252,14 @@ fn seq_note_signal(
                 // Hammer strike: the modulation index (brightness) decays
                 // from the attack; louder notes strike brighter.
                 let t = i as f32 / srf;
-                let idx = voice.fm_index
+                let idx = voice.fm.fm_index
                     * (0.4 + 0.6 * note.gain)
-                    * (-t / voice.fm_strike.max(1e-3)).exp();
+                    * (-t / voice.fm.fm_strike.max(1e-3)).exp();
                 let m = idx * (TAU * mph).sin();
                 out.push((TAU * cph + m).sin());
                 cph += dt;
                 cph -= cph.floor();
-                mph += dt * voice.fm_ratio;
+                mph += dt * voice.fm.fm_ratio;
                 mph -= mph.floor();
             }
         }
@@ -352,8 +296,8 @@ fn pluck_note(voice: &SeqVoice, f: &[f32], sr: u32, rng: &mut Rng) -> Signal {
     let period = ((srf / f[0].clamp(20.0, srf / 2.0)).round() as usize).max(2);
     let mut string: Vec<f32> = (0..period).map(|_| rng.bi()).collect();
     let mut spos = 0usize;
-    let bright = voice.pluck_tone.max(0.0);
-    let damp = (-voice.pluck_tone).max(0.0);
+    let bright = voice.pluck.pluck_tone.max(0.0);
+    let damp = (-voice.pluck.pluck_tone).max(0.0);
     // Fixed guitar-body resonators: Helmholtz air, top plate, back.
     let body_r = (-6.907_755 / (0.25 * srf)).exp();
     let body_a2 = -body_r * body_r;
@@ -372,7 +316,7 @@ fn pluck_note(voice: &SeqVoice, f: &[f32], sr: u32, rng: &mut Rng) -> Signal {
             let hp = 0.9 * (hp_out + y - hp_in);
             hp_in = y;
             hp_out = hp;
-            voice.pluck_pick * hp * (1.0 - t / 0.008)
+            voice.pluck.pluck_pick * hp * (1.0 - t / 0.008)
         } else {
             0.0
         };
@@ -385,14 +329,15 @@ fn pluck_note(voice: &SeqVoice, f: &[f32], sr: u32, rng: &mut Rng) -> Signal {
             by1[k] = yr;
             body_sum += yr;
         }
-        let out_sample =
-            (1.0 - 0.3 * voice.pluck_body) * y + voice.pluck_body * 0.6 * body_sum + pick;
+        let out_sample = (1.0 - 0.3 * voice.pluck.pluck_body) * y
+            + voice.pluck.pluck_body * 0.6 * body_sum
+            + pick;
         out.push(out_sample);
         // Loop filter: brightness blend then a darkening one-pole.
         let avg = (0.5 + 0.5 * bright) * y + (0.5 - 0.5 * bright) * next;
         lp += damp * (avg - lp);
         let filt = (1.0 - damp) * avg + damp * lp;
-        string[spos] = voice.pluck_decay * filt;
+        string[spos] = voice.pluck.pluck_decay * filt;
         spos = (spos + 1) % string.len();
     }
     out
@@ -418,13 +363,15 @@ fn piano_note_v3(voice: &SeqVoice, note: &SeqNote, f: &[f32], sr: u32, rng: &mut
     }
     // Five tone knobs (defaults reproduce the concert grand bit-for-bit).
     let f0 = f[0].max(20.0);
-    let b_inharm = (7.0e-5 * voice.piano_inharm * (f0 / 55.0))
-        .clamp(5.0e-5 * voice.piano_inharm, 1.2e-3 * voice.piano_inharm);
-    let base_decay = (10.0 * voice.piano_decay / (1.0 + f0 / 110.0)).clamp(0.45, 9.0);
-    let strike = voice.piano_strike.clamp(0.01, 0.5); // hammer position along the string
+    let b_inharm = (7.0e-5 * voice.piano.piano_inharm * (f0 / 55.0)).clamp(
+        5.0e-5 * voice.piano.piano_inharm,
+        1.2e-3 * voice.piano.piano_inharm,
+    );
+    let base_decay = (10.0 * voice.piano.piano_decay / (1.0 + f0 / 110.0)).clamp(0.45, 9.0);
+    let strike = voice.piano.piano_strike.clamp(0.01, 0.5); // hammer position along the string
     let bright = 0.45 + 0.55 * note.gain; // velocity opens the high partials
-    let hammer = voice.piano_hammer.max(1e-3); // hardness: flattens the tilt
-    let detune = 1.0 + (1.000_6_f32 - 1.0) * voice.piano_detune; // unison spread
+    let hammer = voice.piano.piano_hammer.max(1e-3); // hardness: flattens the tilt
+    let detune = 1.0 + (1.000_6_f32 - 1.0) * voice.piano.piano_detune; // unison spread
     let string_det = [1.0 / detune, detune];
 
     let mut partials: Vec<Partial> = Vec::new();
@@ -611,9 +558,9 @@ fn bass_note(voice: &SeqVoice, note: &SeqNote, f: &[f32], sr: u32) -> Signal {
     let n = f.len();
     let mut out = Vec::with_capacity(n);
     const BASS_CLICK_TAU: f32 = 0.008;
-    let decay = voice.bass_decay.max(1e-3);
-    let body_decay = voice.bass_body_decay.max(1e-3);
-    let drive = voice.bass_drive.clamp(0.0, 1.0);
+    let decay = voice.bass.bass_decay.max(1e-3);
+    let body_decay = voice.bass.bass_body_decay.max(1e-3);
+    let drive = voice.bass.bass_drive.clamp(0.0, 1.0);
     let mut phase = 0.0f32;
     let mut sub_phase = 0.0f32;
     let mut lp = 0.0f32;
@@ -621,17 +568,19 @@ fn bass_note(voice: &SeqVoice, note: &SeqNote, f: &[f32], sr: u32) -> Signal {
         let dt = fi.max(0.0) / srf;
         let t = i as f32 / srf;
         let saw = (2.0 * phase - 1.0) - poly_blep(phase, dt);
-        let cutoff = voice.bass_cutoff
-            + (voice.bass_env + voice.bass_env_vel * note.gain) * (-t / decay).exp()
-            + voice.bass_click * (-t / BASS_CLICK_TAU).exp();
+        let cutoff = voice.bass.bass_cutoff
+            + (voice.bass.bass_env + voice.bass.bass_env_vel * note.gain) * (-t / decay).exp()
+            + voice.bass.bass_click * (-t / BASS_CLICK_TAU).exp();
         let a = 1.0 - (-TAU * cutoff / srf).exp();
         lp += a * (saw - lp);
         let body = lp + drive * ((lp * (1.0 + 2.0 * drive)).tanh() - lp);
         let sub = (TAU * sub_phase).sin();
-        out.push((voice.bass_body * body + voice.bass_sub * sub) * (-t / body_decay).exp());
+        out.push(
+            (voice.bass.bass_body * body + voice.bass.bass_sub * sub) * (-t / body_decay).exp(),
+        );
         phase += dt;
         phase -= phase.floor();
-        sub_phase += dt * voice.bass_sub_ratio;
+        sub_phase += dt * voice.bass.bass_sub_ratio;
         sub_phase -= sub_phase.floor();
     }
     out

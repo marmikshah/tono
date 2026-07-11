@@ -225,100 +225,26 @@ pub enum Node {
         /// Duty cycle when `wave` is `square` (may be modulated for PWM).
         #[serde(default = "default_duty")]
         duty: Value,
-        /// Modulator frequency ratio when `wave` is `fm` (1 = e-piano/piano,
-        /// 3.5 = bell, 14 = tine).
-        #[serde(default = "default_seq_fm_ratio")]
-        fm_ratio: f32,
-        /// FM modulation index at the strike when `wave` is `fm` (brightness;
-        /// also scaled by each note's velocity, so louder notes ring brighter).
-        #[serde(default = "default_seq_fm_index")]
-        fm_index: f32,
-        /// Strike decay in seconds when `wave` is `fm`: how fast the index
-        /// (brightness) fades after each note's attack. Short = percussive
-        /// e-piano, long = sustained bell shimmer.
-        #[serde(default = "default_seq_fm_strike")]
-        fm_strike: f32,
-        /// String feedback decay when `wave` is `pluck`, 0.8..1 (higher rings
-        /// longer; low notes naturally ring longer than high ones).
-        #[serde(default = "default_pluck_decay")]
-        pluck_decay: f32,
-        /// Acoustic body-resonance depth when `wave` is `pluck`, 0..1 — mixes in
-        /// a fixed guitar-body mode bank. 0 = solid-body (default).
-        #[serde(default = "default_pluck_body")]
-        pluck_body: f32,
-        /// Pick/attack transient level when `wave` is `pluck`, 0..1. 0 = none.
-        #[serde(default = "default_pluck_pick")]
-        pluck_pick: f32,
-        /// String brightness/damping when `wave` is `pluck`, −1..1. 0 = the
-        /// current loop filter; + brightens, − darkens.
-        #[serde(default = "default_pluck_tone")]
-        pluck_tone: f32,
-        /// Hammer hardness when `wave` is `piano` (engine ≥ 3): spectral
-        /// brightness. 1 = concert grand; > 1 harder/brighter, < 1 softer/darker.
-        #[serde(default = "default_piano_hammer")]
-        piano_hammer: f32,
-        /// Hammer strike position when `wave` is `piano` (fraction along the
-        /// string, engine ≥ 3): the comb-notch that thins the spectrum. 0.125 =
-        /// grand; toward the bridge is brighter, toward center hollower.
-        #[serde(default = "default_piano_strike")]
-        piano_strike: f32,
-        /// String-stiffness scale when `wave` is `piano` (engine ≥ 3): stretches
-        /// the partials sharp. 1 = grand; > 1 = short/stiff upright jangle.
-        #[serde(default = "default_piano_inharm")]
-        piano_inharm: f32,
-        /// Unison detune width when `wave` is `piano` (engine ≥ 3): the two-string
-        /// beating. 1 ≈ ±1 cent (grand shimmer); ~12 = honky-tonk warble.
-        #[serde(default = "default_piano_detune")]
-        piano_detune: f32,
-        /// Ring-time scale when `wave` is `piano` (engine ≥ 3). 1 = grand;
-        /// < 1 = shorter, damped (felt/upright); > 1 = longer sustain.
-        #[serde(default = "default_piano_decay")]
-        piano_decay: f32,
+        /// FM voice knobs (`wave: "fm"`), flattened onto the node.
+        #[serde(flatten)]
+        fm: FmKnobs,
+        /// Plucked-string knobs (`wave: "pluck"`), flattened onto the node.
+        #[serde(flatten)]
+        pluck: PluckKnobs,
+        /// Piano tone knobs (`wave: "piano"`, engine ≥ 3), flattened onto the node.
+        #[serde(flatten)]
+        piano: PianoKnobs,
         /// Drum-kit voicing when `wave` is `kit`. Omitted ⇒ `classic` (the
         /// original kit, byte-identical); `acoustic`/`electronic`/`808` are
         /// alternate synthesized kits.
         #[serde(default)]
         kit: KitStyle,
-        /// Bass filter resting floor in Hz (the `bass` voice). Low = dark/round.
-        #[serde(default = "default_bass_cutoff")]
-        bass_cutoff: f32,
-        /// Bass fixed cutoff-sweep depth above the floor, Hz.
-        #[serde(default = "default_bass_env")]
-        bass_env: f32,
-        /// Bass velocity-scaled sweep depth, Hz (× note velocity).
-        #[serde(default = "default_bass_env_vel")]
-        bass_env_vel: f32,
-        /// Bass filter-sweep time constant, seconds — how fast the cutoff closes.
-        #[serde(default = "default_bass_decay")]
-        bass_decay: f32,
-        /// Bass pick-tick: an extra attack cutoff bump over ~8 ms, Hz. 0 = none.
-        #[serde(default = "default_bass_click")]
-        bass_click: f32,
-        /// Bass filtered-saw body level.
-        #[serde(default = "default_bass_body")]
-        bass_body: f32,
-        /// Bass sine-sub level.
-        #[serde(default = "default_bass_sub")]
-        bass_sub: f32,
-        /// Bass sub frequency ratio to the note. 1 = reinforce; 0.5 = octave down.
-        #[serde(default = "default_bass_sub_ratio")]
-        bass_sub_ratio: f32,
-        /// Bass tanh saturation, 0..1. 0 = clean; > 0 = synth-bass grit.
-        #[serde(default = "default_bass_drive")]
-        bass_drive: f32,
-        /// Bass note body decay, seconds (on top of the ADSR). Longer = sustained.
-        #[serde(default = "default_bass_body_decay")]
-        bass_body_decay: f32,
-        /// Path to a SoundFont (.sf2) file when `wave` is `sampler`.
-        #[serde(default)]
-        sf2: String,
-        /// General MIDI program number (0..=127) when `wave` is `sampler`.
-        #[serde(default)]
-        sf2_preset: u32,
-        /// SoundFont bank when `wave` is `sampler` (0 = melodic, 128 = the
-        /// percussion bank / GM drum map).
-        #[serde(default)]
-        sf2_bank: u32,
+        /// Bass tone knobs (`wave: "bass"`), flattened onto the node.
+        #[serde(flatten)]
+        bass: BassKnobs,
+        /// SoundFont sampler settings (`wave: "sampler"`), flattened onto the node.
+        #[serde(flatten)]
+        sf2: Sf2Knobs,
         /// Swing, 0..1: every off-beat grid step is delayed by this fraction
         /// of a step (0 = straight, ~0.55 = classic shuffle). Off-beats are
         /// odd steps, so set `steps_per_beat` to the swung subdivision.
@@ -649,4 +575,121 @@ impl Node {
                 | Node::Duck { .. }
         )
     }
+}
+
+/// FM voice knobs of a `seq` node (`wave: "fm"`), flattened onto the node in
+/// JSON. Defaults ≈ an FM piano strike (ratio 1 + decaying index).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub struct FmKnobs {
+    /// Modulator frequency ratio (1 = e-piano/piano, 3.5 = bell, 14 = tine).
+    #[serde(default = "default_seq_fm_ratio")]
+    pub fm_ratio: f32,
+    /// Modulation index at the strike (brightness; also scaled by each note's
+    /// velocity, so louder notes ring brighter).
+    #[serde(default = "default_seq_fm_index")]
+    pub fm_index: f32,
+    /// Strike decay in seconds: how fast the index (brightness) fades after
+    /// each note's attack. Short = percussive e-piano, long = bell shimmer.
+    #[serde(default = "default_seq_fm_strike")]
+    pub fm_strike: f32,
+}
+
+/// Plucked-string knobs of a `seq` node (`wave: "pluck"`), flattened onto the
+/// node in JSON. The tone stages default to identity, so omitting them renders
+/// byte-identically and draws no extra RNG.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub struct PluckKnobs {
+    /// String feedback decay, 0.8..1 (higher rings longer; low notes
+    /// naturally ring longer than high ones).
+    #[serde(default = "default_pluck_decay")]
+    pub pluck_decay: f32,
+    /// Acoustic body-resonance depth, 0..1 — mixes in a fixed guitar-body
+    /// mode bank. 0 = solid-body (default).
+    #[serde(default = "default_pluck_body")]
+    pub pluck_body: f32,
+    /// Pick/attack transient level, 0..1. 0 = none.
+    #[serde(default = "default_pluck_pick")]
+    pub pluck_pick: f32,
+    /// String brightness/damping, −1..1. 0 = the current loop filter;
+    /// + brightens, − darkens.
+    #[serde(default = "default_pluck_tone")]
+    pub pluck_tone: f32,
+}
+
+/// Piano tone knobs of a `seq` node (`wave: "piano"`, engine ≥ 3), flattened
+/// onto the node in JSON. Every default reproduces the concert-grand kernel
+/// bit-for-bit, so a doc that omits them renders byte-identically.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub struct PianoKnobs {
+    /// Hammer hardness: spectral brightness. 1 = concert grand; > 1
+    /// harder/brighter, < 1 softer/darker.
+    #[serde(default = "default_piano_hammer")]
+    pub piano_hammer: f32,
+    /// Hammer strike position (fraction along the string): the comb-notch
+    /// that thins the spectrum. 0.125 = grand; toward the bridge is brighter.
+    #[serde(default = "default_piano_strike")]
+    pub piano_strike: f32,
+    /// String-stiffness scale: stretches the partials sharp. 1 = grand;
+    /// > 1 = short/stiff upright jangle.
+    #[serde(default = "default_piano_inharm")]
+    pub piano_inharm: f32,
+    /// Unison detune width: the two-string beating. 1 ≈ ±1 cent (grand
+    /// shimmer); ~12 = honky-tonk warble.
+    #[serde(default = "default_piano_detune")]
+    pub piano_detune: f32,
+    /// Ring-time scale. 1 = grand; < 1 = shorter, damped; > 1 = longer.
+    #[serde(default = "default_piano_decay")]
+    pub piano_decay: f32,
+}
+
+/// Bass tone knobs of a `seq` node (`wave: "bass"`), flattened onto the node
+/// in JSON. Every default is the original voice's hard-coded constant, so
+/// omitting them renders byte-identically.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub struct BassKnobs {
+    /// Filter resting floor in Hz. Low = dark/round.
+    #[serde(default = "default_bass_cutoff")]
+    pub bass_cutoff: f32,
+    /// Fixed cutoff-sweep depth above the floor, Hz.
+    #[serde(default = "default_bass_env")]
+    pub bass_env: f32,
+    /// Velocity-scaled sweep depth, Hz (× note velocity).
+    #[serde(default = "default_bass_env_vel")]
+    pub bass_env_vel: f32,
+    /// Filter-sweep time constant, seconds — how fast the cutoff closes.
+    #[serde(default = "default_bass_decay")]
+    pub bass_decay: f32,
+    /// Pick-tick: an extra attack cutoff bump over ~8 ms, Hz. 0 = none.
+    #[serde(default = "default_bass_click")]
+    pub bass_click: f32,
+    /// Filtered-saw body level.
+    #[serde(default = "default_bass_body")]
+    pub bass_body: f32,
+    /// Sine-sub level.
+    #[serde(default = "default_bass_sub")]
+    pub bass_sub: f32,
+    /// Sub frequency ratio to the note. 1 = reinforce; 0.5 = octave down.
+    #[serde(default = "default_bass_sub_ratio")]
+    pub bass_sub_ratio: f32,
+    /// tanh saturation, 0..1. 0 = clean; > 0 = synth-bass grit.
+    #[serde(default = "default_bass_drive")]
+    pub bass_drive: f32,
+    /// Note body decay, seconds (on top of the ADSR). Longer = sustained.
+    #[serde(default = "default_bass_body_decay")]
+    pub bass_body_decay: f32,
+}
+
+/// SoundFont sampler settings of a `seq` node (`wave: "sampler"`), flattened
+/// onto the node in JSON.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Sf2Knobs {
+    /// Path to a SoundFont (.sf2) file.
+    #[serde(default)]
+    pub sf2: String,
+    /// General MIDI program number (0..=127).
+    #[serde(default)]
+    pub sf2_preset: u32,
+    /// SoundFont bank (0 = melodic, 128 = the percussion bank / GM drum map).
+    #[serde(default)]
+    pub sf2_bank: u32,
 }
