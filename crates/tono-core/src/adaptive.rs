@@ -270,6 +270,12 @@ impl AdaptiveMusic {
     pub fn stinger(&mut self, doc: &SoundDoc) {
         let p = render::render_product(doc);
         let (left, right) = p.stereo.unwrap_or_else(|| (p.mono.clone(), p.mono));
+        self.stinger_stereo(left, right);
+    }
+
+    /// Fire a stinger from pre-rendered stereo — render off the audio thread and
+    /// hand the buffers in, so a real-time caller never renders under a lock.
+    pub fn stinger_stereo(&mut self, left: Vec<f32>, right: Vec<f32>) {
         self.stingers.push(Stinger {
             left,
             right,
@@ -421,12 +427,18 @@ impl AdaptiveMusic {
     /// Fire a stinger on a beat/bar boundary. The stinger is **rendered now** (off
     /// the audio thread); only its playback is deferred to the boundary.
     pub fn stinger_at(&mut self, doc: &SoundDoc, q: Quantize) {
-        if self.fire_frame(q) <= self.position {
-            self.stinger(doc);
-            return;
-        }
         let p = render::render_product(doc);
         let (left, right) = p.stereo.unwrap_or_else(|| (p.mono.clone(), p.mono));
+        self.stinger_stereo_at(left, right, q);
+    }
+
+    /// Schedule a stinger from pre-rendered stereo — render off the audio thread
+    /// and hand the buffers in, so a real-time caller never renders under a lock.
+    pub fn stinger_stereo_at(&mut self, left: Vec<f32>, right: Vec<f32>, q: Quantize) {
+        if self.fire_frame(q) <= self.position {
+            self.stinger_stereo(left, right);
+            return;
+        }
         self.schedule(
             q,
             Action::Stinger(Stinger {
@@ -442,10 +454,17 @@ impl AdaptiveMusic {
     /// Add a horizontal section (a looping bed). The first section added starts
     /// playing immediately; switch between them with [`transition_to`](Self::transition_to).
     pub fn add_section(&mut self, name: impl Into<String>, doc: &SoundDoc) -> usize {
+        self.add_section_buffer(name, LoopBuffer::from_doc(doc))
+    }
+
+    /// Add a section from a pre-rendered [`LoopBuffer`] — render off the audio
+    /// thread and hand the buffer in, so a real-time caller never renders under a
+    /// lock (mirrors [`add_layer`](Self::add_layer)).
+    pub fn add_section_buffer(&mut self, name: impl Into<String>, buffer: LoopBuffer) -> usize {
         let index = self.sections.len();
         self.sections.push(Section {
             name: name.into(),
-            buffer: LoopBuffer::from_doc(doc),
+            buffer,
         });
         if self.current_section.is_none() {
             self.current_section = Some(index);
@@ -845,6 +864,31 @@ mod tests {
             advance(&mut m, 512);
         }
         assert_eq!(m.current_section(), Some(battle), "swapped to battle");
+    }
+
+    #[test]
+    fn buffer_and_doc_section_apis_agree() {
+        // add_section_buffer (off-lock render) must match add_section (renders
+        // internally) sample-for-sample.
+        let d = tone(220.0);
+        let via_doc = {
+            let mut m = AdaptiveMusic::new(48_000);
+            m.add_section("a", &d);
+            let mut o = vec![0.0f32; 256 * 2];
+            m.fill(&mut o);
+            o
+        };
+        let via_buf = {
+            let mut m = AdaptiveMusic::new(48_000);
+            m.add_section_buffer("a", LoopBuffer::from_doc(&d));
+            let mut o = vec![0.0f32; 256 * 2];
+            m.fill(&mut o);
+            o
+        };
+        assert_eq!(
+            via_doc, via_buf,
+            "add_section_buffer must match add_section"
+        );
     }
 
     #[test]
