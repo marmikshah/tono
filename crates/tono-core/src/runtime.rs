@@ -70,7 +70,9 @@ pub trait AudioSource {
 /// frame count as L,R pairs.
 pub fn write_interleaved(data: &mut [f32], channels: usize, stereo: &[f32]) {
     let channels = channels.max(1);
-    let frames = data.len() / channels;
+    // Never read past the source: a caller handing a short `stereo` slice must
+    // not panic on the audio thread — fill only the frames we actually have.
+    let frames = (data.len() / channels).min(stereo.len() / 2);
     for f in 0..frames {
         let (l, r) = (stereo[f * 2], stereo[f * 2 + 1]);
         let base = f * channels;
@@ -1243,6 +1245,26 @@ impl AudioSource for Mixer {
             }
         }
 
+        // 1c. Sources routed directly onto an FX bus are wet-only: sum them into
+        // that bus's accumulator so its inserts process them like any send.
+        // Without this a source added with `add_to(fx_bus, ..)` is never mixed and
+        // its play head never advances.
+        #[allow(clippy::needless_range_loop)]
+        for bi in 1..self.buses.len() {
+            if self.buses[bi].kind != BusKind::Fx {
+                continue;
+            }
+            let bus_id = self.buses[bi].id;
+            let (fl, fr) = &mut fx_in[bi];
+            for s in self.sources.iter_mut().filter(|s| s.bus.0 == bus_id) {
+                s.source.fill(scr);
+                for f in 0..frames {
+                    fl[f] += scr[f * 2] * s.gain;
+                    fr[f] += scr[f * 2 + 1] * s.gain;
+                }
+            }
+        }
+
         // 2. FX buses: run inserts on the accumulated sends, return to master.
         // `bi` indexes both self.buses and fx_in, so a range loop is clearest.
         #[allow(clippy::needless_range_loop)]
@@ -1262,14 +1284,15 @@ impl AudioSource for Mixer {
             }
         }
 
-        // 3. Master insert chain, then interleave to the output.
+        // 3. Master insert chain, then the master fader, then interleave out.
         if let Some((cl, cr)) = &mut self.buses[0].inserts {
             cl.process(&mut master_l[..frames]);
             cr.process(&mut master_r[..frames]);
         }
+        let master_gain = self.buses[0].gain;
         for f in 0..frames {
-            out[f * 2] = master_l[f];
-            out[f * 2 + 1] = master_r[f];
+            out[f * 2] = master_l[f] * master_gain;
+            out[f * 2 + 1] = master_r[f] * master_gain;
         }
 
         self.scratch = scratch;
@@ -1768,6 +1791,39 @@ mod tests {
         assert!(
             tail > 0.0,
             "reverb send should ring after the source goes silent"
+        );
+    }
+
+    #[test]
+    fn master_fader_scales_the_whole_mix() {
+        // set_bus_gain(MASTER, ..) must actually attenuate the output.
+        let mut mixer = Mixer::new_at(44_100);
+        mixer.add(Const { l: 0.4, r: 0.4 });
+        mixer.set_bus_gain(BusId::MASTER, 0.5);
+        let mut out = vec![0.0f32; 32 * 2];
+        mixer.fill(&mut out);
+        for frame in out.chunks(2) {
+            assert!(
+                (frame[0] - 0.2).abs() < 1e-6,
+                "master fader must scale output, got {}",
+                frame[0]
+            );
+        }
+    }
+
+    #[test]
+    fn source_routed_onto_an_fx_bus_still_sounds() {
+        // add_to(fx_bus, ..) used to silently drop the source; it must be mixed
+        // through the bus's inserts and returned to master.
+        let mut mixer = Mixer::new_at(44_100);
+        let rev = mixer.fx_bus("rev", vec![gain_node(0.5)]).unwrap();
+        mixer.add_to(rev, Const { l: 0.8, r: 0.8 });
+        let mut out = vec![0.0f32; 32 * 2];
+        mixer.fill(&mut out);
+        assert!(
+            peak(&out) > 0.3,
+            "a source on an fx bus must be audible through its inserts, got {}",
+            peak(&out)
         );
     }
 
