@@ -125,7 +125,7 @@ pub struct Voice {
 
 /// The old name of [`Voice`] — it collided with the live-playable
 /// [`crate::instrument::Instrument`], the crate's other `Instrument`.
-#[deprecated(since = "2.0.0", note = "renamed to `catalog::Voice`")]
+#[deprecated(since = "1.6.0", note = "renamed to `catalog::Voice`")]
 pub type Instrument = Voice;
 
 impl Voice {

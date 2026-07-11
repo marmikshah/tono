@@ -40,7 +40,7 @@ pub mod voice;
 /// Renamed to [`player`] — `stream` (the buffer-backed audition `Player`) sat
 /// one suffix away from [`streaming`] (the per-sample block renderer), and the
 /// pair was a reliable source of confusion.
-#[deprecated(since = "2.0.0", note = "renamed to `player`")]
+#[deprecated(since = "1.6.0", note = "renamed to `player`")]
 pub use player as stream;
 
 /// The workhorse names in one import: `use tono_core::prelude::*;` covers the
