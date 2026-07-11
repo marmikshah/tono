@@ -33,7 +33,8 @@ Recognizable classics rebuilt from scratch — the ▶ links play right on GitHu
 | river-flows-in-you | [▶](docs/examples/audio/river-flows-in-you.mp4) | a complete piano piece — 800 notes on the sampled grand |
 | band-demo | [▶](docs/examples/audio/band-demo.mp4) | four instruments, one groove, mixed on the stereo bus |
 
-More in [docs/examples/audio/](docs/examples/audio/) — game-ready BGM loops and ambient beds, all deterministic renders.
+More in [docs/examples/audio/](docs/examples/audio/) — game-ready BGM loops and
+ambient beds, all deterministic renders.
 
 ## What it is
 
@@ -58,7 +59,14 @@ in real time, or played as an instrument — so audio becomes something you can
 - **SoundFont sampler** — point the `sampler` voice at any free GM bank for real
   recorded instruments, still deterministic.
 
-## Use it from the command line
+## Quick start
+
+```sh
+cargo install tono       # the `tono render` CLI
+cargo add tono-core      # …or the engine as a library (games, tools)
+```
+
+Render a document and look at what came back:
 
 ```sh
 tono render docs/examples/blip.json -o out/
@@ -70,6 +78,23 @@ tono render docs/examples/blip.json -o out/
 
 That loop — emit a doc, render, read the images + stats, refine — is all a
 human *or an agent* needs to author sound by inspection.
+
+> Sampled instruments need a free General MIDI SoundFont once (FluidR3 GM,
+> GeneralUser GS): `wave: "sampler", sf2: "/path/to/gm.sf2", sf2_preset: 0`.
+
+## One engine, five faces
+
+Every face renders the same `SoundDoc` byte-identically — pick the surface that
+fits your workflow. New to the codebase? Start with the
+[architecture & getting-started guide](https://marmikshah.github.io/tono/architecture.html).
+
+| Face | What it is | Entry point |
+|---|---|---|
+| CLI | render → audio + spectrogram + stats | `tono render f.json -o out/` |
+| Rust library | the engine embedded in a game or tool | `cargo add tono-core` |
+| Python bindings | live engine + deterministic numpy renders | `make python` |
+| Pattern station | Tauri app: FL-style step grid, live audio, undo | `make desktop` |
+| Playground | hear Rust snippets through the speakers | `make play EXAMPLE=band` |
 
 ## Use it from Rust
 
@@ -140,27 +165,6 @@ buf = tono.Patch(open("impact.patch.json").read()).render(hardness=0.7)
 
 Build it with `make python` (maturin; abi3 wheels for 3.9+ build in CI).
 
-## Install
-
-```sh
-cargo add tono-core      # the engine, as a library (games, tools)
-cargo install tono       # the `tono render` CLI
-```
-
-Sampled instruments need a free General MIDI SoundFont once (FluidR3 GM,
-GeneralUser GS): `wave: "sampler", sf2: "/path/to/gm.sf2", sf2_preset: 0`.
-
-## The other faces
-
-One `SoundDoc`, rendered byte-identically by every face:
-
-- **A native pattern station** (`make desktop`) — a Tauri app with real-time
-  audio: an FL-style step grid over the catalog instruments, click-free live
-  editing, per-track faders, undo, and LUFS/spectrogram feedback per edit.
-- **A programmatic playground** (`make play`) — hear a sound, instrument, song,
-  bus chain, or adaptive-music arc from a few lines of Rust
-  (`make play EXAMPLE=buses` / `voices` / `interactive_music`).
-
 ## Determinism
 
 The real-time streaming path is byte-identical to an offline bounce (verified
@@ -169,8 +173,10 @@ document `engine` revision, so old sounds never change. A golden corpus pins
 representative renders in CI. Render the same document twice, get the same bytes
 — which is what makes audio testable, diffable, and cacheable.
 
-## More
+## Learn more
 
+- [Architecture & getting started](https://marmikshah.github.io/tono/architecture.html) —
+  the smallest unit (a node) and the ladder up to a full game soundtrack.
 - [docs/cookbook.md](docs/cookbook.md) — the `SoundDoc` DSL, node vocabulary,
   instrument table, worked recipes (validated in CI).
 - [docs/runtime.md](docs/runtime.md) — embedding the engine + parametric patches.
