@@ -29,20 +29,10 @@
 
 ## Hear it
 
-Recognizable classics rebuilt from scratch — the ▶ links play right on GitHub:
-
-| Sound | Play | The trick |
-|---|---|---|
-| retro-coin | [▶](docs/examples/audio/retro-coin.mp4) | B5 grace note into a held E6 — the interval *is* the sound |
-| jump-8bit | [▶](docs/examples/audio/jump-8bit.mp4) | exponential square sweep, gone at sustain 0 |
-| waka | [▶](docs/examples/audio/waka.mp4) | per-note pitch slides alternating up/down — the chomp drawn into the notes |
-| nokia-tune | [▶](docs/examples/audio/nokia-tune.mp4) | 13 notes of Gran Vals on the Karplus-Strong pluck |
-| deep-note | [▶](docs/examples/audio/deep-note.mp4) | supersaw tracks gliding from a scattered cluster onto a five-octave D chord |
-| river-flows-in-you | [▶](docs/examples/audio/river-flows-in-you.mp4) | a complete piano piece — 800 notes on the sampled grand |
-| band-demo | [▶](docs/examples/audio/band-demo.mp4) | four instruments, one groove, mixed on the stereo bus |
-
-More in [docs/examples/audio/](docs/examples/audio/) — game-ready BGM loops
-and ambient beds, all deterministic renders.
+**[▶ The showcase site](https://marmikshah.github.io/tono/)** — recognizable
+classics rebuilt from scratch (retro-coin, the Nokia tune, THX-style deep note,
+a complete piano piece, a full band demo), plus game-ready BGM loops and
+ambient beds. Every one a deterministic render; no samples anywhere.
 
 ## Why tono
 
