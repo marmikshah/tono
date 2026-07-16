@@ -364,11 +364,11 @@ impl Instrument {
 
     /// Mono note-off: fall back to the most-recent still-held note (gliding), or
     /// release the voice (deferred by the sustain pedal) when nothing is held.
-    fn mono_note_off(&mut self, note: Note) -> usize {
+    fn mono_note_off(&mut self, note: Note) -> bool {
         let before = self.held.len();
         self.held.retain(|&n| n != note);
         if self.held.len() == before {
-            return 0; // that note wasn't held
+            return false; // that note wasn't held
         }
         match self.held.last().copied() {
             Some(prev) => {
@@ -380,7 +380,7 @@ impl Instrument {
                         c.graph.glide_pitch(scale, coeff);
                     }
                 }
-                1
+                true
             }
             None => {
                 let sustain = self.sustain;
@@ -392,7 +392,7 @@ impl Instrument {
                         v.releasing = true;
                     }
                 }
-                1
+                true
             }
         }
     }
@@ -407,10 +407,10 @@ impl Instrument {
             .map(|(i, _)| i)
     }
 
-    /// Release the newest still-held voice of `note` (or defer it if the sustain
-    /// pedal is down); returns how many were released/deferred (0 or 1). MIDI
-    /// note-off arrives by pitch, so this is the common path.
-    pub fn note_off(&mut self, note: Note) -> usize {
+    /// Release the newest still-held voice of `note` (or defer it if the
+    /// sustain pedal is down); returns whether a voice was released/deferred.
+    /// MIDI note-off arrives by pitch, so this is the common path.
+    pub fn note_off(&mut self, note: Note) -> bool {
         if matches!(self.design.mode, PlayMode::Mono { .. }) {
             return self.mono_note_off(note);
         }
@@ -423,14 +423,14 @@ impl Instrument {
         {
             Some(v) if sustain => {
                 v.sustained = true; // hold until pedal-up
-                1
+                true
             }
             Some(v) => {
                 v.env.gate_off();
                 v.releasing = true;
-                1
+                true
             }
-            None => 0,
+            None => false,
         }
     }
 

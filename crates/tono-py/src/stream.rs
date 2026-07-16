@@ -144,7 +144,7 @@ impl Engine {
             None => device_sample_rate()?,
         };
 
-        let mut mixer = Mixer::new();
+        let mut mixer = Mixer::new(sample_rate);
         let sfx = mixer.add(CoreEngine::new(sample_rate));
         let (pump, renderer) = spsc(mixer, RING_FRAMES);
         let shared: Shared = Arc::new(Mutex::new(pump));

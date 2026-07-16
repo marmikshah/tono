@@ -254,7 +254,7 @@ fn spsc_pumps_a_mixer_across_the_seam() {
     let mut engine = Engine::new(44_100);
     let p = engine.load(&doc(1.0));
     engine.play_looping(p);
-    let mut mixer = Mixer::new();
+    let mut mixer = Mixer::new(44_100);
     mixer.add(engine);
     let (mut ctl, mut rend) = spsc(mixer, 1024);
     assert!(ctl.pump(512) > 0, "pump produced frames");
@@ -385,7 +385,7 @@ fn mixer_sums_and_reaches_in_by_type() {
     let mut e = Engine::new(44_100);
     let p = e.load(&doc(1.0));
     e.play_looping(p);
-    let mut mixer = Mixer::new();
+    let mut mixer = Mixer::new(44_100);
     let id = mixer.add(e);
     assert_eq!(mixer.source_count(), 1);
     // Reach back into the owned Engine and spawn another instance.
@@ -431,7 +431,7 @@ impl AudioSource for Burst {
 fn no_bus_mix_is_the_plain_additive_sum() {
     // With no buses/effects, the routing mixer must be byte-identical to a
     // bare additive sum (back-compat for existing callers like tono-py).
-    let mut mixer = Mixer::new();
+    let mut mixer = Mixer::new(44_100);
     mixer.add(Const { l: 0.3, r: -0.2 });
     let b = mixer.add(Const { l: 0.1, r: 0.4 });
     mixer.set_gain(b, 0.5);
@@ -446,7 +446,7 @@ fn no_bus_mix_is_the_plain_additive_sum() {
 #[test]
 fn bus_insert_scales_only_its_bus() {
     // A gain insert on one bus halves it; a source on master is untouched.
-    let mut mixer = Mixer::new_at(44_100);
+    let mut mixer = Mixer::new(44_100);
     mixer.add(Const { l: 0.4, r: 0.4 }); // master, dry
     let music = mixer.bus("music");
     mixer.add_to(music, Const { l: 0.4, r: 0.4 });
@@ -461,7 +461,7 @@ fn bus_insert_scales_only_its_bus() {
 
 #[test]
 fn reverb_send_tail_outlives_the_source() {
-    let mut mixer = Mixer::new_at(44_100);
+    let mut mixer = Mixer::new(44_100);
     let sfx = mixer.bus("sfx");
     mixer.add_to(sfx, Burst { fired: false });
     let rev = mixer.fx_bus("rev", vec![reverb_node()]).unwrap();
@@ -485,7 +485,7 @@ fn reverb_send_tail_outlives_the_source() {
 #[test]
 fn master_fader_scales_the_whole_mix() {
     // set_bus_gain(MASTER, ..) must actually attenuate the output.
-    let mut mixer = Mixer::new_at(44_100);
+    let mut mixer = Mixer::new(44_100);
     mixer.add(Const { l: 0.4, r: 0.4 });
     mixer.set_bus_gain(BusId::MASTER, 0.5);
     let mut out = vec![0.0f32; 32 * 2];
@@ -503,7 +503,7 @@ fn master_fader_scales_the_whole_mix() {
 fn source_routed_onto_an_fx_bus_still_sounds() {
     // add_to(fx_bus, ..) used to silently drop the source; it must be mixed
     // through the bus's inserts and returned to master.
-    let mut mixer = Mixer::new_at(44_100);
+    let mut mixer = Mixer::new(44_100);
     let rev = mixer.fx_bus("rev", vec![gain_node(0.5)]).unwrap();
     mixer.add_to(rev, Const { l: 0.8, r: 0.8 });
     let mut out = vec![0.0f32; 32 * 2];
@@ -518,7 +518,7 @@ fn source_routed_onto_an_fx_bus_still_sounds() {
 #[test]
 fn bus_routing_is_deterministic() {
     let build = || {
-        let mut mixer = Mixer::new_at(44_100);
+        let mut mixer = Mixer::new(44_100);
         let music = mixer.bus("music");
         mixer.add_to(music, Const { l: 0.2, r: 0.1 });
         mixer.set_bus_effects(music, vec![gain_node(0.7)]).unwrap();

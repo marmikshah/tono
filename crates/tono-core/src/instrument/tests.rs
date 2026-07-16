@@ -252,9 +252,9 @@ fn handles_and_note_off_count() {
     let h = inst.note_on(Note::C4, 0.9);
     assert!(inst.is_active(h));
     assert_eq!(inst.voice_note(h), Some(Note::C4));
-    assert_eq!(inst.note_off(Note::C4), 1);
-    assert_eq!(inst.note_off(Note::C4), 0, "already releasing");
-    assert_eq!(inst.note_off(Note(80)), 0, "no such note");
+    assert!(inst.note_off(Note::C4));
+    assert!(!inst.note_off(Note::C4), "already releasing");
+    assert!(!inst.note_off(Note(80)), "no such note");
 }
 
 #[test]
@@ -375,14 +375,14 @@ fn mono_mode_reuses_one_voice_with_last_note_priority() {
         Some(Note(64)),
         "voice follows the new note"
     );
-    assert_eq!(inst.note_off(Note(64)), 1);
+    assert!(inst.note_off(Note(64)));
     assert_eq!(
         inst.voice_note(h),
         Some(Note::C4),
         "last-note priority: falls back to still-held C4"
     );
     assert_eq!(inst.active_voices(), 1);
-    assert_eq!(inst.note_off(Note::C4), 1);
+    assert!(inst.note_off(Note::C4));
     for _ in 0..4 {
         inst.fill(&mut vec![0.0f32; 4096 * 2]); // past the release
     }

@@ -234,7 +234,10 @@ impl Engine {
     /// Resolve a named parameter of a patch to a typed handle (once, off the hot
     /// path). `None` if the patch has no such param.
     pub fn param(&self, patch: PatchId, name: &str) -> Option<ParamId> {
-        self.patches[patch.0]
+        // .get(): a PatchId is Copy and could come from another Engine — an
+        // unknown handle resolves to None, never a panic.
+        self.patches
+            .get(patch.0)?
             .params
             .iter()
             .position(|p| p.name == name)
@@ -247,7 +250,7 @@ impl Engine {
     /// Resolve a named mixer layer (a `tracks` entry) to a typed handle. `None`
     /// if the patch's graph has no track with that id.
     pub fn layer(&self, patch: PatchId, name: &str) -> Option<LayerId> {
-        match &self.patches[patch.0].doc.root {
+        match &self.patches.get(patch.0)?.doc.root {
             Node::Tracks { tracks, .. } => tracks
                 .iter()
                 .position(|t| t.id.as_deref() == Some(name))

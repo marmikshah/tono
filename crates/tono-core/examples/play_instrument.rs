@@ -61,7 +61,7 @@ fn main() {
     );
 
     // --- Host it in a mixer, and play a melody by reaching back in --------
-    let mut mixer = Mixer::new();
+    let mut mixer = Mixer::new(sr);
     let lead_id = mixer.add(inst);
     mixer.set_gain(lead_id, 0.8);
 
