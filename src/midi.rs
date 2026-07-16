@@ -509,7 +509,7 @@ mod tests {
         .unwrap();
         let dir = std::env::temp_dir().join("tono-midi-test");
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("drums.mid");
+        let path = dir.join("gm_kit.mid");
         export_midi(&doc, &path).unwrap();
 
         let (imported, _) = import_midi(&path, 4).unwrap();
