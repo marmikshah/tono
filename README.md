@@ -15,11 +15,17 @@
 </p>
 
 <p align="center">
+  <a href="https://marmikshah.github.io/tono/">Showcase</a> ·
+  <a href="https://marmikshah.github.io/tono/architecture.html">Architecture</a> ·
+  <a href="https://docs.rs/tono-core">API docs</a> ·
+  <a href="docs/cookbook.md">Cookbook</a>
+</p>
+
+<p align="center">
   <img src="docs/river-flows-spectrogram.png" width="640" alt="spectrogram of River Flows in You, 800 notes on the sampled piano">
 </p>
 
-<p align="center"><em>Everything you can hear below was rendered by this engine — no samples, no WAVs shipped.</em><br>
-<a href="https://marmikshah.github.io/tono/">Showcase site</a> · <a href="https://marmikshah.github.io/tono/architecture.html">Architecture guide</a> · <a href="https://docs.rs/tono-core">API docs</a> · <a href="docs/cookbook.md">Cookbook</a></p>
+<p align="center"><em>Everything you can hear below was rendered by this engine — no samples, no WAVs shipped.</em></p>
 
 ## Hear it
 
@@ -35,60 +41,69 @@ Recognizable classics rebuilt from scratch — the ▶ links play right on GitHu
 | river-flows-in-you | [▶](docs/examples/audio/river-flows-in-you.mp4) | a complete piano piece — 800 notes on the sampled grand |
 | band-demo | [▶](docs/examples/audio/band-demo.mp4) | four instruments, one groove, mixed on the stereo bus |
 
-More in [docs/examples/audio/](docs/examples/audio/) — game-ready BGM loops and
-ambient beds, all deterministic renders.
+More in [docs/examples/audio/](docs/examples/audio/) — game-ready BGM loops
+and ambient beds, all deterministic renders.
 
-## What it is
+## Why tono
 
-A sound in tono is a **symbolic graph** (oscillators → envelopes → filters →
-effects → mix); rendering it is a **pure function of `(graph, seed, sample_rate)`
-→ byte-identical audio**. The same document sounds identical offline, streamed
-in real time, or played as an instrument — so audio becomes something you can
-**test, diff, cache, and ship without asset files**.
-
-- **Instruments & songs** — a polyphonic sequencer, an 11-preset factory bank, a
-  GM drum kit, catalog voices (piano, bass, guitar, strings…), and a fluent
-  `Song` API that compiles to a plain document.
-- **Game runtime** — an embeddable `Engine`/`Mixer` with **live DSP buses**
-  (reverb/EQ/compressor inserts + sends), **voice management** (polyphony caps,
-  priority stealing), and **interactive music** (beat-quantized section switches,
-  intensity layers, stingers on the downbeat).
-- **Zero-asset SFX** — a `Patch` renders infinite per-instance variations from
-  named parameters (`hardness`, `size`, …). Impact sounds that scale with
-  collision force, no sample library.
-- **An ear for critique** — LUFS/peak/spectral stats plus spectrogram + waveform
-  images per render, so "does it sound right?" becomes numbers and pictures.
-- **SoundFont sampler** — point the `sampler` voice at any free GM bank for real
-  recorded instruments, still deterministic.
+- **Sounds are data.** A sound is a JSON synthesis graph; rendering it is a
+  pure function → byte-identical audio, every run. Test it, diff it, cache it,
+  ship no asset files.
+- **Zero-asset SFX.** A patch renders infinite variations from gameplay
+  parameters — impacts that scale with collision force, footsteps that vary by
+  surface. No sample library.
+- **A real game runtime.** Live DSP buses, polyphony caps with priority
+  stealing, and adaptive music that reacts on the beat — section switches,
+  intensity stems, stingers on the downbeat.
+- **An ear built in.** Every render returns a spectrogram, a waveform, and
+  LUFS/spectral stats — "does it sound right?" becomes numbers and pictures.
 
 ## Quick start
 
 ```sh
-cargo install tono       # the `tono render` CLI
-cargo add tono-core      # …or the engine as a library (games, tools)
+cargo install tono       # the CLI
+cargo add tono-core      # …or the engine as a library
 ```
-
-Render a document and look at what came back:
 
 ```sh
 tono render docs/examples/blip.json -o out/
-#   out/blip.wav          the audio            (--format wav|flac|ogg)
-#   out/blip.png          the spectrogram      ← look at this
-#   out/blip_wave.png     the waveform         ← and this
-#   out/blip.stats.json   peak / RMS / LUFS / spectral / transient analysis
+#   out/blip.wav         out/blip.png (spectrogram)
+#   out/blip_wave.png    out/blip.stats.json (peak/RMS/LUFS/spectral)
 ```
 
-That loop — emit a doc, render, read the images + stats, refine — is all a
-human *or an agent* needs to author sound by inspection.
+That loop — write a doc, render, read the images and stats, refine — is all a
+human *or an agent* needs to author sound by inspection. The
+[cookbook](docs/cookbook.md) has the full node vocabulary and recipes.
 
-> Sampled instruments need a free General MIDI SoundFont once (FluidR3 GM,
-> GeneralUser GS): `wave: "sampler", sf2: "/path/to/gm.sf2", sf2_preset: 0`.
+## In a few lines
+
+```rust
+use tono_core::adaptive::{AdaptiveMusic, Quantize};
+
+let mut music = AdaptiveMusic::new(48_000);
+music.set_tempo(120.0, 4);
+music.add_section("explore", &explore_doc);
+let battle = music.add_section("battle", &battle_doc);
+
+music.transition_to(battle, Quantize::Bar);  // combat! — swaps on the next bar
+music.set_intensity(0.9);                    // stems swell with the action
+music.stinger_at(&boss_hit, Quantize::Bar);  // lands on the downbeat
+```
+
+```python
+import tono
+
+engine = tono.Engine(48000)                  # owns the stream + render thread
+engine.drumkit().note_on(36, 1.0)            # kick
+engine.load_patch(impact_json).trigger(hardness=0.8, size=0.3)  # zero WAVs
+```
+
+More: [embedding & patches](docs/runtime.md) · [API docs](https://docs.rs/tono-core).
 
 ## One engine, five faces
 
-Every face renders the same `SoundDoc` byte-identically — pick the surface that
-fits your workflow. New to the codebase? Start with the
-[architecture & getting-started guide](https://marmikshah.github.io/tono/architecture.html).
+Every face renders the same `SoundDoc` byte-identically. New to the codebase?
+Start with the [architecture guide](https://marmikshah.github.io/tono/architecture.html).
 
 | Face | What it is | Entry point |
 |---|---|---|
@@ -98,120 +113,19 @@ fits your workflow. New to the codebase? Start with the
 | Pattern station | Tauri app: FL-style step grid, live audio, undo | `make desktop` |
 | Playground | hear Rust snippets through the speakers | `make play EXAMPLE=band` |
 
-## Use it from Rust
-
-```rust
-use tono_core::dsl::SoundDoc;
-use tono_core::render;
-
-let doc: SoundDoc = serde_json::from_str(r#"{
-    "name": "blip", "duration": 0.3, "engine": 4,
-    "root": { "type": "mul", "inputs": [
-        { "type": "sine", "freq": 880 },
-        { "type": "env", "a": 0.002, "d": 0.08, "s": 0.0, "r": 0.05 } ] }
-}"#)?;
-
-let samples: Vec<f32> = render::render(&doc); // byte-identical every run
-```
-
-### Game audio, in a few lines each
-
-```rust
-use tono_core::runtime::{Engine, Mixer, Priority};
-
-// Voice management: a budget + priorities, and a bullet-hell scene stays clean.
-let mut engine = Engine::new(48_000);
-engine.set_max_voices(32);
-engine.play_looping_prioritized(music, Priority::CRITICAL); // never stolen
-engine.play_prioritized(explosion, Priority::HIGH);
-engine.play(footstep);                                      // stolen first
-
-// Live DSP buses: inserts and sends, reusing the streaming effect kernels.
-let mut mixer = Mixer::new_at(48_000);
-let sfx = mixer.bus("sfx");
-let reverb = mixer.fx_bus("reverb", vec![reverb_node])?;
-mixer.set_send(sfx, reverb, 0.9);
-```
-
-```rust
-use tono_core::adaptive::{AdaptiveMusic, Quantize};
-
-// Interactive music: react on the beat, like a film score.
-let mut music = AdaptiveMusic::new(48_000);
-music.set_tempo(120.0, 4);
-music.add_section("explore", &explore_doc);
-let battle = music.add_section("battle", &battle_doc);
-music.transition_to(battle, Quantize::Bar);  // swaps on the next bar
-music.set_intensity(0.9);                    // stems swell with the action
-music.stinger_at(&boss_hit, Quantize::Bar);  // lands on the downbeat
-```
-
-## Use it from Python
-
-The same engine as a Python extension (`crates/tono-py`) — live procedural
-audio for Pygame / Ren'Py / Arcade, or deterministic numpy renders for anything:
-
-```python
-import tono
-
-engine = tono.Engine(48000)            # owns the output stream + render thread
-engine.drumkit().note_on(36, 1.0)      # kick — the audio thread never touches Python
-engine.instrument("warm_lead").note_on("C4", 0.9)
-
-impact = engine.load_patch(open("impact.patch.json").read())
-impact.trigger(hardness=0.8, size=0.3) # zero baked WAVs
-
-# …or pull deterministic numpy arrays (testable in CI):
-buf = tono.Patch(open("impact.patch.json").read()).render(hardness=0.7)
-```
-
-Build it with `make python` (maturin; abi3 wheels for 3.9+ build in CI).
-
-## Determinism
-
-The real-time streaming path is byte-identical to an offline bounce (verified
-by a fuzzer in CI), and byte-changing kernel upgrades are gated behind a
-document `engine` revision, so old sounds never change. A golden corpus pins
-representative renders in CI. Render the same document twice, get the same bytes
-— which is what makes audio testable, diffable, and cacheable. (Today the
-guarantee is per platform — OS math libraries differ in their last bits; a
-future engine revision with deterministic kernels makes it cross-platform.)
-
-## Learn more
-
-- [Architecture & getting started](https://marmikshah.github.io/tono/architecture.html) —
-  the smallest unit (a node) and the ladder up to a full game soundtrack.
-- [docs/cookbook.md](docs/cookbook.md) — the `SoundDoc` DSL, node vocabulary,
-  instrument table, worked recipes (validated in CI).
-- [docs/runtime.md](docs/runtime.md) — embedding the engine + parametric patches.
-- [docs/ROADMAP.md](docs/ROADMAP.md) — where 2.0 is headed.
-- `make help` — every target; `make verify` mirrors CI.
-
 ## A personal note
 
-Every line of code in tono was written by AI. I didn't write a single line
-myself — my part was direction: deciding what to build, and holding the
-project to the same practices and standards I use in the projects where I do
-still write the code.
+Every line of code in tono was written by AI — my part was direction, and
+holding the project to the standards I use where I still write the code
+myself. If tono helps you as a tool, a reference, or a kick-start, that makes
+me genuinely happy: the tokens are already spent; the least they can do is be
+useful to you too.
 
-If tono helps you in any way — as a game-audio tool, a reference, or just a
-kick-start on your own project — that makes me genuinely happy. The tokens are
-already spent; the least they can do is be useful to you too.
-
-> **⚠️ Notice — versions below 2.0.0**
->
-> I intend to follow SemVer, but be realistic about what this project is:
-> AI-generated code. Diffs are large, and every release below 2.0.0 may
-> contain breaking changes despite my best intentions.
->
-> Once the tool has proven itself, I will cut a 2.0.0 release — that is the
-> point where I start reviewing the code in detail and contributing to it
-> directly. 2.0.0 will be tagged by me, by hand — it is the one release an AI
-> agent is not allowed to cut. Until then, assume that anything below 2.0.0
-> has not been fully reviewed by me and may contain bugs or security issues I
-> haven't caught.
->
-> Use at your own risk.
+> **⚠️ Versions below 2.0.0** are AI-generated and not fully human-reviewed.
+> I intend to follow SemVer, but breaking changes may slip into 1.x releases
+> despite my best intentions. 2.0.0 — the release where I review everything
+> myself — will be tagged by me, by hand; it is the one release an AI agent is
+> not allowed to cut. Until then, use at your own risk.
 
 ## License
 
