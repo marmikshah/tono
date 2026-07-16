@@ -32,6 +32,11 @@ USAGE:
     tono midi FILE.json [-o FILE.mid]
         Export a SoundDoc's sequences to a Standard MIDI File.
 
+    tono import FILE.mid [-o DOC.json] [--steps-per-beat 4]
+        Import a Standard MIDI File as a renderable SoundDoc of seq
+        tracks (GM programs map to the built-in voices; channel 10
+        becomes the drum kit).
+
     tono --version | --help
 
 The SoundDoc format and the node vocabulary are documented in docs/cookbook.md
@@ -44,6 +49,7 @@ fn main() -> anyhow::Result<()> {
         Some("vary") => vary_cmd(&args[2..]),
         Some("schema") => schema_cmd(&args[2..]),
         Some("midi") => midi_cmd(&args[2..]),
+        Some("import") => import_cmd(&args[2..]),
         Some("--version") | Some("-V") => {
             println!("tono {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -280,6 +286,36 @@ fn midi_cmd(args: &[String]) -> anyhow::Result<()> {
         out.display(),
         summary.notes,
         summary.tracks
+    );
+    Ok(())
+}
+
+/// `tono import` — a Standard MIDI File becomes a renderable SoundDoc.
+fn import_cmd(args: &[String]) -> anyhow::Result<()> {
+    let usage = "tono import FILE.mid [-o DOC.json] [--steps-per-beat 4]";
+    let cli = Cli::parse(args, &["-o", "--out", "--steps-per-beat"])?;
+    let file = cli.input(usage)?;
+    let spb: u32 = match cli.flag(&["--steps-per-beat"]) {
+        Some(v) => v.parse().map_err(|_| {
+            anyhow::anyhow!("--steps-per-beat must be a positive integer, got '{v}'")
+        })?,
+        None => 4,
+    };
+    if spb == 0 || spb > 64 {
+        anyhow::bail!("--steps-per-beat must be in 1..=64, got {spb}");
+    }
+    let out = match cli.flag(&["-o", "--out"]) {
+        Some(o) => PathBuf::from(o),
+        None => Path::new(file).with_extension("json"),
+    };
+    let (doc, summary) = tono::midi::import_midi(Path::new(file), spb)?;
+    fs::write(&out, serde_json::to_string_pretty(&doc)?)?;
+    println!(
+        "{} — {} notes across {} tracks at {:.1} bpm",
+        out.display(),
+        summary.notes,
+        summary.tracks,
+        summary.bpm
     );
     Ok(())
 }
