@@ -49,8 +49,9 @@ Runnable version: [`examples/render_numpy.py`](examples/render_numpy.py).
 
 ## Build
 
-From the repo root: `make python` (maturin develop into the active venv), or
-`make wheel` for a release build. CI builds `abi3` wheels (one per platform,
+The bindings build from a clone of the repo (they are not on PyPI):
+`git clone https://github.com/marmikshah/tono && cd tono`, then `make python`
+(maturin develop into the active venv), or `make wheel` for a release build. CI builds `abi3` wheels (one per platform,
 CPython 3.9+) for manylinux / macOS universal2 / Windows. Built with
 [PyO3](https://pyo3.rs) + [maturin](https://github.com/PyO3/maturin). Part of
 [tono](https://github.com/marmikshah/tono).

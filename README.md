@@ -98,20 +98,26 @@ engine.drumkit().note_on(36, 1.0)            # kick
 engine.load_patch(impact_json).trigger(hardness=0.8, size=0.3)  # zero WAVs
 ```
 
-More: [embedding & patches](docs/runtime.md) · [API docs](https://docs.rs/tono-core).
+The Python extension builds from a clone of this repo (`make python`); the
+Rust crates install straight from crates.io. More:
+[embedding & patches](docs/runtime.md) · [API docs](https://docs.rs/tono-core).
 
 ## One engine, five faces
 
-Every face renders the same `SoundDoc` byte-identically. New to the codebase?
-Start with the [architecture guide](https://marmikshah.github.io/tono/architecture.html).
+Every face renders the same `SoundDoc` byte-identically. Install the first two
+from crates.io; the rest live in this repo and build from a clone.
 
-| Face | What it is | Entry point |
+| Face | What it is | Get it |
 |---|---|---|
-| CLI | render → audio + spectrogram + stats | `tono render f.json -o out/` |
+| CLI | render → audio + spectrogram + stats | `cargo install tono` |
 | Rust library | the engine embedded in a game or tool | `cargo add tono-core` |
-| Python bindings | live engine + deterministic numpy renders | `make python` |
-| Pattern station | Tauri app: FL-style step grid, live audio, undo | `make desktop` |
-| Playground | hear Rust snippets through the speakers | `make play EXAMPLE=band` |
+| Python bindings | live engine + deterministic numpy renders | clone → `make python` |
+| Pattern station | Tauri app: FL-style step grid, live audio, undo | clone → `make desktop` |
+| Playground | hear Rust snippets through the speakers | clone → `make play EXAMPLE=band` |
+
+Hacking on the engine itself? The
+[architecture guide](https://marmikshah.github.io/tono/architecture.html) is
+the codebase tour.
 
 ## A personal note
 
