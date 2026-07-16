@@ -1,11 +1,47 @@
 //! Tono core — the pure, headless audio engine.
 //!
 //! This crate is the deterministic heart of tono with **no I/O and no
-//! transport**: the symbolic synthesis-graph data model ([`dsl`]), the DSP
-//! primitives ([`dsp`]), the renderer ([`render`]), the analysis/critique
-//! feedback ([`analysis`], [`review`]), and the pure graph transforms
-//! ([`edit`], [`vary`]). Rendering is a pure function of
-//! `(graph, seed, sample_rate)` → byte-identical audio.
+//! transport**. Rendering is a pure function of `(graph, seed, sample_rate)`
+//! → byte-identical audio, so a sound is data you can test, diff, and cache:
+//!
+//! ```
+//! use tono_core::dsl::SoundDoc;
+//! use tono_core::render;
+//!
+//! let doc: SoundDoc = serde_json::from_str(r#"{
+//!     "name": "blip", "duration": 0.3, "engine": 4,
+//!     "root": { "type": "mul", "inputs": [
+//!         { "type": "sine", "freq": 880 },
+//!         { "type": "env", "a": 0.002, "d": 0.08, "s": 0.0, "r": 0.05 } ] }
+//! }"#).unwrap();
+//!
+//! let a = render::render(&doc);
+//! let b = render::render(&doc);
+//! assert_eq!(a, b); // byte-identical every run
+//! ```
+//!
+//! # The map
+//!
+//! Authoring: [`dsl`] (the `SoundDoc` graph + validation) · [`patch`]
+//! (templates with named parameters) · [`edit`] (path-addressed edits) ·
+//! [`vary`] (deterministic variations).
+//!
+//! Rendering: [`render`] (the offline bounce) · [`streaming`] (real-time,
+//! byte-identical to the bounce) · [`dsp`] (RNG, loudness, limiting) ·
+//! [`player`] (buffer playback).
+//!
+//! Playing live: [`runtime`] (the [`runtime::AudioSource`] seam, `Engine`,
+//! `Mixer`, the wait-free split) · [`instrument`] (polyphonic playable
+//! voices) · [`drumkit`] · [`adaptive`] (intensity stems, quantized
+//! transitions, stingers).
+//!
+//! Composing: [`song`] (tracks/patterns/arrangement, compiles to a plain
+//! `SoundDoc`) · [`catalog`] + [`presets`] (ready-made voices).
+//!
+//! Feedback: [`analysis`] (stats + spectrogram/waveform images) · [`review`]
+//! (grade a sound against its archetype).
+//!
+//! # Features and the shell
 //!
 //! The lean build is pure compute (serde only); the heavy deps are optional,
 //! behind features (both on by default): `analysis` pulls in rustfft + image for
@@ -13,6 +49,12 @@
 //! sampler instrument. So the same core compiles to a native binary, a WASM
 //! playground, or a lean in-engine runtime. The `tono render` CLI, audio-file
 //! encoders, and MIDI export live in the `tono` shell crate that depends on this one.
+//!
+//! Longer-form guides: the [cookbook] (the node vocabulary + recipes) and the
+//! [architecture guide] (how the pieces compose, bottom-up).
+//!
+//! [cookbook]: https://github.com/marmikshah/tono/blob/master/docs/cookbook.md
+//! [architecture guide]: https://marmikshah.github.io/tono/architecture.html
 
 #![warn(missing_docs)]
 
