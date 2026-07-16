@@ -13,6 +13,7 @@ mod validate;
 
 pub use node::{BassKnobs, FmKnobs, Node, PianoKnobs, PluckKnobs, Sf2Knobs};
 pub use tracks::{AutoLane, AutoPoint, AutoTarget, Track};
+pub use validate::ValidateError;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
