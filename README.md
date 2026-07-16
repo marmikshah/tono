@@ -66,7 +66,14 @@ cargo add tono-core      # …or the engine as a library
 ```
 
 ```sh
-tono render docs/examples/blip.json -o out/
+cat > blip.json <<'EOF'
+{ "name": "blip", "duration": 0.3, "engine": 4,
+  "root": { "type": "mul", "inputs": [
+    { "type": "sine", "freq": 880 },
+    { "type": "env", "a": 0.002, "d": 0.08, "s": 0.0, "r": 0.05 } ] } }
+EOF
+
+tono render blip.json -o out/
 #   out/blip.wav         out/blip.png (spectrogram)
 #   out/blip_wave.png    out/blip.stats.json (peak/RMS/LUFS/spectral)
 ```
