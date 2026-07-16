@@ -177,6 +177,199 @@ fn representative_hz(m: &Modulator) -> f32 {
     }
 }
 
+/// What [`import_midi`] read.
+pub struct ImportSummary {
+    /// tono tracks produced (one per MIDI track with notes).
+    pub tracks: usize,
+    /// Total notes imported.
+    pub notes: usize,
+    /// Tempo used, beats per minute.
+    pub bpm: f32,
+}
+
+/// One decoded MIDI note, in absolute ticks.
+struct RawNote {
+    tick_on: u64,
+    tick_off: u64,
+    key: u8,
+    velocity: u8,
+    /// GM percussion channel (10) — becomes the `kit` voice.
+    drums: bool,
+    /// GM program active at note-on, for voice mapping.
+    program: u8,
+}
+
+/// Read a Standard MIDI File into a renderable `tracks` [`SoundDoc`] of `seq`
+/// nodes (plus an [`ImportSummary`]) — the inverse of [`export_midi`],
+/// quantized onto the seq grid.
+///
+/// Mapping: the first tempo event sets one global `bpm` (later tempo changes
+/// are retimed to it); channel 10 becomes the `kit` voice; melodic tracks map
+/// their GM program family onto the closest built-in voice (piano / epiano /
+/// organ / strings / bass / pluck, anything else `square`); velocities become
+/// note `gain`s. Timing quantizes to `steps_per_beat` grid steps.
+pub fn import_midi(src: &Path, steps_per_beat: u32) -> Result<(SoundDoc, ImportSummary)> {
+    let bytes = std::fs::read(src)?;
+    let smf = Smf::parse(&bytes)?;
+    let ppq = match smf.header.timing {
+        Timing::Metrical(t) => u16::from(t) as u64,
+        Timing::Timecode(..) => {
+            anyhow::bail!(
+                "SMPTE-timecode MIDI files are not supported — re-export with metrical (PPQ) timing"
+            )
+        }
+    };
+    let spb = steps_per_beat.max(1);
+
+    // First tempo event anywhere in the file wins (format-1 files keep the
+    // tempo map on track 0); default 120 bpm per the MIDI spec.
+    let mut us_per_qn = 500_000u32;
+    'tempo: for track in &smf.tracks {
+        let mut at = 0u64;
+        for ev in track {
+            at += u32::from(ev.delta) as u64;
+            if let TrackEventKind::Meta(MetaMessage::Tempo(us)) = ev.kind {
+                us_per_qn = u32::from(us);
+                break 'tempo;
+            }
+            // Only accept the tempo that is in force from the top.
+            if at > 0 {
+                break;
+            }
+        }
+    }
+    let bpm = 60_000_000.0 / us_per_qn.max(1) as f32;
+
+    // Decode each MIDI track's notes (running program changes per channel).
+    let mut song_tracks: Vec<Vec<RawNote>> = Vec::new();
+    for track in &smf.tracks {
+        let mut at = 0u64;
+        let mut program = [0u8; 16];
+        // (channel, key) → (tick_on, velocity, program) for open notes.
+        let mut open: std::collections::HashMap<(u8, u8), (u64, u8, u8)> =
+            std::collections::HashMap::new();
+        let mut notes: Vec<RawNote> = Vec::new();
+        for ev in track {
+            at += u32::from(ev.delta) as u64;
+            let TrackEventKind::Midi { channel, message } = ev.kind else {
+                continue;
+            };
+            let ch = u8::from(channel);
+            match message {
+                MidiMessage::ProgramChange { program: p } => program[ch as usize] = u8::from(p),
+                MidiMessage::NoteOn { key, vel } if u8::from(vel) > 0 => {
+                    open.insert(
+                        (ch, u8::from(key)),
+                        (at, u8::from(vel), program[ch as usize]),
+                    );
+                }
+                // NoteOn vel 0 is the wire-efficient NoteOff.
+                MidiMessage::NoteOn { key, .. } | MidiMessage::NoteOff { key, .. } => {
+                    if let Some((tick_on, velocity, prog)) = open.remove(&(ch, u8::from(key))) {
+                        notes.push(RawNote {
+                            tick_on,
+                            tick_off: at,
+                            key: u8::from(key),
+                            velocity,
+                            drums: ch == 9,
+                            program: prog,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !notes.is_empty() {
+            song_tracks.push(notes);
+        }
+    }
+    if song_tracks.is_empty() {
+        anyhow::bail!("no notes found in {}", src.display());
+    }
+
+    // Quantize onto the seq grid and build one seq node per MIDI track.
+    let tick_to_step = |tick: u64| -> u32 { ((tick * spb as u64 + ppq / 2) / ppq.max(1)) as u32 };
+    let mut tracks_json = Vec::new();
+    let mut total_notes = 0usize;
+    let mut end_step = 0u32;
+    for (i, notes) in song_tracks.iter().enumerate() {
+        let drums = notes.iter().any(|n| n.drums);
+        let wave = if drums {
+            "kit"
+        } else {
+            voice_for_program(notes[0].program)
+        };
+        let mut seq_notes = Vec::with_capacity(notes.len());
+        for n in notes {
+            let step = tick_to_step(n.tick_on);
+            let len = (tick_to_step(n.tick_off).saturating_sub(step)).max(1);
+            end_step = end_step.max(step + len);
+            total_notes += 1;
+            seq_notes.push(serde_json::json!({
+                "step": step,
+                "len": len,
+                "pitch": format!("midi:{}", n.key),
+                "gain": (n.velocity as f32 / 127.0).clamp(0.05, 1.0),
+            }));
+        }
+        // Sustained-friendly default envelope; the kit ignores pitch/holds.
+        let env = if drums {
+            serde_json::json!({ "s": 1.0 })
+        } else {
+            serde_json::json!({ "a": 0.005, "s": 0.8, "r": 0.15 })
+        };
+        tracks_json.push(serde_json::json!({
+            "id": format!("track_{i}"),
+            "node": {
+                "type": "seq",
+                "bpm": bpm,
+                "steps_per_beat": spb,
+                "wave": wave,
+                "env": env,
+                "notes": seq_notes,
+            }
+        }));
+    }
+
+    let tracks_json_len = tracks_json.len();
+    let sec_per_step = 60.0 / (bpm.max(1.0) * spb as f32);
+    let duration = end_step as f32 * sec_per_step + 2.0; // release/reverb tail
+    let name = src
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("imported")
+        .to_string();
+    let doc: SoundDoc = serde_json::from_value(serde_json::json!({
+        "name": name,
+        "duration": duration,
+        "engine": tono_core::dsl::ENGINE_VERSION,
+        "root": { "type": "tracks", "tracks": tracks_json },
+    }))?;
+    doc.validate().map_err(|e| anyhow::anyhow!(e))?;
+    Ok((
+        doc,
+        ImportSummary {
+            tracks: tracks_json_len,
+            notes: total_notes,
+            bpm,
+        },
+    ))
+}
+
+/// Map a GM program number onto the closest built-in seq voice.
+fn voice_for_program(program: u8) -> &'static str {
+    match program {
+        4..=5 => "epiano",    // electric pianos
+        0..=7 => "piano",     // the acoustic rest of the piano family
+        8..=15 => "fm",       // chromatic percussion → FM mallets
+        16..=23 => "organ",   // organs
+        24..=31 => "pluck",   // guitars
+        32..=39 => "bass",    // basses
+        40..=55 => "strings", // strings / ensemble / choir
+        _ => "square",        // honest chiptune fallback
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,5 +450,81 @@ mod tests {
         )
         .unwrap();
         assert!(export_midi(&doc, std::path::Path::new("/tmp/none.mid")).is_err());
+    }
+
+    #[test]
+    fn import_round_trips_an_exported_file() {
+        let doc: SoundDoc = serde_json::from_str(
+            r#"{ "name":"rt", "duration":2.0, "root":{ "type":"seq", "bpm":120,
+              "steps_per_beat":4, "wave":"square", "env":{"a":0.005,"d":0.1,"s":0.3,"r":0.05},
+              "notes":[ {"step":0,"len":2,"pitch":"C4","gain":0.9},
+                        {"step":2,"len":2,"pitch":"E4","gain":0.5},
+                        {"step":4,"len":4,"pitch":"G4","gain":1.0} ] } }"#,
+        )
+        .unwrap();
+        let dir = std::env::temp_dir().join("tono-midi-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rt.mid");
+        export_midi(&doc, &path).unwrap();
+
+        let (imported, summary) = import_midi(&path, 4).unwrap();
+        assert_eq!(summary.tracks, 1);
+        assert_eq!(summary.notes, 3);
+        assert!((summary.bpm - 120.0).abs() < 0.01, "tempo survives");
+        imported.validate().expect("imported doc is renderable");
+
+        // The notes come back on the same grid with the same pitches.
+        let Node::Tracks { tracks, .. } = &imported.root else {
+            panic!("tracks root");
+        };
+        let Node::Seq { notes, .. } = &tracks[0].node else {
+            panic!("seq node");
+        };
+        let got: Vec<(u32, u32, String)> = notes
+            .iter()
+            .map(|n| {
+                let Value::Note(p) = &n.pitch else { panic!() };
+                (n.step, n.len, p.clone())
+            })
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (0, 2, "midi:60".into()),
+                (2, 2, "midi:64".into()),
+                (4, 4, "midi:67".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn import_maps_gm_percussion_to_the_kit() {
+        // A one-track file on channel 10 must come back as the kit voice.
+        let doc: SoundDoc = serde_json::from_str(
+            r#"{ "name":"drums", "duration":2.0, "root":{ "type":"seq", "bpm":100,
+              "steps_per_beat":4, "wave":"kit", "env":{"s":1},
+              "notes":[ {"step":0,"len":2,"pitch":"midi:36"},
+                        {"step":4,"len":2,"pitch":"midi:38"} ] } }"#,
+        )
+        .unwrap();
+        let dir = std::env::temp_dir().join("tono-midi-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("gm_kit.mid");
+        export_midi(&doc, &path).unwrap();
+
+        let (imported, _) = import_midi(&path, 4).unwrap();
+        let Node::Tracks { tracks, .. } = &imported.root else {
+            panic!("tracks root");
+        };
+        assert!(
+            matches!(
+                &tracks[0].node,
+                Node::Seq {
+                    wave: SeqWave::Kit,
+                    ..
+                }
+            ),
+            "channel 10 → kit"
+        );
     }
 }

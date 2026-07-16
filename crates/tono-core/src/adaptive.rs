@@ -6,14 +6,14 @@
 //! onto the same real-time path as everything else and stays deterministic.
 //!
 //! ```
-//! use tono_core::adaptive::{AdaptiveMusic, LoopBuffer};
+//! use tono_core::adaptive::AdaptiveMusic;
 //! use tono_core::dsl::SoundDoc;
 //!
 //! # fn demo(drums: &SoundDoc, lead: &SoundDoc) {
 //! let mut music = AdaptiveMusic::new(48_000);
-//! music.add_layer(LoopBuffer::from_doc(drums), 0.0); // always playing
-//! music.add_layer(LoopBuffer::from_doc(lead), 0.6);  // joins when it gets intense
-//! music.set_intensity(0.8);                          // combat! the lead swells in
+//! music.add_layer_doc(drums, 0.0); // always playing (rendered at 48 kHz)
+//! music.add_layer_doc(lead, 0.6);  // joins when it gets intense
+//! music.set_intensity(0.8);        // combat! the lead swells in
 //! # }
 //! ```
 
@@ -29,12 +29,22 @@ pub struct LoopBuffer {
 }
 
 impl LoopBuffer {
-    /// Render `doc` once and loop it. (For a click-free loop, author the doc with
-    /// a `loop` playback so its tail meets its head, or trim it with
-    /// [`from_stereo`](Self::from_stereo).)
+    /// Render `doc` once **at the doc's own `sample_rate`** and loop it. If
+    /// the buffer will play through an [`AdaptiveMusic`]/engine running at a
+    /// different rate, use [`from_doc_at`](Self::from_doc_at) — a rate
+    /// mismatch plays back silently detuned. (For a click-free loop, author
+    /// the doc with a `loop` playback so its tail meets its head, or trim it
+    /// with [`from_stereo`](Self::from_stereo).)
     pub fn from_doc(doc: &SoundDoc) -> Self {
-        let (left, right) = render_stereo(doc);
+        let (left, right) = render_stereo_or_dup(doc);
         LoopBuffer::from_stereo(left, right)
+    }
+
+    /// [`from_doc`](Self::from_doc) rendered at an explicit `sample_rate` —
+    /// the safe constructor when the playback rate is the engine's, not the
+    /// doc's.
+    pub fn from_doc_at(doc: &SoundDoc, sample_rate: u32) -> Self {
+        LoopBuffer::from_doc(&doc_at(doc, sample_rate))
     }
 
     /// Loop pre-rendered stereo samples — trim them to a musical bar length for a
@@ -56,7 +66,7 @@ impl LoopBuffer {
     /// loop grid so their layered cross-fades stay sample-aligned (never drift
     /// phase). See [`AdaptiveMusic::add_stem_set`].
     pub fn from_doc_len(doc: &SoundDoc, frames: usize) -> Self {
-        let (mut left, mut right) = render_stereo(doc);
+        let (mut left, mut right) = render_stereo_or_dup(doc);
         left.resize(frames, 0.0);
         right.resize(frames, 0.0);
         LoopBuffer {
@@ -65,6 +75,22 @@ impl LoopBuffer {
             pos: 0,
         }
     }
+
+    /// [`from_doc_len`](Self::from_doc_len) rendered at an explicit
+    /// `sample_rate` (see [`from_doc_at`](Self::from_doc_at)).
+    pub fn from_doc_len_at(doc: &SoundDoc, frames: usize, sample_rate: u32) -> Self {
+        LoopBuffer::from_doc_len(&doc_at(doc, sample_rate), frames)
+    }
+}
+
+/// The doc re-stamped to render at `sample_rate` — how every doc-taking
+/// [`AdaptiveMusic`] entry point pins rendering to the engine's rate (the same
+/// override `Engine::new_player` applies), so a doc left at the default
+/// 44 100 Hz can't play detuned through a 48 kHz engine.
+fn doc_at(doc: &SoundDoc, sample_rate: u32) -> SoundDoc {
+    let mut doc = doc.clone();
+    doc.sample_rate = sample_rate;
+    doc
 }
 
 impl AudioSource for LoopBuffer {
@@ -129,9 +155,11 @@ const DUCK_ATTACK_SECS: f32 = 0.002;
 /// instead of asymptoting forever.
 const DUCK_SNAP_EPSILON: f32 = 1e-4;
 
-/// Render a doc once and return its stereo pair (mono duplicated when the doc
-/// has no stereo treatment).
-fn render_stereo(doc: &SoundDoc) -> (Vec<f32>, Vec<f32>) {
+/// Render a doc once and return its stereo pair — mono is **duplicated**, the
+/// doc's Haas/Wide `stereo` treatment is NOT applied (unlike
+/// `player::render_stereo`, which stereoizes; unifying the two would change
+/// adaptive playback bytes for treated docs, so the divergence is deliberate).
+fn render_stereo_or_dup(doc: &SoundDoc) -> (Vec<f32>, Vec<f32>) {
     let p = render::render_product(doc);
     p.stereo.unwrap_or_else(|| (p.mono.clone(), p.mono))
 }
@@ -268,7 +296,15 @@ impl AdaptiveMusic {
 
     /// Add a stem that fades to full volume once `intensity >= fade_in_at`
     /// (`0.0` = always on). It plays silently underneath until then.
-    pub fn add_layer(&mut self, source: impl AudioSource + Send + 'static, fade_in_at: f32) {
+    /// Returns the layer's index (for [`layer_gain`](Self::layer_gain)).
+    pub fn add_layer(
+        &mut self,
+        source: impl AudioSource + Send + 'static,
+        fade_in_at: f32,
+    ) -> usize {
+        // Clamp like set_intensity does — intensity can never exceed 1, so an
+        // unclamped threshold above it would be a layer that never plays.
+        let fade_in_at = fade_in_at.clamp(0.0, 1.0);
         let on = self.intensity >= fade_in_at;
         self.layers.push(Layer {
             source: Box::new(source),
@@ -276,6 +312,13 @@ impl AdaptiveMusic {
             gain: if on { 1.0 } else { 0.0 },
             target: if on { 1.0 } else { 0.0 },
         });
+        self.layers.len() - 1
+    }
+
+    /// Add a looping stem rendered from `doc` **at the engine's sample rate**
+    /// — the doc-taking convenience over [`add_layer`](Self::add_layer).
+    pub fn add_layer_doc(&mut self, doc: &SoundDoc, fade_in_at: f32) -> usize {
+        self.add_layer(LoopBuffer::from_doc_at(doc, self.sample_rate), fade_in_at)
     }
 
     /// Add a **phase-locked stem set**: every stem is rendered and forced onto
@@ -301,17 +344,23 @@ impl AdaptiveMusic {
         };
         if let Some(grid) = tempo_grid {
             for (doc, fade_in_at) in stems {
-                self.add_layer(LoopBuffer::from_doc_len(doc, grid), *fade_in_at);
+                self.add_layer(
+                    LoopBuffer::from_doc_len_at(doc, grid, self.sample_rate),
+                    *fade_in_at,
+                );
             }
             return grid;
         }
         // No tempo: the first stem's natural length is the grid — render it
         // once and reuse the buffers rather than rendering again for length.
-        let (left, right) = render_stereo(first_doc);
+        let (left, right) = render_stereo_or_dup(&doc_at(first_doc, self.sample_rate));
         let grid = left.len();
         self.add_layer(LoopBuffer::from_stereo(left, right), *first_fade);
         for (doc, fade_in_at) in rest {
-            self.add_layer(LoopBuffer::from_doc_len(doc, grid), *fade_in_at);
+            self.add_layer(
+                LoopBuffer::from_doc_len_at(doc, grid, self.sample_rate),
+                *fade_in_at,
+            );
         }
         grid
     }
@@ -330,7 +379,7 @@ impl AdaptiveMusic {
 
     /// Fire a one-shot stinger over the bed (rendered now, mixed until it ends).
     pub fn stinger(&mut self, doc: &SoundDoc) {
-        let (left, right) = render_stereo(doc);
+        let (left, right) = render_stereo_or_dup(&doc_at(doc, self.sample_rate));
         self.stinger_stereo(left, right);
     }
 
@@ -443,8 +492,9 @@ impl AdaptiveMusic {
         self.beats() / self.beats_per_bar as f64
     }
 
-    /// The frame at which quantization `q` next lands. Returns the current frame
-    /// when already on the boundary or when no tempo is set (→ immediate).
+    /// The frame at which quantization `q` next lands — the next boundary
+    /// strictly ahead (on a boundary, "next bar" means the following one).
+    /// Returns the current frame only for `Immediate` or when no tempo is set.
     fn fire_frame(&self, q: Quantize) -> u64 {
         let period = match q {
             Quantize::Immediate => return self.position,
@@ -500,7 +550,7 @@ impl AdaptiveMusic {
     /// Fire a stinger on a beat/bar boundary. The stinger is **rendered now** (off
     /// the audio thread); only its playback is deferred to the boundary.
     pub fn stinger_at(&mut self, doc: &SoundDoc, q: Quantize) {
-        let (left, right) = render_stereo(doc);
+        let (left, right) = render_stereo_or_dup(&doc_at(doc, self.sample_rate));
         self.stinger_stereo_at(left, right, q);
     }
 
@@ -515,7 +565,7 @@ impl AdaptiveMusic {
     /// Add a horizontal section (a looping bed). The first section added starts
     /// playing immediately; switch between them with [`transition_to`](Self::transition_to).
     pub fn add_section(&mut self, name: impl Into<String>, doc: &SoundDoc) -> usize {
-        self.add_section_buffer(name, LoopBuffer::from_doc(doc))
+        self.add_section_buffer(name, LoopBuffer::from_doc_at(doc, self.sample_rate))
     }
 
     /// Add a section from a pre-rendered [`LoopBuffer`] — render off the audio
@@ -922,7 +972,8 @@ mod tests {
     #[test]
     fn buffer_and_doc_section_apis_agree() {
         // add_section_buffer (off-lock render) must match add_section (renders
-        // internally) sample-for-sample.
+        // internally) sample-for-sample. add_section renders at the ENGINE's
+        // rate, so the off-lock caller uses from_doc_at with the same rate.
         let d = tone(220.0);
         let via_doc = {
             let mut m = AdaptiveMusic::new(48_000);
@@ -933,7 +984,7 @@ mod tests {
         };
         let via_buf = {
             let mut m = AdaptiveMusic::new(48_000);
-            m.add_section_buffer("a", LoopBuffer::from_doc(&d));
+            m.add_section_buffer("a", LoopBuffer::from_doc_at(&d, 48_000));
             let mut o = vec![0.0f32; 256 * 2];
             m.fill(&mut o);
             o
@@ -942,6 +993,32 @@ mod tests {
             via_doc, via_buf,
             "add_section_buffer must match add_section"
         );
+    }
+
+    #[test]
+    fn doc_apis_render_at_the_engine_rate() {
+        // A doc left at the default 44_100 must render at the ENGINE's rate
+        // through every doc-taking entry point — the old behavior played it
+        // detuned ~9% through a 48 kHz engine.
+        let d = tone(220.0); // tone() leaves doc.sample_rate at the default
+        assert_ne!(d.sample_rate, 48_000, "test needs a mismatched doc");
+
+        let mut at_engine_rate = AdaptiveMusic::new(48_000);
+        at_engine_rate.add_layer_doc(&d, 0.0);
+        let mut a = vec![0.0f32; 512];
+        at_engine_rate.fill(&mut a);
+
+        let mut explicit = AdaptiveMusic::new(48_000);
+        explicit.add_layer(LoopBuffer::from_doc_at(&d, 48_000), 0.0);
+        let mut b = vec![0.0f32; 512];
+        explicit.fill(&mut b);
+        assert_eq!(a, b, "add_layer_doc == from_doc_at at the engine rate");
+
+        let mut wrong = AdaptiveMusic::new(48_000);
+        wrong.add_layer(LoopBuffer::from_doc(&d), 0.0);
+        let mut c = vec![0.0f32; 512];
+        wrong.fill(&mut c);
+        assert_ne!(a, c, "the doc-rate render is a different (detuned) signal");
     }
 
     #[test]
