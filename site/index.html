@@ -98,19 +98,19 @@
   <img class="spectro" src="img/river-flows-spectrogram.png" alt="spectrogram of River Flows in You — 800 notes on the sampled piano">
   <p class="caption">The spectrogram the engine drew of its own render — analysis is built in.</p>
   <div class="tracks">
-    <div class="track"><b>retro-coin</b><audio controls preload="none" src="audio/retro-coin.mp4"></audio>
+    <div class="track" id="retro-coin"><b>retro-coin</b><audio controls preload="none" src="audio/retro-coin.mp4"></audio>
       <span class="how">B5 grace note into a held E6 — the interval <em>is</em> the sound</span></div>
-    <div class="track"><b>jump-8bit</b><audio controls preload="none" src="audio/jump-8bit.mp4"></audio>
+    <div class="track" id="jump-8bit"><b>jump-8bit</b><audio controls preload="none" src="audio/jump-8bit.mp4"></audio>
       <span class="how">exponential square sweep, gone at sustain 0</span></div>
-    <div class="track"><b>waka</b><audio controls preload="none" src="audio/waka.mp4"></audio>
+    <div class="track" id="waka"><b>waka</b><audio controls preload="none" src="audio/waka.mp4"></audio>
       <span class="how">per-note pitch slides alternating up/down — the chomp drawn into the notes</span></div>
-    <div class="track"><b>nokia-tune</b><audio controls preload="none" src="audio/nokia-tune.mp4"></audio>
+    <div class="track" id="nokia-tune"><b>nokia-tune</b><audio controls preload="none" src="audio/nokia-tune.mp4"></audio>
       <span class="how">13 notes of Gran Vals on the Karplus-Strong pluck</span></div>
-    <div class="track"><b>deep-note</b><audio controls preload="none" src="audio/deep-note.mp4"></audio>
+    <div class="track" id="deep-note"><b>deep-note</b><audio controls preload="none" src="audio/deep-note.mp4"></audio>
       <span class="how">supersaw tracks gliding from a scattered cluster onto a five-octave D chord</span></div>
-    <div class="track"><b>river-flows-in-you</b><audio controls preload="none" src="audio/river-flows-in-you.mp4"></audio>
+    <div class="track" id="river-flows-in-you"><b>river-flows-in-you</b><audio controls preload="none" src="audio/river-flows-in-you.mp4"></audio>
       <span class="how">a complete piano piece — 800 notes on the sampled grand</span></div>
-    <div class="track"><b>band-demo</b><audio controls preload="none" src="audio/band-demo.mp4"></audio>
+    <div class="track" id="band-demo"><b>band-demo</b><audio controls preload="none" src="audio/band-demo.mp4"></audio>
       <span class="how">four instruments, one groove, mixed on the stereo bus</span></div>
   </div>
 </section>
@@ -162,11 +162,25 @@ impact.trigger(hardness=0.8, size=0.3)  <span class="c"># zero WAVs</span></pre>
   <p class="caption">The CLI closes the loop: <code>tono render doc.json</code> → audio + spectrogram + waveform + LUFS stats. Author sound by inspection.</p>
 </section>
 
+<section id="start">
+  <h2>Get started</h2>
+  <p class="lede">Two commands to the first render; the loop is: write a doc, render, look, refine.</p>
+<pre><span class="c"># the CLI</span>
+cargo install tono
+tono render blip.json -o out/   <span class="c"># → wav + spectrogram + waveform + LUFS stats</span>
+
+<span class="c"># the engine, in a game or tool</span>
+cargo add tono-core</pre>
+  <p class="caption">New to the codebase? Read the <a href="architecture.html">architecture &amp; getting-started guide</a> —
+  the smallest unit (a node) and the ladder up to a full game soundtrack.</p>
+</section>
+
 </main>
 
 <footer>
-  <a href="https://github.com/marmikshah/tono">github.com/marmikshah/tono</a> · MIT ·
-  built with <a href="https://github.com/marmikshah/tono/blob/master/docs/ROADMAP.md">a roadmap</a>
+  <a href="https://github.com/marmikshah/tono">github.com/marmikshah/tono</a> ·
+  <a href="architecture.html">architecture</a> ·
+  <a href="https://docs.rs/tono-core">docs.rs</a> · MIT
 </footer>
 
 </body>

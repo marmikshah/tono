@@ -16,6 +16,14 @@ thing → re-render.
 3. Look at the two images, read the stats, edit one field in the JSON,
    re-render. Repeat.
 
+**Contents:** [first sounds](#laser-zap--descending-square--noise-transient) ·
+[reading the feedback](#reading-the-feedback) · [judging a sound](#judging-a-sound--targets-not-vibes) ·
+[music with `seq`](#music-with-seq) · [more timbres](#more-timbres) ·
+[pro techniques](#pro-techniques) · [editing by path](#editing-by-path) ·
+[layers](#building-sounds-in-layers) · [loudness](#level-matched-click-safe-output) ·
+[loops & BGM](#loops-ambience--bgm) · [engine revisions](#engine-revisions-fidelity-vs-byte-stability) ·
+[determinism](#determinism)
+
 `root` is a single node; every node is a mono signal. Multiply a source by an
 envelope (`mul`), layer sources with `mix`, and pipe a source through processors
 with `chain`. Any numeric param is a constant or a modulator
@@ -110,7 +118,7 @@ programmatically if you want the checklist automated in Rust.)
 - **Brightness:** read `spectral_centroid_hz` from the stats — higher = brighter.
   Tame harshness with a `lowpass`; add bite with a `highpass`.
 - **Crunch/lo-fi:** `chain` a source into `bitcrush` (low `bits`) or `downsample`.
-- **Vibrato:** put an `lfo` on a source's `freq`. **Tremolo:** `mul` by an `lfo`-driven `gain`... or just an `env`.
+- **Vibrato:** put an `lfo` on a source's `freq`. **Tremolo:** `mul` by an `lfo`-driven `gain` … or just an `env`.
 - Iterate in small steps: render, read the stats, change one field, render again.
   `tono_core::vary::mutate(doc, amount, seed)` (a Rust API) nudges a graph toward
   a variant with a small `amount`.
@@ -432,7 +440,11 @@ output will change; that's the point); to keep a legacy sound bit-exact, leave
 ## Determinism
 
 Rendering is a pure function of `(graph, seed, sample_rate)` — a doc renders
-**byte-identical** every time, on any machine. The doc's top-level `seed` drives
+**byte-identical** every time. (Today the guarantee is per platform: the DSP
+calls the OS math library for `sin`/`exp`/`powf`, whose last bits differ between
+macOS-arm64 and linux-x86_64. Integer-RNG, PolyBLEP, and rational-filter content
+is identical everywhere; a future engine revision with deterministic
+transcendental kernels makes it truly cross-platform.) The doc's top-level `seed` drives
 every noise source, `dust` train, and Karplus-Strong pluck burst, so takes are
 reproducible; change `seed` for a different-but-equivalent roll. Because the doc
 *is* the artifact, version your `.json` files and you can always reproduce the

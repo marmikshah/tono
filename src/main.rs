@@ -25,7 +25,8 @@ USAGE:
 
     tono --version | --help
 
-The SoundDoc format and the node vocabulary are documented in docs/cookbook.md.";
+The SoundDoc format and the node vocabulary are documented in docs/cookbook.md
+(https://github.com/marmikshah/tono/blob/master/docs/cookbook.md).";
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -191,8 +192,8 @@ mod tests {
 
     #[test]
     fn flags_consume_their_values() {
-        // "-o out" must never leave "out" behind as a positional — the exact
-        // bug class the 2.0 changelog fixed.
+        // "-o out" must never leave "out" behind as a positional — a real
+        // bug class this parser was rewritten to kill.
         let cli = Cli::parse(&args(&["-o", "out", "doc.json"]), &["-o", "--out"]).unwrap();
         assert_eq!(cli.flag(&["-o", "--out"]), Some("out"));
         assert_eq!(cli.positionals, vec!["doc.json"]);
