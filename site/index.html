@@ -162,10 +162,25 @@ impact.trigger(hardness=0.8, size=0.3)  <span class="c"># zero WAVs</span></pre>
   <p class="caption">The CLI closes the loop: <code>tono render doc.json</code> → audio + spectrogram + waveform + LUFS stats. Author sound by inspection.</p>
 </section>
 
+<section id="start">
+  <h2>Get started</h2>
+  <p class="lede">Two commands to the first render; the loop is: write a doc, render, look, refine.</p>
+<pre><span class="c"># the CLI</span>
+cargo install tono
+tono render blip.json -o out/   <span class="c"># → wav + spectrogram + waveform + LUFS stats</span>
+
+<span class="c"># the engine, in a game or tool</span>
+cargo add tono-core</pre>
+  <p class="caption">New to the codebase? Read the <a href="architecture.html">architecture &amp; getting-started guide</a> —
+  the smallest unit (a node) and the ladder up to a full game soundtrack.</p>
+</section>
+
 </main>
 
 <footer>
-  <a href="https://github.com/marmikshah/tono">github.com/marmikshah/tono</a> · MIT ·
+  <a href="https://github.com/marmikshah/tono">github.com/marmikshah/tono</a> ·
+  <a href="architecture.html">architecture</a> ·
+  <a href="https://docs.rs/tono-core">docs.rs</a> · MIT ·
   built with <a href="https://github.com/marmikshah/tono/blob/master/docs/ROADMAP.md">a roadmap</a>
 </footer>
 

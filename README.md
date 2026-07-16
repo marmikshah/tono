@@ -10,6 +10,7 @@
 <p align="center">
   <a href="https://github.com/marmikshah/tono/actions/workflows/ci.yml"><img src="https://github.com/marmikshah/tono/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://crates.io/crates/tono-core"><img src="https://img.shields.io/crates/v/tono-core" alt="crates.io"></a>
+  <a href="https://docs.rs/tono-core"><img src="https://img.shields.io/docsrs/tono-core" alt="docs.rs"></a>
   <img src="https://img.shields.io/badge/license-MIT-8c6ee6" alt="license">
 </p>
 
@@ -17,7 +18,8 @@
   <img src="docs/river-flows-spectrogram.png" width="640" alt="spectrogram of River Flows in You, 800 notes on the sampled piano">
 </p>
 
-<p align="center"><em>Everything you can hear below was rendered by this engine — no samples, no WAVs shipped.</em></p>
+<p align="center"><em>Everything you can hear below was rendered by this engine — no samples, no WAVs shipped.</em><br>
+<a href="https://marmikshah.github.io/tono/">Showcase site</a> · <a href="https://marmikshah.github.io/tono/architecture.html">Architecture guide</a> · <a href="https://docs.rs/tono-core">API docs</a> · <a href="docs/cookbook.md">Cookbook</a></p>
 
 ## Hear it
 
@@ -171,7 +173,9 @@ The real-time streaming path is byte-identical to an offline bounce (verified
 by a fuzzer in CI), and byte-changing kernel upgrades are gated behind a
 document `engine` revision, so old sounds never change. A golden corpus pins
 representative renders in CI. Render the same document twice, get the same bytes
-— which is what makes audio testable, diffable, and cacheable.
+— which is what makes audio testable, diffable, and cacheable. (Today the
+guarantee is per platform — OS math libraries differ in their last bits; a
+future engine revision with deterministic kernels makes it cross-platform.)
 
 ## Learn more
 
