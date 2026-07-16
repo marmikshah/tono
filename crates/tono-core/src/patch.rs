@@ -9,6 +9,25 @@
 //! the same values always render byte-identically, and it compiles native, to
 //! WASM, and into a game engine. This is the thing a DAW structurally can't do.
 
+//!
+//! ```
+//! use std::collections::BTreeMap;
+//! use tono_core::patch::Patch;
+//!
+//! let patch: Patch = serde_json::from_str(r#"{
+//!     "doc": { "name": "zap", "duration": 0.2, "engine": 4,
+//!              "root": { "type": "sine", "freq": 880 } },
+//!     "params": [ { "name": "pitch", "paths": ["root.freq"],
+//!                   "min": 100.0, "max": 2000.0, "default": 880.0 } ]
+//! }"#).unwrap();
+//!
+//! // One patch, endless per-instance variations — deterministic each time.
+//! let low = patch.render(&BTreeMap::from([("pitch".into(), 220.0)])).unwrap();
+//! let high = patch.render(&BTreeMap::from([("pitch".into(), 1760.0)])).unwrap();
+//! assert_ne!(low, high);
+//! assert_eq!(low, patch.render(&BTreeMap::from([("pitch".into(), 220.0)])).unwrap());
+//! ```
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};

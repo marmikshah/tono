@@ -208,6 +208,25 @@ struct SectionFade {
 }
 
 /// A layered, intensity-driven music bed with one-shot stingers.
+///
+/// Horizontal re-sequencing — sections that swap on the bar, like a film
+/// score reacting to play:
+///
+/// ```
+/// use tono_core::adaptive::{AdaptiveMusic, Quantize};
+/// use tono_core::dsl::{Node, SoundDoc};
+///
+/// let explore = SoundDoc::new("explore", Node::Sine { freq: 220.0.into() });
+/// let battle = SoundDoc::new("battle", Node::Sine { freq: 261.6.into() });
+///
+/// let mut music = AdaptiveMusic::new(48_000);
+/// music.set_tempo(120.0, 4);                    // beats drive the boundaries
+/// music.add_section("explore", &explore);       // starts playing
+/// let battle = music.add_section("battle", &battle);
+///
+/// music.transition_to(battle, Quantize::Bar);   // combat! swaps on the next bar
+/// music.set_intensity_at(0.9, Quantize::Beat);  // stems swell on the beat
+/// ```
 pub struct AdaptiveMusic {
     layers: Vec<Layer>,
     stingers: Vec<Stinger>,
