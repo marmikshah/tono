@@ -154,6 +154,42 @@ pub fn note_vel(step: u32, len: u32, pitch: &str, gain: f32) -> SeqNote {
     }
 }
 
+/// Why a song failed to compile to a [`SoundDoc`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SongError {
+    /// The song has no tracks.
+    Empty,
+    /// The arrangement places a pattern on a track that doesn't exist.
+    UnknownTrack(String),
+    /// The arrangement references a pattern that doesn't exist.
+    UnknownPattern(String),
+    /// The compiled document failed to build or validate.
+    Compile(String),
+}
+
+impl std::fmt::Display for SongError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SongError::Empty => f.write_str("song has no tracks"),
+            SongError::UnknownTrack(t) => {
+                write!(f, "arrangement references unknown track '{t}'")
+            }
+            SongError::UnknownPattern(p) => {
+                write!(f, "arrangement references unknown pattern '{p}'")
+            }
+            SongError::Compile(e) => f.write_str(e),
+        }
+    }
+}
+
+impl std::error::Error for SongError {}
+
+impl From<SongError> for String {
+    fn from(e: SongError) -> String {
+        e.to_string()
+    }
+}
+
 impl Song {
     /// An empty song at `bpm`, 4/4, sixteenth-note grid.
     pub fn new(name: impl Into<String>, bpm: f32) -> Self {
@@ -321,22 +357,16 @@ impl Song {
     /// Compile to a deterministic [`SoundDoc`] — a `tracks` root of `seq` tracks.
     /// Errors if the song is empty or an arrangement references a missing track
     /// or pattern.
-    pub fn to_doc(&self) -> Result<SoundDoc, String> {
+    pub fn to_doc(&self) -> Result<SoundDoc, SongError> {
         if self.tracks.is_empty() {
-            return Err("song has no tracks".into());
+            return Err(SongError::Empty);
         }
         for pl in &self.arrangement {
             if !self.tracks.iter().any(|t| t.name == pl.track) {
-                return Err(format!(
-                    "arrangement references unknown track '{}'",
-                    pl.track
-                ));
+                return Err(SongError::UnknownTrack(pl.track.clone()));
             }
             if !self.patterns.iter().any(|p| p.name == pl.pattern) {
-                return Err(format!(
-                    "arrangement references unknown pattern '{}'",
-                    pl.pattern
-                ));
+                return Err(SongError::UnknownPattern(pl.pattern.clone()));
             }
         }
 
@@ -360,20 +390,20 @@ impl Song {
             "name": self.name,
             "duration": duration,
             "engine": self.engine.unwrap_or(ENGINE_VERSION),
-            "root": serde_json::to_value(&root).map_err(|e| e.to_string())?,
+            "root": serde_json::to_value(&root).map_err(|e| SongError::Compile(e.to_string()))?,
         });
         if let Some(v) = self.version {
             json["version"] = serde_json::json!(v);
         }
-        let doc: SoundDoc =
-            serde_json::from_value(json).map_err(|e| format!("song doc build: {e}"))?;
+        let doc: SoundDoc = serde_json::from_value(json)
+            .map_err(|e| SongError::Compile(format!("song doc build: {e}")))?;
         Ok(doc)
     }
 
     /// Compile one song track to a mixer [`Track`]: merge its direct notes with
     /// its pattern placements, build the seq node, and wrap the reverb send.
     /// Extends `end_step` to the track's last note end.
-    fn compile_track(&self, t: &SongTrack, end_step: &mut u32) -> Result<Track, String> {
+    fn compile_track(&self, t: &SongTrack, end_step: &mut u32) -> Result<Track, SongError> {
         let steps_per_bar = self.steps_per_bar();
         let mut notes: Vec<SeqNote> = t.notes.clone();
         for n in &notes {
@@ -408,17 +438,17 @@ impl Song {
             "type": "seq",
             "bpm": self.bpm,
             "steps_per_beat": self.steps_per_beat,
-            "wave": serde_json::to_value(t.wave).map_err(|e| e.to_string())?,
-            "env": serde_json::to_value(t.env).map_err(|e| e.to_string())?,
+            "wave": serde_json::to_value(t.wave).map_err(|e| SongError::Compile(e.to_string()))?,
+            "env": serde_json::to_value(t.env).map_err(|e| SongError::Compile(e.to_string()))?,
             "swing": t.swing.unwrap_or(self.swing),
             "humanize": t.humanize.unwrap_or(self.humanize),
             "sf2": t.sf2,
             "sf2_preset": t.sf2_preset,
             "sf2_bank": t.sf2_bank,
-            "notes": serde_json::to_value(&notes).map_err(|e| e.to_string())?,
+            "notes": serde_json::to_value(&notes).map_err(|e| SongError::Compile(e.to_string()))?,
         });
         if let serde_json::Value::Object(voice) =
-            serde_json::to_value(t.voice).map_err(|e| e.to_string())?
+            serde_json::to_value(t.voice).map_err(|e| SongError::Compile(e.to_string()))?
         {
             for (key, val) in voice {
                 if !val.is_null() {
@@ -427,7 +457,7 @@ impl Song {
             }
         }
         let seq: Node = serde_json::from_value(seq_json)
-            .map_err(|e| format!("track '{}' seq build: {e}", t.name))?;
+            .map_err(|e| SongError::Compile(format!("track '{}' seq build: {e}", t.name)))?;
 
         // A reverb send wraps the seq in a chain (dry when reverb == 0, so
         // the track is byte-identical without it).
@@ -695,12 +725,18 @@ mod tests {
         a.add_track("t", SeqWave::Sine, amp());
         a.add_pattern("p", 1, vec![note(0, 1, "C4")]);
         a.arrange("nope", "p", 0);
-        assert!(a.to_doc().unwrap_err().contains("unknown track"));
+        assert_eq!(
+            a.to_doc().unwrap_err(),
+            SongError::UnknownTrack("nope".into())
+        );
 
         let mut b = Song::new("s", 120.0);
         b.add_track("t", SeqWave::Sine, amp());
         b.arrange("t", "ghost", 0);
-        assert!(b.to_doc().unwrap_err().contains("unknown pattern"));
+        assert_eq!(
+            b.to_doc().unwrap_err(),
+            SongError::UnknownPattern("ghost".into())
+        );
     }
 
     #[test]

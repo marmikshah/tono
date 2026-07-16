@@ -12,7 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
-use crate::dsl::SoundDoc;
+use crate::dsl::{SoundDoc, ValidateError};
 
 /// One element of a path: an object key or an array index.
 enum Seg {
@@ -168,16 +168,55 @@ fn apply_one(json: &mut Json, op: &EditOp) -> Result<(), String> {
     }
 }
 
+/// Why an edit failed.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EditError {
+    /// Op `index` failed — a missing path, a bad array index, or a value the
+    /// node can't take. The reason names the offending path.
+    Op {
+        /// Index of the failing op in the batch.
+        index: usize,
+        /// What went wrong, naming the path.
+        reason: String,
+    },
+    /// The edited JSON no longer deserializes as a `SoundDoc`.
+    InvalidGraph(String),
+    /// The edited document fails validation.
+    Invalid(ValidateError),
+    /// `morph`: the two graphs are not the same shape (or hold values that
+    /// cannot be interpolated) at the named path.
+    Morph(String),
+}
+
+impl std::fmt::Display for EditError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EditError::Op { index, reason } => write!(f, "op[{index}]: {reason}"),
+            EditError::InvalidGraph(e) => write!(f, "edited graph is invalid: {e}"),
+            EditError::Invalid(e) => write!(f, "edited document fails validation: {e}"),
+            EditError::Morph(e) => f.write_str(e),
+        }
+    }
+}
+
+impl std::error::Error for EditError {}
+
+impl From<ValidateError> for EditError {
+    fn from(e: ValidateError) -> Self {
+        EditError::Invalid(e)
+    }
+}
+
 /// Apply `ops` to `doc` in order, returning the edited, re-validated graph.
-/// An op referencing a missing path, or producing an invalid graph, fails with
-/// a message naming the offending op index.
-pub fn apply_ops(doc: &SoundDoc, ops: &[EditOp]) -> Result<SoundDoc, String> {
-    let mut json = serde_json::to_value(doc).map_err(|e| e.to_string())?;
-    for (i, op) in ops.iter().enumerate() {
-        apply_one(&mut json, op).map_err(|e| format!("op[{i}]: {e}"))?;
+/// An op referencing a missing path, or producing an invalid graph, fails
+/// with an [`EditError`] naming the offending op index.
+pub fn apply_ops(doc: &SoundDoc, ops: &[EditOp]) -> Result<SoundDoc, EditError> {
+    let mut json = serde_json::to_value(doc).map_err(|e| EditError::InvalidGraph(e.to_string()))?;
+    for (index, op) in ops.iter().enumerate() {
+        apply_one(&mut json, op).map_err(|reason| EditError::Op { index, reason })?;
     }
     let edited: SoundDoc =
-        serde_json::from_value(json).map_err(|e| format!("edited graph is invalid: {e}"))?;
+        serde_json::from_value(json).map_err(|e| EditError::InvalidGraph(e.to_string()))?;
     edited.validate()?;
     Ok(edited)
 }
@@ -360,9 +399,9 @@ pub fn describe(doc: &SoundDoc) -> DescribeMap {
 /// parameter is lerped (integers re-rounded), note-name strings are lerped in
 /// Hz, and any structural difference is a clear error. `t = 0` ⇒ `a`,
 /// `t = 1` ⇒ `b`.
-pub fn morph(a: &SoundDoc, b: &SoundDoc, t: f32) -> Result<SoundDoc, String> {
-    let mut ja = serde_json::to_value(a).map_err(|e| e.to_string())?;
-    let mut jb = serde_json::to_value(b).map_err(|e| e.to_string())?;
+pub fn morph(a: &SoundDoc, b: &SoundDoc, t: f32) -> Result<SoundDoc, EditError> {
+    let mut ja = serde_json::to_value(a).map_err(|e| EditError::InvalidGraph(e.to_string()))?;
+    let mut jb = serde_json::to_value(b).map_err(|e| EditError::InvalidGraph(e.to_string()))?;
     // Name/version/engine/seed/sample_rate are identity and provenance, not
     // parameters — unify them before the walk. Interpolating `engine` would
     // sweep a morph through different DSP kernels mid-t (audible timbre
@@ -410,9 +449,9 @@ pub fn morph(a: &SoundDoc, b: &SoundDoc, t: f32) -> Result<SoundDoc, String> {
             }
         }
     }
-    let merged = lerp_json(&ja, &jb, t, "$")?;
-    let doc: SoundDoc =
-        serde_json::from_value(merged).map_err(|e| format!("morphed graph invalid: {e}"))?;
+    let merged = lerp_json(&ja, &jb, t, "$").map_err(EditError::Morph)?;
+    let doc: SoundDoc = serde_json::from_value(merged)
+        .map_err(|e| EditError::InvalidGraph(format!("morphed graph invalid: {e}")))?;
     doc.validate()?;
     Ok(doc)
 }
@@ -541,15 +580,15 @@ mod tests {
             )],
         )
         .unwrap_err();
-        assert!(err.contains("op[0]"), "{err}");
-        assert!(err.contains("no field 'nope'"), "{err}");
+        assert!(err.to_string().contains("op[0]"), "{err}");
+        assert!(err.to_string().contains("no field 'nope'"), "{err}");
         // An edit that parses but breaks validation is also rejected.
         let err = apply_ops(
             &laser(),
             &[op(r#"{ "op": "set", "path": "duration", "value": -1 }"#)],
         )
         .unwrap_err();
-        assert!(err.contains("duration"), "{err}");
+        assert!(err.to_string().contains("duration"), "{err}");
     }
 
     #[test]

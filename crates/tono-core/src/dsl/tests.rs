@@ -1,4 +1,5 @@
 use super::*;
+use crate::dsl::ValidateError;
 
 fn roundtrip(json: &str) -> serde_json::Value {
     let doc: SoundDoc = serde_json::from_str(json).expect("deserialize");
@@ -76,7 +77,7 @@ fn engine_defaults_to_zero_and_bounds_at_current_revision() {
 
 #[test]
 fn modal_and_impact_validate_their_ranges() {
-    let modal = |modes: &str| -> Result<(), String> {
+    let modal = |modes: &str| -> Result<(), ValidateError> {
         doc_with_root(&format!(
             r#"{{ "type": "chain", "stages": [
                     {{ "type": "impact" }},

@@ -18,10 +18,50 @@ impl Adsr {
     }
 }
 
+/// Why a document failed validation. Wraps the human-readable reason — the
+/// same message an agent pattern-matches to self-correct — behind a real
+/// error type (`Display` + `std::error::Error`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidateError(String);
+
+impl ValidateError {
+    /// The human-readable reason.
+    pub fn message(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for ValidateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ValidateError {}
+
+impl std::ops::Deref for ValidateError {
+    type Target = str;
+    /// Deref to the message so callers (and a decade of tests) can treat the
+    /// error as the string it carries: `err.contains("freq")`.
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<ValidateError> for String {
+    fn from(e: ValidateError) -> String {
+        e.0
+    }
+}
+
 impl SoundDoc {
     /// Validate ranges and structure beyond what serde already enforces.
-    /// Returns a human-readable message the agent can act on.
-    pub fn validate(&self) -> Result<(), String> {
+    /// The error's message is human-readable and names the offending field.
+    pub fn validate(&self) -> Result<(), ValidateError> {
+        self.validate_inner().map_err(ValidateError)
+    }
+
+    fn validate_inner(&self) -> Result<(), String> {
         let v = self.effective_version();
         if v == 0 || v > SCHEMA_VERSION {
             return Err(format!(

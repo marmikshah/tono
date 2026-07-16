@@ -230,7 +230,7 @@ impl Instrument {
             .design
             .patch
             .instantiate(&values)
-            .map_err(InstrumentError::BadPatch)?;
+            .map_err(|e| InstrumentError::BadPatch(e.to_string()))?;
         doc.sample_rate = self.sample_rate;
         if let PitchMap::Transpose { reference } = &self.design.pitch {
             transpose(&mut doc.root, hz / reference.freq());
