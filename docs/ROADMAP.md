@@ -1,10 +1,16 @@
-# Roadmap to 2.0 — the studio
+# Roadmap — the studio
 
-2.0 is the studio milestone: tono grows from a deterministic engine with a
-pattern station into a real music-production app — an FL-style pattern/playlist
+The destination: tono grows from a deterministic engine with a pattern
+station into a real music-production app — an FL-style pattern/playlist
 workflow with deep routing, fully synthetic, on the same byte-identical core.
-The API pass (renames, `#[non_exhaustive]`, the dead-code sweep) shipped in
-1.6.0 with the aliases deprecated; the old names are deleted when 2.0 lands.
+
+Everything here ships progressively as 1.x minor releases; the version can
+climb as high as it needs to. **2.0.0 is not a feature milestone** — it is the
+hand-cut release marking full human review of the codebase (see the README's
+personal note), and it is also when the deprecated 1.6.0 aliases finally get
+deleted. The API pass (renames, `#[non_exhaustive]`, the dead-code sweep)
+shipped in 1.6.0; the 1.8.0 structure release split the god-files, unified the
+gates, and staged the deletions.
 
 The sequencing rule throughout: the **bounce stays a pure function of
 `(project, seed, sample_rate)`** — CI-pinned by the golden corpus — and
@@ -66,14 +72,16 @@ it — all engine-gated so existing documents replay unchanged.
 - **Track freeze for free** — a content-addressed render cache keyed on
   `(subgraph, seed, sample_rate, engine)`; determinism makes it exact.
 
-## Cross-cutting, before 2.0 ships
+## Cross-cutting
 
 - **Deterministic transcendental kernels (engine 5)** — replace platform libm
   on the render path so byte-identity holds across OS/arch and the golden
-  corpus collapses to a single pin table.
+  corpus collapses to a single pin table. Also the prerequisite for a wasm
+  face (the core is already pure compute).
 - **Typed errors** — `ValidateError` / `EditError` / `SongError` replacing the
   `Result<_, String>` monoculture (`InstrumentError` is the template).
-- **Duplication debt** — the `SeqVoice` serde-flatten consolidation and the
-  shared biquad coefficient table.
-- **CI hardening** — compile gates for the desktop/play crates; the
-  `build-test` check made required on `master`.
+- ~~Duplication debt~~ — shipped in 1.8.0 (the shared biquad coefficient
+  table and the `Node::Seq` knob structs).
+- ~~CI hardening~~ — shipped in 1.8.0 (`make verify-native` + the Native
+  workflow; the CI matrix runs both golden-pin platforms and is required on
+  `master`).
