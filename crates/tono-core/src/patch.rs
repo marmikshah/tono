@@ -9,12 +9,31 @@
 //! the same values always render byte-identically, and it compiles native, to
 //! WASM, and into a game engine. This is the thing a DAW structurally can't do.
 
+//!
+//! ```
+//! use std::collections::BTreeMap;
+//! use tono_core::patch::Patch;
+//!
+//! let patch: Patch = serde_json::from_str(r#"{
+//!     "doc": { "name": "zap", "duration": 0.2, "engine": 4,
+//!              "root": { "type": "sine", "freq": 880 } },
+//!     "params": [ { "name": "pitch", "paths": ["root.freq"],
+//!                   "min": 100.0, "max": 2000.0, "default": 880.0 } ]
+//! }"#).unwrap();
+//!
+//! // One patch, endless per-instance variations — deterministic each time.
+//! let low = patch.render(&BTreeMap::from([("pitch".into(), 220.0)])).unwrap();
+//! let high = patch.render(&BTreeMap::from([("pitch".into(), 1760.0)])).unwrap();
+//! assert_ne!(low, high);
+//! assert_eq!(low, patch.render(&BTreeMap::from([("pitch".into(), 220.0)])).unwrap());
+//! ```
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::dsl::SoundDoc;
-use crate::edit::{EditOp, apply_ops};
+use crate::edit::{EditError, EditOp, apply_ops};
 use crate::render;
 
 /// A named, range-bounded parameter that drives one or more graph paths.
@@ -44,11 +63,26 @@ pub struct Patch {
     pub params: Vec<ParamSpec>,
 }
 
+impl From<SoundDoc> for Patch {
+    fn from(doc: SoundDoc) -> Self {
+        Patch::new(doc)
+    }
+}
+
 impl Patch {
+    /// A patch around `doc` with no parameters yet — add [`ParamSpec`]s to
+    /// expose knobs.
+    pub fn new(doc: SoundDoc) -> Self {
+        Patch {
+            doc,
+            params: Vec::new(),
+        }
+    }
+
     /// Bake the patch into a concrete document with the given parameter values
     /// (missing → default, out-of-range → clamped). Validated like any edit, so
     /// a bad path or value is a clear error, never a corrupt graph.
-    pub fn instantiate(&self, values: &BTreeMap<String, f32>) -> Result<SoundDoc, String> {
+    pub fn instantiate(&self, values: &BTreeMap<String, f32>) -> Result<SoundDoc, EditError> {
         let mut ops = Vec::new();
         for spec in &self.params {
             let (lo, hi) = (spec.min.min(spec.max), spec.min.max(spec.max));
@@ -69,7 +103,7 @@ impl Patch {
 
     /// Instantiate and render to mono samples — the one call a game makes per
     /// SFX instance.
-    pub fn render(&self, values: &BTreeMap<String, f32>) -> Result<Vec<f32>, String> {
+    pub fn render(&self, values: &BTreeMap<String, f32>) -> Result<Vec<f32>, EditError> {
         Ok(render::render(&self.instantiate(values)?))
     }
 

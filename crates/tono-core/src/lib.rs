@@ -96,6 +96,7 @@ pub mod voice {
 /// primary flow (author a doc or a [`song::Song`], render it, analyze it, play
 /// it) without hunting across the crate's nineteen modules.
 pub mod prelude {
+    pub use crate::adaptive::{AdaptiveMusic, LoopBuffer, Quantize};
     #[cfg(feature = "analysis")]
     pub use crate::analysis::{Analysis, stats, stats_stereo};
     pub use crate::catalog::{
@@ -105,6 +106,8 @@ pub mod prelude {
     pub use crate::instrument::{Instrument, InstrumentDesign, Note};
     pub use crate::patch::Patch;
     pub use crate::render::{RenderProduct, render, render_product};
-    pub use crate::runtime::{AudioSource, Engine, Mixer, StreamSource, Tween};
+    pub use crate::runtime::{
+        AudioSource, Engine, InstanceHandle, Mixer, PatchId, Priority, StreamSource, Tween,
+    };
     pub use crate::song::{Song, note, note_vel};
 }

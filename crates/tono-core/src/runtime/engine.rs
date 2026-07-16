@@ -173,6 +173,20 @@ pub(super) struct Instance {
 
 /// The runtime mixer: owns patch resources and their live instances, and serves
 /// their mixed-down stereo through [`AudioSource::fill`].
+///
+/// ```
+/// use tono_core::prelude::*;
+/// use tono_core::dsl::Node;
+///
+/// let doc = SoundDoc::new("blip", Node::Sine { freq: 880.0.into() });
+/// let mut engine = Engine::new(48_000);
+/// let blip = engine.load(&doc);          // a reusable resource…
+/// let _voice = engine.play(blip);        // …spawning independent instances
+///
+/// let mut out = vec![0.0f32; 512];       // interleaved stereo L,R,L,R…
+/// engine.fill(&mut out);
+/// assert!(out.iter().any(|s| s.abs() > 0.0), "the blip is sounding");
+/// ```
 pub struct Engine {
     sample_rate: u32,
     patches: Vec<Patch>,
@@ -234,7 +248,10 @@ impl Engine {
     /// Resolve a named parameter of a patch to a typed handle (once, off the hot
     /// path). `None` if the patch has no such param.
     pub fn param(&self, patch: PatchId, name: &str) -> Option<ParamId> {
-        self.patches[patch.0]
+        // .get(): a PatchId is Copy and could come from another Engine — an
+        // unknown handle resolves to None, never a panic.
+        self.patches
+            .get(patch.0)?
             .params
             .iter()
             .position(|p| p.name == name)
@@ -247,7 +264,7 @@ impl Engine {
     /// Resolve a named mixer layer (a `tracks` entry) to a typed handle. `None`
     /// if the patch's graph has no track with that id.
     pub fn layer(&self, patch: PatchId, name: &str) -> Option<LayerId> {
-        match &self.patches[patch.0].doc.root {
+        match &self.patches.get(patch.0)?.doc.root {
             Node::Tracks { tracks, .. } => tracks
                 .iter()
                 .position(|t| t.id.as_deref() == Some(name))

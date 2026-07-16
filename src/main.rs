@@ -20,8 +20,22 @@ USAGE:
           <name>_wave.png       waveform      (and this)
           <name>.stats.json     peak/RMS/LUFS/spectral/transient analysis
 
+    tono vary FILE.json [-n COUNT] [--amount 0..1] [--seed N] [-o DIR] [--format wav|flac|ogg]
+        Render COUNT deterministic variations of a SoundDoc (default 4,
+        amount 0.15) — round-robin takes of a footstep, impact, pickup.
+        Writes <name>_v<i>.json plus the render outputs for each.
+
+    tono schema [sounddoc|patch]
+        Print the JSON Schema of the document format (for editor
+        autocomplete, validation, and agent self-correction).
+
     tono midi FILE.json [-o FILE.mid]
         Export a SoundDoc's sequences to a Standard MIDI File.
+
+    tono import FILE.mid [-o DOC.json] [--steps-per-beat 4]
+        Import a Standard MIDI File as a renderable SoundDoc of seq
+        tracks (GM programs map to the built-in voices; channel 10
+        becomes the drum kit).
 
     tono --version | --help
 
@@ -32,7 +46,10 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("render") => render_cmd(&args[2..]),
+        Some("vary") => vary_cmd(&args[2..]),
+        Some("schema") => schema_cmd(&args[2..]),
         Some("midi") => midi_cmd(&args[2..]),
+        Some("import") => import_cmd(&args[2..]),
         Some("--version") | Some("-V") => {
             println!("tono {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -108,15 +125,10 @@ fn render_cmd(args: &[String]) -> anyhow::Result<()> {
     let cli = Cli::parse(args, &["-o", "--out", "--format"])?;
     let file = cli.input("tono render FILE.json [-o DIR] [--format wav|flac|ogg]")?;
     let out_dir = PathBuf::from(cli.flag(&["-o", "--out"]).unwrap_or("."));
-    let format = cli.flag(&["--format"]).unwrap_or("wav");
-    if !["wav", "flac", "ogg"].contains(&format) {
-        anyhow::bail!("--format must be wav, flac, or ogg, got '{format}'");
-    }
+    let format = parse_format(cli.flag(&["--format"]))?;
 
     let doc = load_doc(file)?;
     fs::create_dir_all(&out_dir)?;
-
-    let product = render::render_product(&doc);
     let stem = if doc.name.is_empty() {
         Path::new(file)
             .file_stem()
@@ -126,6 +138,23 @@ fn render_cmd(args: &[String]) -> anyhow::Result<()> {
     } else {
         doc.name.clone()
     };
+    render_to_dir(&doc, &stem, &out_dir, format)
+}
+
+/// Validate the `--format` flag once for every rendering command.
+fn parse_format(flag: Option<&str>) -> anyhow::Result<&str> {
+    let format = flag.unwrap_or("wav");
+    if !["wav", "flac", "ogg"].contains(&format) {
+        anyhow::bail!("--format must be wav, flac, or ogg, got '{format}'");
+    }
+    Ok(format)
+}
+
+/// The full render pipeline for one doc: audio file (+ `smpl` chunk for loop
+/// docs), the two feedback images, and the stats JSON — printing each output
+/// path. Shared by `render` and `vary`.
+fn render_to_dir(doc: &SoundDoc, stem: &str, out_dir: &Path, format: &str) -> anyhow::Result<()> {
+    let product = render::render_product(doc);
     let stereo = product
         .stereo
         .as_ref()
@@ -167,6 +196,85 @@ fn render_cmd(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `tono vary` — deterministic round-robin variations of one document.
+fn vary_cmd(args: &[String]) -> anyhow::Result<()> {
+    let usage = "tono vary FILE.json [-n COUNT] [--amount 0..1] [--seed N] [-o DIR] [--format wav|flac|ogg]";
+    let cli = Cli::parse(
+        args,
+        &[
+            "-n", "--count", "--amount", "--seed", "-o", "--out", "--format",
+        ],
+    )?;
+    let file = cli.input(usage)?;
+    let out_dir = PathBuf::from(cli.flag(&["-o", "--out"]).unwrap_or("."));
+    let format = parse_format(cli.flag(&["--format"]))?;
+    let count: u32 = match cli.flag(&["-n", "--count"]) {
+        Some(v) => v
+            .parse()
+            .map_err(|_| anyhow::anyhow!("-n must be a positive integer, got '{v}'"))?,
+        None => 4,
+    };
+    if count == 0 || count > 256 {
+        anyhow::bail!("-n must be in 1..=256, got {count}");
+    }
+    let amount: f32 = match cli.flag(&["--amount"]) {
+        Some(v) => v
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--amount must be a number, got '{v}'"))?,
+        None => 0.15,
+    };
+    if !(0.0..=1.0).contains(&amount) {
+        anyhow::bail!("--amount must be in 0..=1, got {amount}");
+    }
+    let seed: u64 = match cli.flag(&["--seed"]) {
+        Some(v) => v
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--seed must be an integer, got '{v}'"))?,
+        None => 0,
+    };
+
+    let doc = load_doc(file)?;
+    fs::create_dir_all(&out_dir)?;
+    let base = if doc.name.is_empty() {
+        "sound"
+    } else {
+        &doc.name
+    };
+
+    for i in 1..=count {
+        let mut variant = tono_core::vary::mutate(&doc, amount, seed.wrapping_add(i as u64));
+        let stem = format!("{base}_v{i}");
+        variant.name = stem.clone();
+        // mutate() promises a valid doc, but a variant that slipped a bound
+        // must fail loud, not render garbage.
+        variant
+            .validate()
+            .map_err(|e| anyhow::anyhow!("variant {i}: {e}"))?;
+        let json_path = out_dir.join(format!("{stem}.json"));
+        fs::write(&json_path, serde_json::to_string_pretty(&variant)?)?;
+        println!("{}", json_path.display());
+        render_to_dir(&variant, &stem, &out_dir, format)?;
+    }
+    Ok(())
+}
+
+/// `tono schema` — the machine-readable contract of the document formats.
+fn schema_cmd(args: &[String]) -> anyhow::Result<()> {
+    let cli = Cli::parse(args, &[])?;
+    let target = cli
+        .positionals
+        .first()
+        .map(String::as_str)
+        .unwrap_or("sounddoc");
+    let schema = match target {
+        "sounddoc" => schemars::schema_for!(SoundDoc),
+        "patch" => schemars::schema_for!(tono_core::patch::Patch),
+        other => anyhow::bail!("unknown schema '{other}' — expected sounddoc or patch"),
+    };
+    println!("{}", serde_json::to_string_pretty(&schema)?);
+    Ok(())
+}
+
 fn midi_cmd(args: &[String]) -> anyhow::Result<()> {
     let cli = Cli::parse(args, &["-o", "--out"])?;
     let file = cli.input("tono midi FILE.json [-o FILE.mid]")?;
@@ -178,6 +286,36 @@ fn midi_cmd(args: &[String]) -> anyhow::Result<()> {
         out.display(),
         summary.notes,
         summary.tracks
+    );
+    Ok(())
+}
+
+/// `tono import` — a Standard MIDI File becomes a renderable SoundDoc.
+fn import_cmd(args: &[String]) -> anyhow::Result<()> {
+    let usage = "tono import FILE.mid [-o DOC.json] [--steps-per-beat 4]";
+    let cli = Cli::parse(args, &["-o", "--out", "--steps-per-beat"])?;
+    let file = cli.input(usage)?;
+    let spb: u32 = match cli.flag(&["--steps-per-beat"]) {
+        Some(v) => v.parse().map_err(|_| {
+            anyhow::anyhow!("--steps-per-beat must be a positive integer, got '{v}'")
+        })?,
+        None => 4,
+    };
+    if spb == 0 || spb > 64 {
+        anyhow::bail!("--steps-per-beat must be in 1..=64, got {spb}");
+    }
+    let out = match cli.flag(&["-o", "--out"]) {
+        Some(o) => PathBuf::from(o),
+        None => Path::new(file).with_extension("json"),
+    };
+    let (doc, summary) = tono::midi::import_midi(Path::new(file), spb)?;
+    fs::write(&out, serde_json::to_string_pretty(&doc)?)?;
+    println!(
+        "{} — {} notes across {} tracks at {:.1} bpm",
+        out.display(),
+        summary.notes,
+        summary.tracks,
+        summary.bpm
     );
     Ok(())
 }

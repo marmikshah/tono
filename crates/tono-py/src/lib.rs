@@ -29,7 +29,8 @@ mod stream;
 fn parse_doc(json: &str) -> PyResult<SoundDoc> {
     let doc: SoundDoc =
         serde_json::from_str(json).map_err(|e| PyValueError::new_err(e.to_string()))?;
-    doc.validate().map_err(PyValueError::new_err)?;
+    doc.validate()
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
     // validate() is filesystem-free (the core is pure); the loader owns the
     // existence check so a missing SoundFont still fails loud at load time.
     for sf2 in doc.sf2_paths() {
@@ -91,7 +92,7 @@ impl Patch {
         }
         let signal = py
             .detach(|| self.inner.render(&values))
-            .map_err(PyValueError::new_err)?;
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(signal.into_pyarray(py))
     }
 

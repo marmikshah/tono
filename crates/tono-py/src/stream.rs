@@ -72,7 +72,8 @@ fn parse_doc(json: &str, sample_rate: u32) -> PyResult<SoundDoc> {
     let mut doc: SoundDoc =
         serde_json::from_str(json).map_err(|e| PyValueError::new_err(e.to_string()))?;
     doc.sample_rate = sample_rate;
-    doc.validate().map_err(PyValueError::new_err)?;
+    doc.validate()
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
     // validate() is filesystem-free (the core is pure); the loader owns the
     // existence check so a missing SoundFont still fails loud at load time.
     for sf2 in doc.sf2_paths() {
@@ -143,7 +144,7 @@ impl Engine {
             None => device_sample_rate()?,
         };
 
-        let mut mixer = Mixer::new();
+        let mut mixer = Mixer::new(sample_rate);
         let sfx = mixer.add(CoreEngine::new(sample_rate));
         let (pump, renderer) = spsc(mixer, RING_FRAMES);
         let shared: Shared = Arc::new(Mutex::new(pump));
