@@ -51,11 +51,24 @@ pub struct RenderProduct {
     pub layers: Vec<LayerStats>,
 }
 
-/// Derive track `i`'s independent RNG stream from the document seed (schema
-/// v2). SplitMix64 finalizer over a golden-gamma offset, so streams never
-/// correlate with each other or with the v1 threaded stream.
-fn track_stream_seed(seed: u64, i: u64) -> u64 {
-    crate::dsp::splitmix_mix(seed ^ i.wrapping_add(1).wrapping_mul(crate::dsp::GOLDEN_GAMMA))
+/// Equal-power channel gains for a `pan`/`gain` pair — one formula for the
+/// constant fast path and the per-sample automated path, so they can never
+/// drift (identical f32 op order, byte-identical output).
+fn pan_gains(pan: f32, gain: f32) -> (f32, f32) {
+    let theta = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
+    (theta.cos() * gain, theta.sin() * gain)
+}
+
+/// Derive a track's independent RNG stream from the document seed (schema
+/// v2). `stream` is the track's FNV stream key (or `MASTER_STREAM`), not a
+/// track index. SplitMix64 finalizer over a golden-gamma offset, so streams
+/// never correlate with each other or with the v1 threaded stream.
+fn track_stream_seed(seed: u64, stream: u64) -> u64 {
+    crate::dsp::splitmix_mix(
+        seed ^ stream
+            .wrapping_add(1)
+            .wrapping_mul(crate::dsp::GOLDEN_GAMMA),
+    )
 }
 
 /// The master bus's stream key (validate rejects a layer id hashing to it).
@@ -211,8 +224,7 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
         // fast path, byte-identical); with automation it varies per bus sample.
         // The closure returns the same constant value when unautomated, so the
         // arithmetic on existing documents is unchanged.
-        let theta = (t.pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
-        let (glc, grc) = (theta.cos() * t.gain, theta.sin() * t.gain);
+        let (glc, grc) = pan_gains(t.pan.clamp(-1.0, 1.0), t.gain);
         let gain_lane = lane_for(&t.automation, AutoTarget::Gain, n, sr, t.gain);
         let pan_lane = lane_for(&t.automation, AutoTarget::Pan, n, sr, t.pan);
         let gl_gr = |pos: usize| -> (f32, f32) {
@@ -221,8 +233,7 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
                 (g, p) => {
                     let gain = g.as_ref().map_or(t.gain, |a| a[pos]);
                     let pan = p.as_ref().map_or(t.pan, |a| a[pos]).clamp(-1.0, 1.0);
-                    let theta = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
-                    (theta.cos() * gain, theta.sin() * gain)
+                    pan_gains(pan, gain)
                 }
             }
         };

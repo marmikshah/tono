@@ -156,7 +156,8 @@ pub fn stats_with(samples: &[f32], sample_rate: u32, frames: &SpectralFrames) ->
 pub fn stats_stereo(left: &[f32], right: &[f32], sample_rate: u32) -> Analysis {
     let n = left.len().min(right.len());
     let mid: Vec<f32> = (0..n).map(|i| 0.5 * (left[i] + right[i])).collect();
-    stats_stereo_with(left, right, sample_rate, &spectral_frames(&mid))
+    let frames = spectral_frames(&mid);
+    stats_stereo_inner(left, right, sample_rate, mid, &frames)
 }
 
 /// [`stats_stereo`] over pre-computed [`SpectralFrames`] of the **mid** signal
@@ -169,8 +170,19 @@ pub fn stats_stereo_with(
     mid_frames: &SpectralFrames,
 ) -> Analysis {
     let n = left.len().min(right.len());
-    let (left, right) = (&left[..n], &right[..n]);
     let mid: Vec<f32> = (0..n).map(|i| 0.5 * (left[i] + right[i])).collect();
+    stats_stereo_inner(left, right, sample_rate, mid, mid_frames)
+}
+
+fn stats_stereo_inner(
+    left: &[f32],
+    right: &[f32],
+    sample_rate: u32,
+    mid: Vec<f32>,
+    mid_frames: &SpectralFrames,
+) -> Analysis {
+    let n = left.len().min(right.len());
+    let (left, right) = (&left[..n], &right[..n]);
     let mut a = stats_with(&mid, sample_rate, mid_frames);
     let peak = left
         .iter()

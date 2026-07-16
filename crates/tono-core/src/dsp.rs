@@ -372,6 +372,18 @@ fn biquad_df1(input: &[f32], b: [f32; 3], a: [f32; 2]) -> Vec<f32> {
         .collect()
 }
 
+/// MIDI note number (fractional) for a frequency in Hz — A4 = 440 = 69.
+/// The inverse of the wire encoding: seq pitches travel as Hz, and the drum
+/// kit / exporters recover the MIDI number from the onset frequency.
+pub fn hz_to_midi(hz: f32) -> f32 {
+    69.0 + 12.0 * (hz / 440.0).log2()
+}
+
+/// −ln(1000): decay-rate constant so an exponential ring reaches −60 dB
+/// (×0.001) after its nominal decay time. Shared by the modal resonators
+/// (offline + streaming twins) and the pluck body bank.
+pub(crate) const NEG_LN_1000: f32 = -6.907_755;
+
 #[cfg(test)]
 mod tests {
     use super::*;

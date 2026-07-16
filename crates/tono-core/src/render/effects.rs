@@ -295,7 +295,7 @@ pub(super) fn modal_bank(input: &[f32], modes: &[Mode], mix: f32, sr: u32) -> Si
         let w0 = TAU * f0 / srf;
         let (sin0, cos0) = (w0.sin(), w0.cos());
         // r so the ring reaches −60 dB (×0.001) after `decay` seconds.
-        let r = (-6.907_755 / (decay * srf)).exp();
+        let r = (crate::dsp::NEG_LN_1000 / (decay * srf)).exp();
         let a1 = 2.0 * r * cos0;
         let a2 = -r * r;
         let b0 = m.gain * sin0; // impulse-response peak ≈ gain

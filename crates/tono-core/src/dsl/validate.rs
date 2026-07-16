@@ -325,7 +325,7 @@ impl crate::dsl::Sf2Knobs {
         }
         if self.sf2_preset > 127 {
             return Err(format!(
-                "seq.sf2_preset must be in 0..=127, got {}",
+                "seq.sf2_preset must be in [0, 127], got {}",
                 self.sf2_preset
             ));
         }

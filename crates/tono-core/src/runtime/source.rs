@@ -49,6 +49,7 @@ pub fn write_interleaved(data: &mut [f32], channels: usize, stereo: &[f32]) {
         }
     }
 }
+/// An [`AudioSource`] over the stateful streaming renderer: streams a
 /// doc's graph **indefinitely and allocation-free** — mono duplicated to
 /// stereo. Returns `None` for docs outside the streamable subset (the caller
 /// falls back to a buffer-backed [`Player`](crate::player::Player)/instance). This is how a game
