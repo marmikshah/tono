@@ -201,7 +201,7 @@ pub enum Stereo {
     /// Mono — both channels identical (default).
     #[default]
     Mono,
-    /// Haas precedence widening: one channel delayed by `ms` (1..40), shifting
+    /// Haas precedence widening: one channel delayed by `ms` ([0.5, 40], validated), shifting
     /// the apparent position and adding width. `pan` (-1 left .. 1 right) sets
     /// which side leads.
     Haas {

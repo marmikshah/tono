@@ -472,7 +472,7 @@ pub(super) fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -
                     let w0 = TAU * f0 / srf;
                     let (sin0, cos0) = (w0.sin(), w0.cos());
                     // r so the ring reaches −60 dB (×0.001) after `decay` seconds.
-                    let r = (-6.907_755 / (decay * srf)).exp();
+                    let r = (crate::dsp::NEG_LN_1000 / (decay * srf)).exp();
                     ModalMode {
                         a1: 2.0 * r * cos0,
                         a2: -r * r,

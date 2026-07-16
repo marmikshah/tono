@@ -94,6 +94,18 @@ fn pitch_identity(v: &Value) -> u64 {
     }
 }
 
+/// Swing delays an off-beat by this fraction of a step at `swing: 1.0` —
+/// half a step is the classic triplet-feel ceiling.
+const SWING_MAX_STEP_FRACTION: f32 = 0.5;
+/// Humanize timing jitter at `humanize: 1.0`, as a fraction of a step.
+const HUMANIZE_TIMING_STEP_FRACTION: f32 = 0.12;
+/// Humanize velocity wobble at `humanize: 1.0`, as a fraction of the gain.
+const HUMANIZE_VELOCITY_FRACTION: f32 = 0.15;
+/// Seed salt for the per-note humanize RNG: frac(√2)·2⁳² — an arbitrary
+/// odd-looking constant that decorrelates it from the doc-seed streams.
+/// PINNED: the humanize golden hashes depend on it.
+const HUMANIZE_SEED_SALT: u64 = 0x6A09_E667;
+
 /// Groove placement for one note: its start sample (swing + humanize timing)
 /// and its humanized gain.
 fn groove_note(note: &SeqNote, voice: &SeqVoice, step_dur: f32) -> (usize, f32) {
@@ -101,13 +113,13 @@ fn groove_note(note: &SeqNote, voice: &SeqVoice, step_dur: f32) -> (usize, f32) 
     // humanize adds a deterministic per-note timing push/pull and velocity
     // wobble so repeats stop sounding machine-perfect.
     let swing_delay = if note.step % 2 == 1 {
-        voice.swing * 0.5 * step_dur
+        voice.swing * SWING_MAX_STEP_FRACTION * step_dur
     } else {
         0.0
     };
     let (human_delay, gain) = if voice.humanize > 0.0 {
         // Seed from the note's identity so the jitter is stable per note.
-        let mut seed = (note.step as u64) << 32 ^ (note.len as u64) << 8 ^ 0x6A09_E667;
+        let mut seed = (note.step as u64) << 32 ^ (note.len as u64) << 8 ^ HUMANIZE_SEED_SALT;
         if voice.engine >= 4 {
             // Chord-aware: seeded from (step, len) alone, every note of a
             // chord shared one timing/velocity offset and moved as a block —
@@ -117,8 +129,8 @@ fn groove_note(note: &SeqNote, voice: &SeqVoice, step_dur: f32) -> (usize, f32) 
         }
         let mut hr = Rng::new(seed);
         (
-            voice.humanize * 0.12 * step_dur * hr.bi(),
-            note.gain * (1.0 + voice.humanize * 0.15 * hr.bi()),
+            voice.humanize * HUMANIZE_TIMING_STEP_FRACTION * step_dur * hr.bi(),
+            note.gain * (1.0 + voice.humanize * HUMANIZE_VELOCITY_FRACTION * hr.bi()),
         )
     } else {
         (0.0, note.gain)
@@ -299,7 +311,7 @@ fn pluck_note(voice: &SeqVoice, f: &[f32], sr: u32, rng: &mut Rng) -> Signal {
     let bright = voice.pluck.pluck_tone.max(0.0);
     let damp = (-voice.pluck.pluck_tone).max(0.0);
     // Fixed guitar-body resonators: Helmholtz air, top plate, back.
-    let body_r = (-6.907_755 / (0.25 * srf)).exp();
+    let body_r = (crate::dsp::NEG_LN_1000 / (0.25 * srf)).exp();
     let body_a2 = -body_r * body_r;
     let body: [(f32, f32); 3] = [(100.0, 1.0), (215.0, 0.8), (400.0, 0.5)].map(|(fr, g)| {
         let w0 = TAU * fr / srf;
@@ -641,7 +653,7 @@ pub(super) fn sampler_seq_stereo(
         }
         let len = ((note.len as f32 * step_dur).min(n as f32) as usize).max(1);
         let hz = eval_value(&note.pitch, 1, sr)[0].max(8.0);
-        let key = (69.0 + 12.0 * (hz / 440.0).log2()).round() as i32;
+        let key = crate::dsp::hz_to_midi(hz).round() as i32;
         let vel = ((gain * 127.0) as i32).clamp(1, 127);
         events.push((start, true, key.clamp(0, 127), vel));
         events.push(((start + len).min(n), false, key.clamp(0, 127), 0));

@@ -58,7 +58,7 @@ struct Deck {
     /// heads freeze (pause). Stop additionally rewinds.
     playing: bool,
     /// Reused scratch for the outgoing loop during a crossfade.
-    old: Vec<f32>,
+    outgoing_scratch: Vec<f32>,
 }
 
 impl AudioSource for Deck {
@@ -75,10 +75,10 @@ impl AudioSource for Deck {
             p.fill(out);
         }
         if let Some((out_player, remaining, total)) = self.outgoing.as_mut() {
-            if self.old.len() < frames * 2 {
-                self.old.resize(frames * 2, 0.0);
+            if self.outgoing_scratch.len() < frames * 2 {
+                self.outgoing_scratch.resize(frames * 2, 0.0);
             }
-            let old = &mut self.old[..frames * 2];
+            let old = &mut self.outgoing_scratch[..frames * 2];
             out_player.fill(old);
             let total = *total as f32;
             for f in 0..frames {
@@ -180,7 +180,7 @@ pub fn spawn() -> Result<AudioHandle> {
                 current: None,
                 outgoing: None,
                 playing: false,
-                old: Vec::new(),
+                outgoing_scratch: Vec::new(),
             };
             match Speaker::open(deck) {
                 Ok(speaker) => {

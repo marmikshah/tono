@@ -159,9 +159,7 @@ fn pitch_to_midi(v: &Value) -> u8 {
     if hz <= 0.0 {
         return 60;
     }
-    (69.0 + 12.0 * (hz / 440.0).log2())
-        .round()
-        .clamp(0.0, 127.0) as u8
+    tono_core::dsp::hz_to_midi(hz).round().clamp(0.0, 127.0) as u8
 }
 
 fn representative_hz(m: &Modulator) -> f32 {

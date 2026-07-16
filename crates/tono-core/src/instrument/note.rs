@@ -58,7 +58,7 @@ impl Note {
     /// nearest MIDI note.
     pub fn parse(s: &str) -> Option<Note> {
         let hz = note_to_hz(s)?;
-        let midi = (69.0 + 12.0 * (hz / 440.0).log2()).round();
+        let midi = crate::dsp::hz_to_midi(hz).round();
         if (0.0..=127.0).contains(&midi) {
             Some(Note(midi as u8))
         } else {

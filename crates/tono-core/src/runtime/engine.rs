@@ -552,7 +552,6 @@ impl AudioSource for Engine {
     }
 }
 
-/// A wait-free single-producer / single-consumer ring of `f32` samples. Each
 impl Engine {
     /// Split into a [`Controller`] (control thread) and a [`Renderer`] (audio
     /// thread) joined by a wait-free ring `ring_frames` deep. Pump the controller
