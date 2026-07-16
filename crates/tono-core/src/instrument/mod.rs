@@ -10,6 +10,22 @@
 //!
 //! `Instrument` implements [`AudioSource`], so it drops straight onto a cpal /
 //! AudioWorklet callback, or into a [`Mixer`](crate::runtime::Mixer) alongside SFX.
+//!
+//! ```
+//! use tono_core::instrument::{Instrument, InstrumentDesign, Note};
+//! use tono_core::patch::Patch;
+//! use tono_core::dsl::{Node, SoundDoc};
+//! use tono_core::runtime::AudioSource;
+//!
+//! let patch = Patch::new(SoundDoc::new("lead", Node::Sine { freq: 440.0.into() }));
+//! let mut inst = Instrument::new(InstrumentDesign::new(patch), 48_000).unwrap();
+//!
+//! inst.note_on(Note::C4, 0.9);           // strike…
+//! let mut out = vec![0.0f32; 512];
+//! inst.fill(&mut out);                   // …and it sounds
+//! assert!(out.iter().any(|s| s.abs() > 0.0));
+//! inst.note_off(Note::C4);               // release
+//! ```
 
 mod design;
 mod envelope;

@@ -90,6 +90,23 @@ struct Bus {
 /// With no buses or effects created, every source sits on the master bus at unity
 /// and the output is a plain additive sum — byte-identical to a bare mixer. Live
 /// effects need a sample rate: build with [`Mixer::new_at`].
+/// ```
+/// use tono_core::prelude::*;
+/// use tono_core::dsl::Node;
+///
+/// let mut mixer = Mixer::new(48_000);
+/// let sfx = mixer.bus("sfx");
+///
+/// let mut engine = Engine::new(48_000);
+/// let drone = engine.load(&SoundDoc::new("drone", Node::Sine { freq: 110.0.into() }));
+/// engine.play_looping(drone);
+/// mixer.add_to(sfx, engine);             // the engine feeds the sfx bus
+/// mixer.set_bus_gain(sfx, 0.8);          // a live fader
+///
+/// let mut out = vec![0.0f32; 512];
+/// mixer.fill(&mut out);                  // one callback serves the whole desk
+/// assert!(out.iter().any(|s| s.abs() > 0.0));
+/// ```
 pub struct Mixer {
     sources: Vec<MixedSource>,
     /// `buses[0]` is always the master bus; a bus's index equals its [`BusId`].
