@@ -139,9 +139,10 @@ fn render_stereo(doc: &SoundDoc) -> (Vec<f32>, Vec<f32>) {
 /// When a scheduled change takes effect, relative to the musical clock. Anything
 /// but [`Immediate`](Quantize::Immediate) needs a tempo ([`set_tempo`](AdaptiveMusic::set_tempo));
 /// without one it degrades to `Immediate`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Quantize {
-    /// Apply on the next `fill` block (no beat alignment).
+    /// Apply on the next `fill` block (no beat alignment; the default).
+    #[default]
     Immediate,
     /// Apply on the next beat boundary.
     Beat,

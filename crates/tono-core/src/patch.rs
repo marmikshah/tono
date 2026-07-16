@@ -44,7 +44,22 @@ pub struct Patch {
     pub params: Vec<ParamSpec>,
 }
 
+impl From<SoundDoc> for Patch {
+    fn from(doc: SoundDoc) -> Self {
+        Patch::new(doc)
+    }
+}
+
 impl Patch {
+    /// A patch around `doc` with no parameters yet — add [`ParamSpec`]s to
+    /// expose knobs.
+    pub fn new(doc: SoundDoc) -> Self {
+        Patch {
+            doc,
+            params: Vec::new(),
+        }
+    }
+
     /// Bake the patch into a concrete document with the given parameter values
     /// (missing → default, out-of-range → clamped). Validated like any edit, so
     /// a bad path or value is a clear error, never a corrupt graph.

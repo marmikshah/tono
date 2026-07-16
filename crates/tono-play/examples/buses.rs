@@ -22,7 +22,7 @@ fn node(json: &str) -> Node {
 
 fn main() -> anyhow::Result<()> {
     let sr = device_sample_rate()?;
-    let mut mixer = Mixer::new_at(sr);
+    let mut mixer = Mixer::new(sr);
 
     // A music bus: brighten with a peaking EQ, then glue with a compressor.
     let music = mixer.bus("music");

@@ -130,6 +130,27 @@ pub struct SoundDoc {
     pub root: Node,
 }
 
+impl SoundDoc {
+    /// A new document around `root`, stamped with the current
+    /// [`SCHEMA_VERSION`] and [`ENGINE_VERSION`] (this is the authoring
+    /// constructor — new sounds get the current kernels) and every other
+    /// field at its serde default: 0.3 s, 44 100 Hz, seed 0, mono, one-shot.
+    pub fn new(name: impl Into<String>, root: Node) -> Self {
+        SoundDoc {
+            name: name.into(),
+            duration: default_duration(),
+            sample_rate: default_sample_rate(),
+            seed: 0,
+            version: Some(SCHEMA_VERSION),
+            engine: Some(ENGINE_VERSION),
+            stereo: Stereo::default(),
+            normalize: None,
+            playback: Playback::default(),
+            root,
+        }
+    }
+}
+
 /// How the rendered sound is meant to be played back.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
@@ -211,6 +232,33 @@ pub enum Value {
     Note(String),
     /// A modulator that produces a value per sample.
     Modulated(Modulator),
+}
+
+impl From<f32> for Value {
+    /// A constant — `"freq": 440.0.into()`.
+    fn from(v: f32) -> Self {
+        Value::Const(v)
+    }
+}
+
+impl From<&str> for Value {
+    /// A note name (`"C4"`, `"F#3"`, `"midi:69"`) — resolved to Hz at render.
+    fn from(name: &str) -> Self {
+        Value::Note(name.to_string())
+    }
+}
+
+impl From<String> for Value {
+    /// A note name (see [`note_to_hz`]).
+    fn from(name: String) -> Self {
+        Value::Note(name)
+    }
+}
+
+impl From<Modulator> for Value {
+    fn from(m: Modulator) -> Self {
+        Value::Modulated(m)
+    }
 }
 
 /// Parse a musical pitch into Hz: a note name (`"A4"`, `"C#3"`, `"Gb5"`,
@@ -506,6 +554,20 @@ pub struct Adsr {
     /// Initial transient boost, 0..1.
     #[serde(default)]
     pub punch: f32,
+}
+
+impl Adsr {
+    /// An envelope with the four classic stages (`punch` 0). Attack/decay/
+    /// release in seconds, sustain 0..1.
+    pub fn new(a: f32, d: f32, s: f32, r: f32) -> Self {
+        Adsr {
+            a,
+            d,
+            s,
+            r,
+            punch: 0.0,
+        }
+    }
 }
 
 /// One resonant mode of a [`Node::Modal`] bank: a single damped sinusoidal

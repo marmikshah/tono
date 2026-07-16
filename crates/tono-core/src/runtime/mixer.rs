@@ -106,22 +106,12 @@ pub struct Mixer {
     fx_in: Vec<(Vec<f32>, Vec<f32>)>,
 }
 
-impl Default for Mixer {
-    fn default() -> Self {
-        Mixer::new()
-    }
-}
-
 impl Mixer {
-    /// An empty mixer with no sample rate. Sources sum additively; adding effect
-    /// chains returns [`MixerError::NoSampleRate`] — use [`Mixer::new_at`] for FX.
-    pub fn new() -> Self {
-        Mixer::build(None)
-    }
-
     /// An empty mixer that renders at `sample_rate`, so buses can carry live
-    /// effect chains.
-    pub fn new_at(sample_rate: u32) -> Self {
+    /// effect chains. (Every other runtime constructor — `Engine::new`,
+    /// `AdaptiveMusic::new`, `Instrument::new` — takes the rate up front; a
+    /// rate-less mixer deferred the failure to the first `fx_bus` call.)
+    pub fn new(sample_rate: u32) -> Self {
         Mixer::build(Some(sample_rate))
     }
 
