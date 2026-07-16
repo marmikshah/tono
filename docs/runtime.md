@@ -1,12 +1,44 @@
-# In-engine runtime — parametric SFX
+# Embedding tono — the live runtime and parametric patches
 
 The same deterministic engine that renders on the command line and in the
-desktop studio also runs **inside your game**. A game depends
-on the pure [`tono-core`](../crates/tono-core) crate, ships a **patch** (a
-`SoundDoc` template + named parameters), and renders per-instance variations at
-runtime — an impact that scales with collision force, a footstep that varies by
-surface — with **zero baked WAV files**. No DAW can do this; it's the payoff of
-the deterministic, headless design.
+desktop studio also runs **inside your game**. A game depends on the pure
+[`tono-core`](../crates/tono-core) crate and gets two things: a **live
+runtime** (an embeddable engine/mixer that serves real-time audio) and
+**patches** — `SoundDoc` templates with named parameters that render
+per-instance variations at runtime, an impact that scales with collision
+force, a footstep that varies by surface, with **zero baked WAV files**. No
+DAW can do this; it's the payoff of the deterministic, headless design.
+
+## The live runtime in 60 seconds
+
+Everything live implements one trait — `runtime::AudioSource` ("fill this
+interleaved-stereo buffer") — so your output adapter never depends on a
+concrete engine type:
+
+```rust
+use tono_core::runtime::{Engine, Priority};
+
+let mut engine = Engine::new(48_000);
+engine.set_max_voices(32);                                  // polyphony budget
+let music = engine.load(&bgm_doc);
+engine.play_looping_prioritized(music, Priority::CRITICAL); // never stolen
+```
+
+- **`Engine`** — load docs/patches as resources, spawn instances, tween
+  parameters, cap polyphony with priority stealing.
+- **`Mixer`** — route any set of sources through buses with live insert
+  chains (reverb/EQ/compressor) and post-fader sends.
+- **`Engine::split(ring_frames)`** — the wait-free seam for a real audio
+  thread: a `Controller` for your game loop, a lock-free `Renderer` for the
+  callback. No mutex ever touches the audio thread.
+- **`adaptive::AdaptiveMusic`** — intensity-layered stems, beat-quantized
+  section transitions, stingers on the downbeat, sidechain ducking.
+- **`instrument::Instrument`** — a polyphonic, playable voice over any patch
+  (note_on/note_off, bends, mod wheel) for live keyboards.
+
+API detail lives on [docs.rs](https://docs.rs/tono-core); the
+[architecture guide](https://marmikshah.github.io/tono/architecture.html)
+explains how the pieces compose. The rest of this page covers patches.
 
 ## The idea
 
@@ -27,7 +59,7 @@ to WAV offline and stream the identical thing in-engine.
 ```toml
 # Cargo.toml
 [dependencies]
-tono-core = { git = "https://github.com/marmikshah/tono" }
+tono-core = "1"
 ```
 
 ```rust
