@@ -1173,3 +1173,77 @@ fn mix_layers_and_mul_gates() {
     // gain (a processor) standalone renders silence; mul with silence = silence.
     assert!(rms(&render(&d)) < 1e-6);
 }
+
+#[test]
+fn unvalidated_docs_render_without_panicking() {
+    // The codebase's contract: render() must never panic, even on documents
+    // that skipped validate() — the kernels clamp defensively.
+    let d = doc(r#"{ "name": "n", "duration": 0.05, "root": { "type": "seq",
+                 "bpm": 120, "wave": "piano", "piano_inharm": -1, "env": { "d": 0.05 },
+                 "notes": [ { "step": 0, "len": 1, "pitch": 220 } ] } }"#);
+    assert!(d.validate().is_err(), "the doc is genuinely unvalidated");
+    let s = render(&d);
+    assert!(s.iter().all(|x| x.is_finite()));
+
+    let d = doc(
+        r#"{ "name": "n", "duration": 0.05, "root": { "type": "chain",
+                 "stages": [ { "type": "noise" }, { "type": "bitcrush", "bits": 32 } ] } }"#,
+    );
+    assert!(d.validate().is_err());
+    let s = render(&d);
+    assert!(s.iter().all(|x| x.is_finite()));
+
+    // An absurd sample rate inverts the pluck's clamp bounds (used to panic).
+    let d = doc(r#"{ "name": "n", "duration": 0.05, "sample_rate": 20,
+                 "root": { "type": "seq", "bpm": 120, "wave": "pluck", "env": { "d": 0.05 },
+                 "notes": [ { "step": 0, "len": 1, "pitch": 220 } ] } }"#);
+    assert!(d.validate().is_err());
+    let s = render(&d);
+    assert!(s.iter().all(|x| x.is_finite()));
+}
+
+#[test]
+fn extreme_but_valid_docs_render_finite() {
+    // Everything at (or just inside) a validation cap must render finite
+    // audio — the caps exist to keep the kernels out of the overflow regime.
+    let cases = [
+        r#"{ "name": "n", "duration": 0.05, "root": { "type": "super", "freq": 110,
+                 "detune_cents": 12000 } }"#,
+        r#"{ "name": "n", "duration": 0.05, "root": { "type": "fm", "freq": 100000,
+                 "ratio": 4096, "index": 1 } }"#,
+        r#"{ "name": "n", "duration": 0.05, "root": { "type": "chain", "stages": [
+                { "type": "noise" },
+                { "type": "lowpass",
+                  "cutoff": { "rand": { "from": 200, "to": 1200, "rate": 10000 } } }
+            ] } }"#,
+        r#"{ "name": "n", "duration": 0.05, "root": { "type": "chain", "stages": [
+                { "type": "noise" }, { "type": "compress", "threshold": 0.01, "ratio": 1e30 }
+            ] } }"#,
+        r#"{ "name": "n", "duration": 0.05, "root": { "type": "sine", "freq": "midi:160" } }"#,
+    ];
+    for json in cases {
+        let d = doc(json);
+        d.validate().unwrap_or_else(|e| panic!("{json}: {e}"));
+        let s = render(&d);
+        assert!(s.iter().all(|x| x.is_finite()), "{json}: non-finite sample");
+    }
+}
+
+#[test]
+fn peak_limit_scrubs_non_finite_samples() {
+    // A NaN/inf buffer used to measure peak 0 (f32::max discards NaN) and
+    // flow un-limited to the encoders; now it is scrubbed to silence first.
+    let mut ch = [0.5f32, f32::NAN, f32::INFINITY, -0.25];
+    crate::dsp::peak_limit(&mut [&mut ch]);
+    assert!(ch.iter().all(|x| x.is_finite()));
+    assert_eq!(ch[1], 0.0);
+    assert_eq!(ch[3], -0.25);
+}
+
+#[test]
+fn loudness_gated_tolerates_mismatched_channel_lengths() {
+    let a = [0.5f32; 4410];
+    let b = [0.5f32; 2205];
+    let l = crate::dsp::loudness_lufs_gated(&[&a, &b], 44_100);
+    assert!(l.is_finite());
+}

@@ -86,7 +86,9 @@ pub fn render(doc: &SoundDoc) -> Signal {
 #[cfg(test)]
 pub(crate) fn render_graph(doc: &SoundDoc) -> Signal {
     let sr = doc.sample_rate;
-    let n = ((doc.duration * sr as f32).ceil() as usize).max(1);
+    // validate() caps duration at 600 s; the clamp guards direct render calls
+    // on unvalidated docs from an unbounded allocation (1e12 s ⇒ OOM abort).
+    let n = ((doc.duration.clamp(0.0, 600.0) * sr as f32).ceil() as usize).max(1);
     let mut rng = Rng::new(doc.seed);
     render_node(&doc.root, n, sr, &mut rng, doc.effective_engine(), doc.seed)
 }
@@ -94,7 +96,9 @@ pub(crate) fn render_graph(doc: &SoundDoc) -> Signal {
 /// The non-mixer render path: one graph, one mono buffer.
 fn render_plain(doc: &SoundDoc) -> Signal {
     let sr = doc.sample_rate;
-    let n = ((doc.duration * sr as f32).ceil() as usize).max(1);
+    // validate() caps duration at 600 s; the clamp guards direct render calls
+    // on unvalidated docs from an unbounded allocation (1e12 s ⇒ OOM abort).
+    let n = ((doc.duration.clamp(0.0, 600.0) * sr as f32).ceil() as usize).max(1);
     let mut rng = Rng::new(doc.seed);
     let engine = doc.effective_engine();
     let mut out = render_node(&doc.root, n, sr, &mut rng, engine, doc.seed);
@@ -187,7 +191,10 @@ fn eval_value(v: &Value, n: usize, sr: u32) -> Vec<f32> {
             // this modulator's own fields, so it is deterministic and stable
             // under sibling edits (it never touches the shared render stream).
             let mut rng = Rng::new(rand_seed(*seed, *from, *to, *rate));
-            let inc = rate.max(1e-4) / srf; // segments per sample
+            // Segments per sample. validate() caps rate at 10k (inc ≤ 1.25 at
+            // 8 kHz sr); the .min(64.0) keeps an unvalidated absurd rate from
+            // turning the catch-up loop below into a hang.
+            let inc = (rate.max(1e-4) / srf).min(64.0);
             let (mut prev, mut next) = (rng.range(*from, *to), rng.range(*from, *to));
             let mut phase = 0.0f32;
             (0..n)
@@ -375,7 +382,9 @@ fn apply_processor(
             input.iter().zip(g).map(|(x, k)| x * k).collect()
         }
         Node::Bitcrush { bits } => {
-            let levels = (1u32 << *bits as u32) as f32;
+            // validate() bounds bits to 1..=16; the .min(31) keeps a direct
+            // render of an unvalidated doc from overflowing the shift.
+            let levels = (1u32 << (*bits as u32).min(31)) as f32;
             let half = levels / 2.0;
             input
                 .iter()

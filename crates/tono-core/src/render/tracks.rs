@@ -137,7 +137,9 @@ pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
         return None;
     };
     let sr = doc.sample_rate;
-    let n = ((doc.duration * sr as f32).ceil() as usize).max(1);
+    // validate() caps duration at 600 s; the clamp guards direct render calls
+    // on unvalidated docs from an unbounded allocation (1e12 s ⇒ OOM abort).
+    let n = ((doc.duration.clamp(0.0, 600.0) * sr as f32).ceil() as usize).max(1);
     let per_track_streams = doc.effective_version() >= 2;
     let engine = doc.effective_engine();
     let mut rng = Rng::new(doc.seed);
