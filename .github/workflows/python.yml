@@ -1,8 +1,11 @@
 name: Python
 
 # The PyO3 bindings (crates/tono-py) are off the default build/CI (a non-default
-# workspace member), so this is their own gate: a determinism smoke test plus abi3
-# wheels for every platform. It does not touch the main `CI` workflow.
+# workspace member), so this is their own gate: a determinism smoke test on the
+# changes that could break them. Wheel builds moved to wheels.yml — they run
+# only on release tags (PRs were paying the 3-platform matrix, 10x-cost macOS
+# included, for artifacts nobody ships until a release). It does not touch the
+# main `CI` workflow.
 
 on:
   push:
@@ -39,46 +42,3 @@ jobs:
         # `maturin develop` needs an active virtualenv (absent on CI's system
         # Python), so the target builds a wheel and pip-installs it instead.
         run: make python-smoke
-
-  wheels:
-    name: Wheels (${{ matrix.platform.os }})
-    needs: test
-    runs-on: ${{ matrix.platform.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - os: ubuntu-latest
-            # A container build (yum-based AlmaLinux 8) so the wheel is glibc-2.28
-            # compliant instead of linking the host's newer libs.
-            manylinux: "2_28"
-            args: --release
-          - os: macos-latest
-            manylinux: auto
-            args: --release --target universal2-apple-darwin
-          - os: windows-latest
-            manylinux: auto
-            args: --release
-    steps:
-      - uses: actions/checkout@v5
-      - uses: PyO3/maturin-action@v1
-        with:
-          command: build
-          # `manylinux` as an action input runs the Linux build INSIDE the
-          # container (ignored on macOS/Windows); passing it in `args` instead
-          # builds on the host and fails the compliance audit.
-          manylinux: ${{ matrix.platform.manylinux }}
-          # abi3-py39: one wheel per platform covers every CPython 3.9+.
-          args: ${{ matrix.platform.args }} --out dist -m crates/tono-py/Cargo.toml
-          # cpal needs ALSA dev headers to build. yum inside the manylinux
-          # container (root), apt on a Debian host (needs sudo).
-          before-script-linux: |
-            if command -v yum >/dev/null; then yum install -y alsa-lib-devel; fi
-            if command -v apt-get >/dev/null; then
-              (sudo apt-get update && sudo apt-get install -y libasound2-dev) \
-                || (apt-get update && apt-get install -y libasound2-dev)
-            fi
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wheels-${{ matrix.platform.os }}
-          path: dist
