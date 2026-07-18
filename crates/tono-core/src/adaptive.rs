@@ -159,7 +159,9 @@ const DUCK_SNAP_EPSILON: f32 = 1e-4;
 /// doc's Haas/Wide `stereo` treatment is NOT applied (unlike
 /// `player::render_stereo`, which stereoizes; unifying the two would change
 /// adaptive playback bytes for treated docs, so the divergence is deliberate).
-fn render_stereo_or_dup(doc: &SoundDoc) -> (Vec<f32>, Vec<f32>) {
+/// Public so hosts can render off the audio thread and hand the buffers to
+/// [`AdaptiveMusic::stinger_stereo`].
+pub fn render_stereo_or_dup(doc: &SoundDoc) -> (Vec<f32>, Vec<f32>) {
     let p = render::render_product(doc);
     p.stereo.unwrap_or_else(|| (p.mono.clone(), p.mono))
 }
@@ -203,8 +205,16 @@ struct Section {
 /// A short declick cross-fade from the current section to `to`.
 struct SectionFade {
     to: usize,
-    gain: f32,
+    /// The gain the fade started from (0.0 entering; the mid-fade value when
+    /// a reversal flips the step).
+    from_gain: f32,
+    /// Per-frame gain increment; negative when a cancelled transition ramps
+    /// the fade back down.
     step: f32,
+    /// Frames faded so far. The gain is computed from this absolute count
+    /// (`from_gain + frames_done * step`), never accumulated per span, so the
+    /// ramp is bit-exact for any host block size.
+    frames_done: usize,
 }
 
 /// A layered, intensity-driven music bed with one-shot stingers.
@@ -595,6 +605,28 @@ impl AdaptiveMusic {
         // just cancels a pending transition.
         self.pending
             .retain(|s| !matches!(s.action, Action::Transition { .. }));
+        // While a cross-fade A→B is in flight the effective current section is
+        // B: requesting B again is a no-op, and requesting A cancels the fade
+        // back — the fade runs in reverse from its current gain, so the
+        // reversal is click-free.
+        if let Some(f) = &self.section_fade {
+            if f.to == section {
+                return;
+            }
+            if self.current_section == Some(section) {
+                // Reverse from the gain the next sample would have used —
+                // sample-continuous by construction.
+                self.section_fade = Some(SectionFade {
+                    to: f.to,
+                    from_gain: f.from_gain + f.frames_done as f32 * f.step,
+                    step: -f.step,
+                    frames_done: 0,
+                });
+                return;
+            }
+            // A third section: abandon the in-flight fade and start fresh.
+            self.section_fade = None;
+        }
         if self.current_section == Some(section) {
             return;
         }
@@ -617,8 +649,9 @@ impl AdaptiveMusic {
         self.sections[to].buffer.reset();
         self.section_fade = Some(SectionFade {
             to,
-            gain: 0.0,
+            from_gain: 0.0,
             step: self.section_step,
+            frames_done: 0,
         });
     }
 
@@ -632,17 +665,18 @@ impl AdaptiveMusic {
         self.sections.iter().position(|s| s.name == name)
     }
 
-    /// Fire every scheduled action due within `[position, position + frames)`,
-    /// in chronological order. Called at the top of each block.
-    fn fire_due(&mut self, frames: usize) {
-        let horizon = self.position + frames as u64;
-        if self.pending.iter().all(|s| s.fire_at >= horizon) {
+    /// Fire every scheduled action due at the current position, in
+    /// chronological order. [`fill`](AudioSource::fill) calls this at each
+    /// exact boundary frame (rendering sub-spans around them), so the output
+    /// never depends on the host's block size.
+    fn fire_due(&mut self) {
+        if self.pending.iter().all(|s| s.fire_at > self.position) {
             return;
         }
         let mut due: Vec<Scheduled> = Vec::new();
         let mut i = 0;
         while i < self.pending.len() {
-            if self.pending[i].fire_at < horizon {
+            if self.pending[i].fire_at <= self.position {
                 due.push(self.pending.swap_remove(i));
             } else {
                 i += 1;
@@ -663,8 +697,42 @@ impl AudioSource for AdaptiveMusic {
         if self.paused {
             return frames;
         }
-        // Apply any changes scheduled to land in this block before rendering it.
-        self.fire_due(frames);
+        // Apply each scheduled action at its exact frame — render sub-spans
+        // around boundaries, so the output is identical for any host block
+        // size (an action must not fire early just because the block is big).
+        let mut done = 0usize;
+        while done < frames {
+            self.fire_due();
+            let next = self
+                .pending
+                .iter()
+                .map(|s| s.fire_at)
+                .filter(|&t| t > self.position)
+                .min();
+            let span = match next {
+                Some(t) => ((t - self.position) as usize).min(frames - done),
+                None => frames - done,
+            };
+            self.render_span(&mut out[done * 2..(done + span) * 2], span);
+            done += span;
+        }
+        frames
+    }
+
+    /// Restart the bed through the trait as well — previously only the
+    /// inherent [`reset`](AdaptiveMusic::reset) ran, so via
+    /// `&mut dyn AudioSource` (a host transport, a mixer) reset was a silent
+    /// no-op that left the clock, stingers, and schedules running.
+    fn reset(&mut self) {
+        AdaptiveMusic::reset(self);
+    }
+}
+
+impl AdaptiveMusic {
+    /// Render one uninterrupted span of `frames` frames into `out` (sections,
+    /// layers, stingers, duck) and advance the clock. [`AudioSource::fill`]
+    /// splits the block at schedule boundaries and calls this per sub-span.
+    fn render_span(&mut self, out: &mut [f32], frames: usize) {
         if self.scratch.len() < frames * 2 {
             self.scratch.resize(frames * 2, 0.0);
         }
@@ -672,28 +740,37 @@ impl AudioSource for AdaptiveMusic {
         let scratch = &mut self.scratch[..frames * 2];
 
         // Horizontal section (the base bed), optionally cross-fading to a new one.
-        let fade = self.section_fade.as_ref().map(|f| (f.to, f.gain, f.step));
-        if let Some((to, start, step)) = fade {
+        // The fade's step can be negative: a cancelled transition ramps the same
+        // fade back down to 0 (a click-free reversal) instead of completing.
+        let fade = self
+            .section_fade
+            .as_ref()
+            .map(|f| (f.to, f.from_gain, f.step, f.frames_done));
+        if let Some((to, start, step, done)) = fade {
+            let g = |f: usize| (start + (done + f) as f32 * step).clamp(0.0, 1.0);
             if let Some(cur) = self.current_section {
                 self.sections[cur].buffer.fill(scratch);
                 for f in 0..frames {
-                    let g = (start + f as f32 * step).min(1.0);
+                    let g = g(f);
                     out[f * 2] += scratch[f * 2] * (1.0 - g);
                     out[f * 2 + 1] += scratch[f * 2 + 1] * (1.0 - g);
                 }
             }
             self.sections[to].buffer.fill(scratch);
             for f in 0..frames {
-                let g = (start + f as f32 * step).min(1.0);
+                let g = g(f);
                 out[f * 2] += scratch[f * 2] * g;
                 out[f * 2 + 1] += scratch[f * 2 + 1] * g;
             }
-            let end = (start + frames as f32 * step).min(1.0);
+            let end = g(frames);
             if end >= 1.0 {
                 self.current_section = Some(to);
                 self.section_fade = None;
+            } else if end <= 0.0 {
+                // A reversed fade settled back on the current section.
+                self.section_fade = None;
             } else if let Some(fd) = self.section_fade.as_mut() {
-                fd.gain = end;
+                fd.frames_done = done + frames;
             }
         } else if let Some(cur) = self.current_section {
             self.sections[cur].buffer.fill(scratch);
@@ -707,6 +784,12 @@ impl AudioSource for AdaptiveMusic {
             layer.source.fill(scratch);
             for f in 0..frames {
                 layer.gain += (layer.target - layer.gain) * coeff;
+                // Snap at the fade's end (like the duck below) so a faded-out
+                // layer reaches exactly 0 — the one-pole otherwise asymptotes
+                // forever, rendering inaudible content at full CPU cost.
+                if (layer.target - layer.gain).abs() < DUCK_SNAP_EPSILON {
+                    layer.gain = layer.target;
+                }
                 out[f * 2] += scratch[f * 2] * layer.gain;
                 out[f * 2 + 1] += scratch[f * 2 + 1] * layer.gain;
             }
@@ -747,7 +830,6 @@ impl AudioSource for AdaptiveMusic {
             }
         }
         self.position += frames as u64;
-        frames
     }
 }
 
@@ -1136,5 +1218,92 @@ mod tests {
             grid > 0,
             "no tempo → grid falls back to the first stem's natural length"
         );
+    }
+
+    #[test]
+    fn scheduled_events_are_block_size_invariant() {
+        // The determinism guarantee: quantized actions fire at their exact
+        // frame, so the same schedule renders identical audio no matter what
+        // block size the host serves (a 128-frame AudioWorklet vs a 512-frame
+        // cpal callback used to render different audio).
+        let run = |block: usize| {
+            let mut m = AdaptiveMusic::new(48_000);
+            m.add_section("a", &tone(330.0));
+            let b = m.add_section("b", &tone(660.0));
+            m.add_layer(LoopBuffer::from_doc(&tone(220.0)), 0.0);
+            m.add_layer(LoopBuffer::from_doc(&tone(880.0)), 0.5);
+            m.set_tempo(120.0, 4);
+            m.set_intensity_at(1.0, Quantize::Beat);
+            m.stinger_at(&tone(990.0), Quantize::Beat);
+            m.transition_to(b, Quantize::Bar);
+            let mut acc = Vec::new();
+            let mut out = vec![0.0f32; block * 2];
+            for _ in 0..(200_000 / block) {
+                m.fill(&mut out);
+                acc.extend_from_slice(&out);
+            }
+            acc
+        };
+        let a = run(128);
+        let b = run(512);
+        let n = a.len().min(b.len());
+        assert_eq!(
+            a[..n],
+            b[..n],
+            "output must not depend on the host block size"
+        );
+    }
+
+    #[test]
+    fn transition_reversal_mid_fade_cancels_back() {
+        // During a fade A→B the effective section is B — asking for A again
+        // cancels the fade (running it in reverse), not an "already current"
+        // no-op that lets B take over anyway.
+        let mut m = AdaptiveMusic::new(48_000);
+        let a = m.add_section("a", &tone(330.0));
+        let b = m.add_section("b", &tone(660.0));
+        m.transition_to(b, Quantize::Immediate);
+        advance(&mut m, 512); // partway into the fade
+        m.transition_to(a, Quantize::Immediate);
+        for _ in 0..40 {
+            advance(&mut m, 512);
+        }
+        assert_eq!(m.current_section(), Some(a), "cancelled back to a");
+    }
+
+    #[test]
+    fn re_transition_to_the_fade_target_is_a_noop() {
+        // transition_to(B) mid-fade must not restart B's fade (rewinding its
+        // buffer and audibly restarting): the original fade just completes.
+        let mut m = AdaptiveMusic::new(48_000);
+        m.add_section("a", &tone(330.0));
+        let b = m.add_section("b", &tone(660.0));
+        m.transition_to(b, Quantize::Immediate);
+        advance(&mut m, 512); // 512 frames of fade progress
+        m.transition_to(b, Quantize::Immediate);
+        advance(&mut m, 2500); // +512 > the 2880-frame fade — done if unrestarted
+        assert_eq!(
+            m.current_section(),
+            Some(b),
+            "the fade completed on its original clock"
+        );
+    }
+
+    #[test]
+    fn audio_source_reset_restarts_the_bed() {
+        // Through `&mut dyn AudioSource` reset used to be a silent no-op.
+        let mut m = AdaptiveMusic::new(48_000);
+        m.add_layer(LoopBuffer::from_doc(&tone(220.0)), 0.0);
+        m.stinger(&tone(990.0));
+        advance(&mut m, 512);
+        assert!(m.position_frames() > 0);
+        let src: &mut dyn AudioSource = &mut m;
+        src.reset();
+        assert_eq!(
+            m.position_frames(),
+            0,
+            "reset through the trait restarts the clock"
+        );
+        assert_eq!(m.active_stingers(), 0, "and clears stingers");
     }
 }

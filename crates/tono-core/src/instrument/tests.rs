@@ -421,3 +421,94 @@ fn design_round_trips_through_serde() {
         "preset recall works"
     );
 }
+
+#[test]
+fn velocity_zero_note_on_is_a_note_off() {
+    // MIDI convention: hosts send note-on velocity 0 as note-off; spawning a
+    // silent voice for it would leak a voice that never releases.
+    let amp = Adsr {
+        a: 0.001,
+        d: 0.001,
+        s: 0.8,
+        r: 0.05,
+        punch: 0.0,
+    };
+    let design = InstrumentDesign::new(saw_patch()).with_amp(amp);
+    let mut inst = Instrument::new(design, 48_000).unwrap();
+    let h = inst.note_on(Note::A4, 1.0);
+    assert!(inst.is_active(h));
+    let inert = inst.note_on(Note::A4, 0.0);
+    assert!(
+        !inst.is_active(inert),
+        "velocity-0 returns the inert handle"
+    );
+    for _ in 0..40 {
+        inst.fill(&mut vec![0.0f32; 512 * 2]);
+    }
+    assert!(!inst.is_active(h), "the voice released and culled");
+    inst.note_on(Note::C4, 0.0);
+    assert_eq!(inst.active_voices(), 0, "no stuck silent voice");
+}
+
+#[test]
+fn velocity_zero_note_on_releases_in_mono_too() {
+    let design = InstrumentDesign::new(saw_patch()).with_mode(PlayMode::Mono { legato: true });
+    let mut inst = Instrument::new(design, 48_000).unwrap();
+    inst.note_on(Note::A4, 1.0);
+    assert_eq!(inst.active_voices(), 1);
+    inst.note_on(Note::A4, 0.0); // note-off, not a retune to a silent voice
+    for _ in 0..60 {
+        inst.fill(&mut vec![0.0f32; 512 * 2]);
+    }
+    assert_eq!(
+        inst.active_voices(),
+        0,
+        "the mono voice released and culled"
+    );
+}
+
+#[test]
+fn tremolo_with_zero_rate_is_off_byte_identically() {
+    // with_tremolo(0.0, d) used to apply a constant mid-depth gain cut
+    // instead of no modulation at all.
+    let mut plain = Instrument::new(InstrumentDesign::new(saw_patch()), 48_000).unwrap();
+    plain.note_on(Note::A4, 1.0);
+    let mut a = vec![0.0f32; 512 * 2];
+    plain.fill(&mut a);
+
+    let design = InstrumentDesign::new(saw_patch()).with_tremolo(0.0, 0.8);
+    assert!(!design.modulation.is_active(), "rate 0 disables the LFO");
+    let mut trem = Instrument::new(design, 48_000).unwrap();
+    trem.note_on(Note::A4, 1.0);
+    let mut b = vec![0.0f32; 512 * 2];
+    trem.fill(&mut b);
+    assert_eq!(
+        bits(&a),
+        bits(&b),
+        "zero-rate tremolo must be byte-identical to no modulation"
+    );
+}
+
+#[test]
+fn transpose_leaves_unparseable_notes_as_authored() {
+    // unwrap_or(440.0) used to turn a typo into a silent A4.
+    let mut node: Node = serde_json::from_str(r#"{ "type":"sine", "freq":"H9" }"#).unwrap();
+    transpose(&mut node, 2.0);
+    let Node::Sine {
+        freq: crate::dsl::Value::Note(s),
+    } = node
+    else {
+        panic!("an unparseable note stays a note");
+    };
+    assert_eq!(s, "H9");
+
+    let mut node: Node = serde_json::from_str(r#"{ "type":"sine", "freq":"A4" }"#).unwrap();
+    transpose(&mut node, 2.0);
+    let Node::Sine {
+        freq: crate::dsl::Value::Const(c),
+    } = node
+    else {
+        panic!("a parseable note resolves to a transposed constant");
+    };
+    assert_eq!(c, 880.0);
+}

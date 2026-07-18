@@ -96,7 +96,8 @@ impl Player {
     /// the play head. Frames past the end are written as silence; with
     /// `looping`, the head wraps to the start. When not `playing`, writes
     /// silence without advancing. Returns the number of frames written from the
-    /// rendered audio (non-silent).
+    /// rendered audio (non-silent). `out` is expected to hold whole stereo
+    /// frames (even length); a trailing odd sample is left untouched.
     pub fn fill(&mut self, out: &mut [f32]) -> usize {
         let frames = out.len() / 2;
         if !self.playing {
