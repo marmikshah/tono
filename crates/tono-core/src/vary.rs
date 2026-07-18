@@ -98,6 +98,9 @@ fn transpose_node(node: &mut Node, ratio: f32) {
         Node::Tracks { tracks, .. } => tracks
             .iter_mut()
             .for_each(|t| transpose_node(&mut t.node, ratio)),
+        // The trigger carries pitched material too (e.g. the kick pattern the
+        // pump follows) — it must shift with everything else.
+        Node::Duck { trigger, .. } => transpose_node(trigger, ratio),
         _ => {}
     }
 }
@@ -165,23 +168,50 @@ fn mutate_value(value: &mut Value, amount: f32, rng: &mut Rng) {
         Value::Modulated(Modulator::Rand { from, to, rate, .. }) => {
             *from = jitter(*from, amount, rng, 0.0);
             *to = jitter(*to, amount, rng, 0.0);
-            *rate = jitter(*rate, amount, rng, 0.01);
+            // Clamped to the validation cap — jitter runs to ×2.
+            *rate = jitter(*rate, amount, rng, 0.01).min(10_000.0);
         }
+    }
+}
+
+/// Mutate a frequency-bearing `Value`, then clamp it into the validation
+/// domain (const (0, 100 kHz], modulated endpoints ±1 MHz): `mutate` promises
+/// a still-valid document, and an unclamped jitter could push a near-cap
+/// frequency past the bound (or an exact 0 into a positive-only field).
+fn mutate_freq(value: &mut Value, amount: f32, rng: &mut Rng) {
+    mutate_value(value, amount, rng);
+    fn clamp_ep(x: &mut f32) {
+        *x = (*x).clamp(-1e6, 1e6);
+    }
+    match value {
+        Value::Const(c) => *c = (*c).clamp(1e-3, 100_000.0),
+        Value::Modulated(Modulator::Slide { from, to, .. })
+        | Value::Modulated(Modulator::EnvMod { from, to, .. })
+        | Value::Modulated(Modulator::Rand { from, to, .. }) => {
+            clamp_ep(from);
+            clamp_ep(to);
+        }
+        Value::Modulated(Modulator::Lfo { center, depth, .. }) => {
+            clamp_ep(center);
+            clamp_ep(depth);
+        }
+        Value::Modulated(Modulator::Arp { steps, .. }) => steps.iter_mut().for_each(clamp_ep),
+        Value::Note(_) => {}
     }
 }
 
 fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
     match node {
         Node::Square { freq, duty } => {
-            mutate_value(freq, amount, rng);
+            mutate_freq(freq, amount, rng);
             mutate_duty(duty, amount, rng);
         }
         Node::Triangle { freq } | Node::Sawtooth { freq } | Node::Sine { freq } => {
-            mutate_value(freq, amount, rng)
+            mutate_freq(freq, amount, rng)
         }
         Node::Noise { .. } => {}
         Node::Fm { freq, index, .. } => {
-            mutate_value(freq, amount, rng);
+            mutate_freq(freq, amount, rng);
             mutate_value(index, amount, rng);
         }
         Node::Seq {
@@ -211,30 +241,32 @@ fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
         | Node::Highpass { cutoff, q }
         | Node::Bandpass { cutoff, q }
         | Node::Notch { cutoff, q } => {
-            mutate_value(cutoff, amount, rng);
+            mutate_freq(cutoff, amount, rng);
             *q = jitter(*q, amount, rng, 0.05);
         }
         Node::Peak { cutoff, q, gain_db } => {
-            mutate_value(cutoff, amount, rng);
+            mutate_freq(cutoff, amount, rng);
             *q = jitter(*q, amount, rng, 0.05);
             // Clamped to the ±24 dB validation bound: mutate promises a
             // still-valid document.
             *gain_db = (*gain_db + rng.bi() * amount * 6.0).clamp(-24.0, 24.0);
         }
         Node::Lowshelf { cutoff, gain_db } | Node::Highshelf { cutoff, gain_db } => {
-            mutate_value(cutoff, amount, rng);
+            mutate_freq(cutoff, amount, rng);
             *gain_db = (*gain_db + rng.bi() * amount * 6.0).clamp(-24.0, 24.0);
         }
         Node::Super {
             freq, detune_cents, ..
         } => {
-            mutate_value(freq, amount, rng);
-            *detune_cents = jitter(*detune_cents, amount, rng, 0.0);
+            mutate_freq(freq, amount, rng);
+            // Clamped to the validation cap (10 octaves) — jitter runs to ×2.
+            *detune_cents = jitter(*detune_cents, amount, rng, 0.0).min(12_000.0);
         }
         Node::Gain { amount: amt } => mutate_value(amt, amount, rng),
         Node::Bitcrush { .. } | Node::Downsample { .. } => {}
         Node::Delay { secs, feedback } => {
-            *secs = jitter(*secs, amount, rng, 0.001);
+            // .min(30.0): the validation cap on the delay-line allocation.
+            *secs = jitter(*secs, amount, rng, 0.001).min(30.0);
             *feedback = jitter_unit(*feedback, amount, rng);
         }
         Node::Reverb { room, mix } => {
@@ -243,8 +275,9 @@ fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
         }
         Node::Modal { modes, mix } => {
             for m in modes.iter_mut() {
-                m.freq = jitter(m.freq, amount, rng, 0.0);
-                m.decay = jitter(m.decay, amount, rng, 0.0);
+                // Positive floors: an exact 0 would fail validation.
+                m.freq = jitter(m.freq, amount, rng, 1e-3);
+                m.decay = jitter(m.decay, amount, rng, 1e-3);
                 m.gain = jitter_unit(m.gain, amount, rng);
             }
             *mix = jitter_unit(*mix, amount, rng);
@@ -257,7 +290,7 @@ fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
             *density = jitter(*density, amount, rng, 1.0);
             *decay = jitter(*decay, amount, rng, 0.0);
         }
-        Node::RingMod { freq } => mutate_value(freq, amount, rng),
+        Node::RingMod { freq } => mutate_freq(freq, amount, rng),
         Node::Chorus { rate, depth, mix } => {
             *rate = jitter(*rate, amount, rng, 0.01);
             *depth = jitter_unit(*depth, amount, rng);
@@ -341,6 +374,44 @@ mod tests {
             .as_f64()
             .unwrap() as f32;
         assert!(from != 880.0 && (from - 880.0).abs() <= 880.0 * 0.2 + 1.0);
+    }
+
+    #[test]
+    fn mutate_stays_valid_with_a_delay_and_near_cap_knobs() {
+        // The doc contract: "Ranges are clamped so the result stays valid" —
+        // exercise the caps that used to break it (delay.secs × 2 over the
+        // 30 s bound, detune/rand-rate over the overflow-regime caps).
+        let d: SoundDoc = serde_json::from_str(
+            r#"{ "name": "d", "duration": 0.3, "root": { "type": "chain", "stages": [
+                { "type": "super", "freq": 110, "detune_cents": 9000 },
+                { "type": "lowpass",
+                  "cutoff": { "rand": { "from": 200, "to": 1200, "rate": 9000 } } },
+                { "type": "delay", "secs": 25.0, "feedback": 0.4 }
+            ] } }"#,
+        )
+        .unwrap();
+        for seed in 0..50 {
+            let m = mutate(&d, 1.0, seed);
+            m.validate().unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        }
+    }
+
+    #[test]
+    fn transpose_node_reaches_into_a_duck_trigger() {
+        // The trigger carries the pitched material (e.g. the kick the pump
+        // follows) — skipping it left the trigger untransposed.
+        let mut node: Node = serde_json::from_str(
+            r#"{ "type": "duck", "amount": 0.8, "trigger": { "type": "sine", "freq": 55 } }"#,
+        )
+        .unwrap();
+        transpose_node(&mut node, 2.0);
+        let Node::Duck { trigger, .. } = &node else {
+            panic!("still a duck");
+        };
+        let Node::Sine { freq } = trigger.as_ref() else {
+            panic!("still a sine");
+        };
+        assert!(matches!(freq, Value::Const(c) if *c == 110.0));
     }
 
     #[test]
