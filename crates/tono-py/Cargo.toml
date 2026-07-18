@@ -15,7 +15,9 @@ name = "tono"
 crate-type = ["cdylib"]
 
 [dependencies]
-tono-core = { workspace = true }
+# Explicit features: the bindings use the analysis surface and check .sf2
+# paths, so a change to core's defaults can't silently unbuild this crate.
+tono-core = { workspace = true, features = ["analysis", "sampler"] }
 tono-play = { path = "../tono-play" }
 serde_json = { workspace = true }
 # abi3-py39: one wheel per platform covers every CPython 3.9+. `extension-module`

@@ -140,6 +140,13 @@ impl Engine {
     #[pyo3(signature = (sample_rate=None))]
     fn new(sample_rate: Option<u32>) -> PyResult<Self> {
         let sample_rate = match sample_rate {
+            // The same range SoundDoc::validate enforces — a 0 Hz engine only
+            // produces NaN/silence later.
+            Some(sr) if !(8_000..=192_000).contains(&sr) => {
+                return Err(PyValueError::new_err(format!(
+                    "sample_rate must be in [8000, 192000] Hz, got {sr}"
+                )));
+            }
             Some(sr) => sr,
             None => device_sample_rate()?,
         };
@@ -371,8 +378,12 @@ impl AdaptiveMusic {
     /// Fire a one-shot stinger (SoundDoc JSON) over the bed.
     fn stinger(&self, doc_json: &str) -> PyResult<()> {
         let doc = parse_doc(doc_json, self.sample_rate)?;
+        // Render OFF the shared pump lock — the pump thread needs it every
+        // 5 ms, and a full offline render under it would starve the ring and
+        // drop audio. stinger_stereo installs the pre-rendered buffers.
+        let (left, right) = tono_core::adaptive::render_stereo_or_dup(&doc);
         if let Some(music) = lock(&self.shared).get_mut::<CoreAdaptive>(self.id) {
-            music.stinger(&doc);
+            music.stinger_stereo(left, right);
         }
         Ok(())
     }
