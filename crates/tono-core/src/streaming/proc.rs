@@ -417,7 +417,9 @@ pub(super) fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -
             biquad(FilterKind::HighShelf(*gain_db), cst(cutoff)?, 0.707, sr)
         }
         Node::Bitcrush { bits } => {
-            let levels = (1u32 << *bits as u32) as f32;
+            // Mirrors the offline clamp: validate() bounds bits to 1..=16;
+            // .min(31) keeps an unvalidated doc from overflowing the shift.
+            let levels = (1u32 << (*bits as u32).min(31)) as f32;
             Proc::Bitcrush { half: levels / 2.0 }
         }
         Node::Downsample { factor } => Proc::Downsample {
@@ -467,7 +469,9 @@ pub(super) fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -
             let modes = modes
                 .iter()
                 .map(|m| {
-                    let f0 = m.freq.clamp(1.0, nyq - 1.0);
+                    // The .max(1.0) guard keeps the clamp ordered at absurd
+                    // sample rates (sr < 4), matching the offline path.
+                    let f0 = m.freq.clamp(1.0, (nyq - 1.0).max(1.0));
                     let decay = m.decay.max(1e-3);
                     let w0 = TAU * f0 / srf;
                     let (sin0, cos0) = (w0.sin(), w0.cos());

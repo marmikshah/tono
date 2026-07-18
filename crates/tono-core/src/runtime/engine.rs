@@ -187,6 +187,14 @@ pub(super) struct Instance {
 /// engine.fill(&mut out);
 /// assert!(out.iter().any(|s| s.abs() > 0.0), "the blip is sounding");
 /// ```
+/// # Threading
+/// Mutating calls ([`play`](Self::play), [`set_param`](Self::set_param),
+/// [`stop`](Self::stop), …) render the whole document synchronously —
+/// O(duration), with allocations — so they must never run on an audio
+/// callback thread. Real-time hosts use [`split`](Self::split) to render on a
+/// pump thread joined to the callback by a wait-free ring. Note that
+/// `set_param` re-renders the whole doc per call with no coalescing —
+/// rate-limit parameter automation on the control side.
 pub struct Engine {
     sample_rate: u32,
     patches: Vec<Patch>,
@@ -198,6 +206,11 @@ pub struct Engine {
     buf_b: Vec<f32>,
 }
 
+/// Scratch pre-allocation for [`Engine::fill`]: covers host blocks up to this
+/// many frames without allocating in the callback; a larger block grows the
+/// scratch once, on the first such call.
+const SCRATCH_FRAMES: usize = 8192;
+
 impl Engine {
     /// A fresh engine that renders at `sample_rate`.
     pub fn new(sample_rate: u32) -> Self {
@@ -207,8 +220,8 @@ impl Engine {
             instances: Vec::new(),
             next_id: 1,
             max_voices: None,
-            buf_a: Vec::new(),
-            buf_b: Vec::new(),
+            buf_a: vec![0.0; SCRATCH_FRAMES * 2],
+            buf_b: vec![0.0; SCRATCH_FRAMES * 2],
         }
     }
 
@@ -321,7 +334,11 @@ impl Engine {
             // Outranked by every sounding voice — deny (virtualize to silence).
             return InstanceHandle(0);
         }
-        let values = self.patches[patch.0].defaults();
+        // .get(): a PatchId is Copy and could come from another Engine —
+        // return the inert handle rather than panic.
+        let Some(values) = self.patches.get(patch.0).map(Patch::defaults) else {
+            return InstanceHandle(0);
+        };
         let doc = self.build_doc(patch.0, &values, &BTreeMap::new());
         let player = self.new_player(doc, looping, 0);
         let id = self.next_id;
@@ -433,7 +450,14 @@ impl Engine {
     /// Set an instance's stereo balance (−1 left … +1 right), smoothed over `tw`.
     pub fn set_pan(&mut self, h: InstanceHandle, pan: f32, tw: Tween) {
         if let Some(i) = self.instance_mut(h) {
-            i.pan.set(pan.clamp(-1.0, 1.0), tw);
+            // clamp() passes NaN through, and a NaN pan would NaN the whole
+            // mix — fold it to centre.
+            let pan = if pan.is_nan() {
+                0.0
+            } else {
+                pan.clamp(-1.0, 1.0)
+            };
+            i.pan.set(pan, tw);
         }
     }
 
@@ -444,7 +468,16 @@ impl Engine {
         if self.instances[idx].patch != param.patch {
             return;
         }
-        let name = self.patches[param.patch].params[param.index].name.clone();
+        // .get(): a ParamId is Copy and could come from another Engine whose
+        // same-indexed patch has more params — never panic.
+        let Some(name) = self
+            .patches
+            .get(param.patch)
+            .and_then(|p| p.params.get(param.index))
+            .map(|p| p.name.clone())
+        else {
+            return;
+        };
         self.instances[idx].values.insert(name, value);
         self.rerender(idx, tw);
     }
@@ -479,7 +512,13 @@ impl Engine {
         let inst = &mut self.instances[idx];
         // The current player becomes the outgoing one; the fresh render fades in.
         let outgoing = std::mem::replace(&mut inst.player, fresh);
-        let mut mix = Ramp::new(0.0);
+        // A stacked re-render (a param change landing mid-crossfade) drops the
+        // still-fading previous outgoing player. Starting the new mix at the
+        // old mix's current weight keeps the blend monotonic instead of
+        // re-fading from scratch, so the dropped tail carries only the
+        // remaining (1 − w) of its energy.
+        let w0 = inst.fading_in.as_ref().map_or(0.0, |(_, m)| m.value);
+        let mut mix = Ramp::new(w0);
         mix.set(1.0, fade);
         inst.fading_in = Some((outgoing, mix));
     }
@@ -503,6 +542,16 @@ impl Engine {
     /// Whether a handle still refers to a live instance.
     pub fn is_active(&self, h: InstanceHandle) -> bool {
         self.instances.iter().any(|i| i.id == h.0)
+    }
+
+    /// The current crossfade weight of an instance (test-only introspection).
+    #[cfg(test)]
+    pub(super) fn fade_weight(&self, idx: usize) -> Option<f32> {
+        self.instances
+            .get(idx)?
+            .fading_in
+            .as_ref()
+            .map(|(_, m)| m.value)
     }
 }
 
@@ -545,9 +594,13 @@ impl AudioSource for Engine {
             }
         }
 
-        // Cull finished one-shots and faded-out stops.
-        self.instances
-            .retain(|i| i.player.playing && !(i.stopping && i.gain.at_target()));
+        // Cull finished one-shots and faded-out stops. An instance whose fresh
+        // one-shot ended mid-crossfade lives until the fade completes — its
+        // outgoing player is still sounding.
+        self.instances.retain(|i| {
+            let outgoing_sounding = i.fading_in.as_ref().is_some_and(|(p, _)| p.playing);
+            (i.player.playing || outgoing_sounding) && !(i.stopping && i.gain.at_target())
+        });
         frames
     }
 }

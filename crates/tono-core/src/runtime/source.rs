@@ -50,11 +50,19 @@ pub fn write_interleaved(data: &mut [f32], channels: usize, stereo: &[f32]) {
     }
 }
 /// An [`AudioSource`] over the stateful streaming renderer: streams a
-/// doc's graph **indefinitely and allocation-free** — mono duplicated to
-/// stereo. Returns `None` for docs outside the streamable subset (the caller
-/// falls back to a buffer-backed [`Player`](crate::player::Player)/instance). This is how a game
+/// doc's graph **indefinitely** — mono duplicated to stereo. Returns `None`
+/// for docs outside the streamable subset (the caller falls back to a
+/// buffer-backed [`Player`](crate::player::Player)/instance). This is how a game
 /// feeds the streaming renderer straight to a cpal / AudioWorklet callback
 /// for continuous generative content.
+///
+/// `fill` is allocation-free for blocks up to 8192 frames (the scratch is
+/// pre-allocated at construction); a larger block grows it once, on the first
+/// such call. Caveats past the document's `duration`: a `seq` yields silence
+/// past its pre-rendered buffer (only oscillators/noise truly run forever),
+/// and the baked peak-limit gain was measured over the document only —
+/// free-running output past `duration` is un-limited and can clip where the
+/// finite bounce could not.
 ///
 /// Byte-identity: the offline bounce ends in a transparent sample-peak safety
 /// limit, a whole-buffer gain that cannot be computed causally. [`StreamSource::from_doc`] therefore measures the finite render's peak with
@@ -73,9 +81,12 @@ impl StreamSource {
     pub fn from_doc(doc: &SoundDoc) -> Option<Self> {
         let graph = StreamGraph::try_from_doc(doc)?;
         // Probe pass: same graph, same bytes — find the peak the offline
-        // output stage would have limited against.
+        // output stage would have limited against. The duration clamp mirrors
+        // the offline render paths so an unvalidated doc can't request an
+        // unbounded probe (or seq pre-render) here.
         let mut probe = StreamGraph::try_from_doc(doc)?;
-        let mut remaining = ((doc.duration * doc.sample_rate as f32).ceil() as usize).max(1);
+        let mut remaining =
+            ((doc.duration.clamp(0.0, 600.0) * doc.sample_rate as f32).ceil() as usize).max(1);
         let mut block = [0.0f32; 1024];
         let mut peak = 0.0f32;
         while remaining > 0 {
@@ -91,7 +102,8 @@ impl StreamSource {
         };
         Some(StreamSource {
             graph,
-            scratch: Vec::new(),
+            // Pre-sized so common host blocks never allocate in `fill`.
+            scratch: vec![0.0; 8192],
             gain,
         })
     }

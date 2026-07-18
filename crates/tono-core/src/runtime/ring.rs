@@ -123,10 +123,12 @@ impl<S: AudioSource> std::ops::DerefMut for Pump<S> {
 pub type Controller = Pump<Engine>;
 
 /// Split any [`AudioSource`] into a [`Pump`] (control thread) and a [`Renderer`]
-/// (audio thread) joined by a wait-free ring `ring_frames` deep. Pump the
-/// controller off the audio thread; the renderer drains it in the callback.
+/// (audio thread) joined by a wait-free ring `ring_frames` deep (floored at 1:
+/// a 0-deep ring can never hold a whole frame, so `pump` would push nothing,
+/// silently, forever). Pump the controller off the audio thread; the renderer
+/// drains it in the callback.
 pub fn spsc<S: AudioSource>(source: S, ring_frames: usize) -> (Pump<S>, Renderer) {
-    let ring = Arc::new(SampleRing::new(ring_frames * 2));
+    let ring = Arc::new(SampleRing::new(ring_frames.max(1) * 2));
     (
         Pump {
             source,
