@@ -47,8 +47,8 @@ enum BusKind {
 pub enum MixerError {
     /// An effect node is outside the real-time-streamable subset.
     NotStreamable,
-    /// The mixer was built without a sample rate ([`Mixer::new`]); effect chains
-    /// need [`Mixer::new_at`].
+    /// The mixer has no sample rate. Vestigial — every current constructor
+    /// takes the rate up front, so this is unreachable today.
     NoSampleRate,
     /// The bus handle names no live bus (foreign or stale).
     UnknownBus,
@@ -61,7 +61,7 @@ impl std::fmt::Display for MixerError {
                 write!(f, "effect chain contains a non-streamable node")
             }
             MixerError::NoSampleRate => {
-                write!(f, "mixer has no sample rate; build it with Mixer::new_at")
+                write!(f, "mixer has no sample rate; build it with Mixer::new")
             }
             MixerError::UnknownBus => {
                 write!(f, "unknown bus (foreign or stale BusId)")
@@ -94,7 +94,7 @@ struct Bus {
 ///
 /// With no buses or effects created, every source sits on the master bus at unity
 /// and the output is a plain additive sum — byte-identical to a bare mixer. Live
-/// effects need a sample rate: build with [`Mixer::new_at`].
+/// effects need a sample rate: build with [`Mixer::new`].
 /// ```
 /// use tono_core::prelude::*;
 /// use tono_core::dsl::Node;
