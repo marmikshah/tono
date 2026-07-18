@@ -86,11 +86,18 @@ impl Patch {
         let mut ops = Vec::new();
         for spec in &self.params {
             let (lo, hi) = (spec.min.min(spec.max), spec.min.max(spec.max));
-            let v = values
-                .get(&spec.name)
-                .copied()
-                .unwrap_or(spec.default)
-                .clamp(lo, hi);
+            // NaN bounds (programmatic only — JSON can't carry NaN) would
+            // panic f32::clamp; treat them as unbounded on that side.
+            let lo = if lo.is_nan() { f32::NEG_INFINITY } else { lo };
+            let hi = if hi.is_nan() { f32::INFINITY } else { hi };
+            let raw = values.get(&spec.name).copied().unwrap_or(spec.default);
+            // A NaN (runtime value or default — programmatic only) has no
+            // in-domain reading: skip the write and leave the template's own
+            // value, rather than panic f32::clamp or bake NaN into the graph.
+            if raw.is_nan() {
+                continue;
+            }
+            let v = raw.clamp(lo, hi);
             for path in &spec.paths {
                 ops.push(EditOp::Set {
                     path: path.clone(),
@@ -178,6 +185,45 @@ mod tests {
         assert_ne!(bits(&lo), bits(&hi), "different value → different audio");
         // Same value twice → byte-identical (the runtime determinism guarantee).
         assert_eq!(bits(&lo), bits(&p.render(&val(220.0)).unwrap()));
+    }
+
+    #[test]
+    fn out_of_range_default_is_clamped_and_nan_never_panics() {
+        let doc: SoundDoc = serde_json::from_str(
+            r#"{ "name":"tone", "duration":0.2, "root":{"type":"sine","freq":440} }"#,
+        )
+        .unwrap();
+        // An author default outside [min, max] must not be baked verbatim.
+        let p = Patch {
+            doc: doc.clone(),
+            params: vec![ParamSpec {
+                name: "pitch".into(),
+                paths: vec!["root.freq".into()],
+                min: 100.0,
+                max: 2000.0,
+                default: 99_999.0,
+            }],
+        };
+        assert_eq!(
+            freq_of(&p.instantiate(&BTreeMap::new()).unwrap()),
+            serde_json::json!(2000.0)
+        );
+        // NaN bounds / values (programmatic only) must not panic f32::clamp —
+        // a NaN value skips the write and leaves the template's own value.
+        let p = Patch {
+            doc,
+            params: vec![ParamSpec {
+                name: "pitch".into(),
+                paths: vec!["root.freq".into()],
+                min: f32::NAN,
+                max: f32::NAN,
+                default: 440.0,
+            }],
+        };
+        let mut v = BTreeMap::new();
+        v.insert("pitch".to_string(), f32::NAN);
+        let d = p.instantiate(&v).unwrap();
+        assert_eq!(freq_of(&d), serde_json::json!(440.0));
     }
 
     /// The shipped example patch parses, its paths are valid, and its parameters
