@@ -48,21 +48,24 @@ impl std::str::FromStr for TransportAction {
 }
 
 /// The playing state behind the mutex: the current loop, plus the outgoing
-/// loop during a swap crossfade.
+/// loops during swap crossfades.
 struct Deck {
     current: Option<Player>,
-    /// `(player, remaining fade frames, total fade frames)` while a swapped-out
-    /// loop is still ramping down.
-    outgoing: Option<(Player, u32, u32)>,
+    /// Up to two generations of swapped-out loops still ramping down (newest
+    /// first). A rapid `set_doc` displaces the in-progress fade one slot down
+    /// instead of hard-cutting it; a third displacement drops the oldest (its
+    /// remaining weight is tiny by then).
+    outgoing: [Option<(Player, u32, u32)>; 2],
     /// The transport: when false the callback writes silence and the play
     /// heads freeze (pause). Stop additionally rewinds.
     playing: bool,
-    /// Reused scratch for the outgoing loop during a crossfade.
+    /// Reused scratch for the outgoing loops during a crossfade (pre-sized so
+    /// common host blocks never allocate in the callback).
     outgoing_scratch: Vec<f32>,
 }
 
 impl AudioSource for Deck {
-    /// Serve the current loop, mixing the outgoing one down its swap fade,
+    /// Serve the current loop, mixing the outgoing loops down their swap fades,
     /// then hard-clamp (the audition path can spike mid-edit). Paused: silence
     /// without advancing any play head.
     fn fill(&mut self, out: &mut [f32]) -> usize {
@@ -74,10 +77,13 @@ impl AudioSource for Deck {
         if let Some(p) = self.current.as_mut() {
             p.fill(out);
         }
-        if let Some((out_player, remaining, total)) = self.outgoing.as_mut() {
-            if self.outgoing_scratch.len() < frames * 2 {
-                self.outgoing_scratch.resize(frames * 2, 0.0);
-            }
+        if self.outgoing_scratch.len() < frames * 2 {
+            self.outgoing_scratch.resize(frames * 2, 0.0);
+        }
+        for slot in self.outgoing.iter_mut() {
+            let Some((out_player, remaining, total)) = slot.as_mut() else {
+                continue;
+            };
             let old = &mut self.outgoing_scratch[..frames * 2];
             out_player.fill(old);
             let total = *total as f32;
@@ -88,7 +94,7 @@ impl AudioSource for Deck {
                 *remaining = remaining.saturating_sub(1);
             }
             if *remaining == 0 {
-                self.outgoing = None;
+                *slot = None;
             }
         }
         for s in out[..frames * 2].iter_mut() {
@@ -125,7 +131,10 @@ impl AudioHandle {
                     new.seek(old.position() % new.frames());
                 }
                 new.play();
-                deck.outgoing = Some((old, fade, fade));
+                // Displace any in-progress fade one slot down instead of
+                // hard-cutting it — the displaced loop keeps ramping out.
+                deck.outgoing[1] = deck.outgoing[0].take();
+                deck.outgoing[0] = Some((old, fade, fade));
                 deck.current = Some(new);
             }
             (Some(mut new), None) => {
@@ -135,7 +144,8 @@ impl AudioHandle {
             (None, old) => {
                 // The grid went silent: fade whatever was playing out.
                 if let Some(old) = old {
-                    deck.outgoing = Some((old, fade, fade));
+                    deck.outgoing[1] = deck.outgoing[0].take();
+                    deck.outgoing[0] = Some((old, fade, fade));
                 }
             }
         }
@@ -178,9 +188,10 @@ pub fn spawn() -> Result<AudioHandle> {
         .spawn(move || {
             let deck = Deck {
                 current: None,
-                outgoing: None,
+                outgoing: [None, None],
                 playing: false,
-                outgoing_scratch: Vec::new(),
+                // Pre-sized so common host blocks never allocate in `fill`.
+                outgoing_scratch: vec![0.0; 8192 * 2],
             };
             match Speaker::open(deck) {
                 Ok(speaker) => {
@@ -202,4 +213,79 @@ pub fn spawn() -> Result<AudioHandle> {
     rx.recv()
         .map_err(|_| anyhow!("audio thread exited before starting"))?
         .map_err(|e| anyhow!(e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tono_core::dsl::Node;
+
+    fn tone(freq: f32) -> SoundDoc {
+        SoundDoc::new("t", Node::Sine { freq: freq.into() })
+    }
+
+    fn test_handle() -> AudioHandle {
+        AudioHandle {
+            deck: Arc::new(Mutex::new(Deck {
+                current: None,
+                outgoing: [None, None],
+                playing: true,
+                outgoing_scratch: vec![0.0; 8192 * 2],
+            })),
+            device_sr: 48_000,
+        }
+    }
+
+    #[test]
+    fn rapid_swaps_displace_the_fade_without_a_click() {
+        // A second set_doc landing mid-crossfade must not hard-cut the
+        // in-progress outgoing loop — the displaced fade keeps ramping out.
+        let handle = test_handle();
+        let mut out = vec![0.0f32; 256 * 2];
+        let mut prev = 0.0f32;
+        let mut worst = 0.0f32;
+        // ~10 ms of audio between swaps — the 20 ms fade is always mid-flight.
+        for (i, freq) in [220.0, 330.0, 440.0, 550.0].iter().enumerate() {
+            if i > 0 {
+                handle.set_doc(Some(tone(*freq)));
+            }
+            for _ in 0..2 {
+                handle.deck.lock().unwrap().fill(&mut out);
+                for &s in out.iter() {
+                    assert!(s.is_finite(), "non-finite sample mid-crossfade");
+                    worst = worst.max((s - prev).abs());
+                    prev = s;
+                }
+            }
+        }
+        assert!(
+            worst < 0.2,
+            "sample-to-sample jump of {worst} — a generation was hard-cut"
+        );
+        // After the fades run out, the last doc plays alone.
+        for _ in 0..10 {
+            handle.deck.lock().unwrap().fill(&mut out);
+        }
+        assert!(
+            out.iter().any(|s| s.abs() > 0.0),
+            "the last doc still plays"
+        );
+    }
+
+    #[test]
+    fn pause_freezes_play_heads() {
+        let handle = test_handle();
+        handle.set_doc(Some(tone(220.0)));
+        handle.transport(TransportAction::Pause);
+        let mut out = vec![1.0f32; 128 * 2];
+        handle.deck.lock().unwrap().fill(&mut out);
+        assert!(
+            out.iter().all(|&s| s == 0.0),
+            "paused output is clean silence"
+        );
+        let (_, pos, _) = handle.playhead();
+        handle.deck.lock().unwrap().fill(&mut out);
+        let (_, pos2, _) = handle.playhead();
+        assert_eq!(pos, pos2, "the play head holds while paused");
+    }
 }

@@ -306,6 +306,16 @@ fn analyze(app: State<App>) -> AnalysisResult {
         None => analysis::stats_with(&product.mono, doc.sample_rate, &frames),
     };
     let b64 = |bytes: Vec<u8>| base64::engine::general_purpose::STANDARD.encode(bytes);
+    // PNG-encode failures must surface, not masquerade as ok:true with empty
+    // images (indistinguishable from success in the UI).
+    let spectrogram_png = match analysis::spectrogram_png_with(&frames) {
+        Ok(bytes) => b64(bytes),
+        Err(e) => return empty(Some(format!("spectrogram encode: {e}"))),
+    };
+    let waveform_png = match analysis::waveform_png(&product.mono) {
+        Ok(bytes) => b64(bytes),
+        Err(e) => return empty(Some(format!("waveform encode: {e}"))),
+    };
     AnalysisResult {
         ok: true,
         error: None,
@@ -313,8 +323,8 @@ fn analyze(app: State<App>) -> AnalysisResult {
         true_peak_dbtp: stats.true_peak_dbfs,
         peak_dbfs: stats.peak_dbfs,
         duration: stats.duration_secs,
-        spectrogram_png: b64(analysis::spectrogram_png_with(&frames).unwrap_or_default()),
-        waveform_png: b64(analysis::waveform_png(&product.mono).unwrap_or_default()),
+        spectrogram_png,
+        waveform_png,
     }
 }
 
