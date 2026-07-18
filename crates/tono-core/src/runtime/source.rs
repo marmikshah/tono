@@ -2,6 +2,7 @@
 //! the interleaved-stereo channel spread, and the allocation-free
 //! [`StreamSource`] over a streamable doc.
 
+use super::SCRATCH_FRAMES;
 use crate::dsl::SoundDoc;
 use crate::streaming::StreamGraph;
 
@@ -103,7 +104,7 @@ impl StreamSource {
         Some(StreamSource {
             graph,
             // Pre-sized so common host blocks never allocate in `fill`.
-            scratch: vec![0.0; 8192],
+            scratch: vec![0.0; SCRATCH_FRAMES],
             gain,
         })
     }

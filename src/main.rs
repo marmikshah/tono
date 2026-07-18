@@ -122,10 +122,10 @@ fn load_doc(path: &str) -> anyhow::Result<SoundDoc> {
 }
 
 /// A doc name doubles as an output file stem: reject anything that would
-/// escape the output directory (separators, parent refs) instead of failing
-/// later with a bare OS error.
+/// escape the output directory (separators, parent refs, Windows drive
+/// prefixes) instead of failing later with a bare OS error.
 fn sanitize_stem(name: &str) -> anyhow::Result<String> {
-    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', ':']) {
         anyhow::bail!(
             "doc name '{name}' can't name an output file (no path separators or parent refs)"
         );
@@ -426,6 +426,7 @@ mod tests {
         assert!(sanitize_stem("../escape").is_err());
         assert!(sanitize_stem("a/b").is_err());
         assert!(sanitize_stem("a\\b").is_err());
+        assert!(sanitize_stem("C:evil").is_err());
         assert!(sanitize_stem("..").is_err());
     }
 }

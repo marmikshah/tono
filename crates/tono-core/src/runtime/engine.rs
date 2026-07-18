@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use super::SCRATCH_FRAMES;
 use super::ring::{Controller, Renderer, spsc};
 use super::source::AudioSource;
 use crate::dsl::{Node, SoundDoc};
@@ -205,11 +206,6 @@ pub struct Engine {
     buf_a: Vec<f32>,
     buf_b: Vec<f32>,
 }
-
-/// Scratch pre-allocation for [`Engine::fill`]: covers host blocks up to this
-/// many frames without allocating in the callback; a larger block grows the
-/// scratch once, on the first such call.
-const SCRATCH_FRAMES: usize = 8192;
 
 impl Engine {
     /// A fresh engine that renders at `sample_rate`.

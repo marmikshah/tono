@@ -486,6 +486,8 @@ fn validate_freq_value(v: &Value, what: &str) -> Result<(), String> {
 
 /// Bound a modulated frequency's endpoints far below the f32-overflow regime,
 /// so products like fm.freq × fm.ratio can never turn oscillator phases NaN.
+/// (center/depth are bounded independently, so an LFO's peak can reach 2× —
+/// loose, but still orders of magnitude from either danger zone.)
 fn validate_freq_mod(m: &Modulator, what: &str) -> Result<(), String> {
     const MAX_HZ: f32 = 1e6;
     let check = |name: &str, x: f32| {
