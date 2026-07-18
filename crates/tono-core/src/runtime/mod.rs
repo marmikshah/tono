@@ -38,6 +38,12 @@ mod mixer;
 mod ring;
 mod source;
 
+/// Pre-allocated scratch depth (frames) shared by the runtime's `fill` paths
+/// ([`Engine`], [`Mixer`], [`StreamSource`]): covers any host block up to this
+/// size without allocating in the audio callback; a larger block grows the
+/// scratch once, on the first such call.
+pub const SCRATCH_FRAMES: usize = 8192;
+
 pub use engine::{Engine, InstanceHandle, LayerId, ParamId, PatchId, Priority, Tween};
 pub use mixer::{BusId, Mixer, MixerError, SourceId};
 pub use ring::{Controller, Pump, Renderer, spsc};

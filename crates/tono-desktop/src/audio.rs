@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Result, anyhow};
 use tono_core::dsl::SoundDoc;
 use tono_core::player::Player;
-use tono_core::runtime::AudioSource;
+use tono_core::runtime::{AudioSource, SCRATCH_FRAMES};
 use tono_play::Speaker;
 
 /// Doc-swap crossfade length (~20 ms) — long enough to declick, short enough
@@ -191,7 +191,7 @@ pub fn spawn() -> Result<AudioHandle> {
                 outgoing: [None, None],
                 playing: false,
                 // Pre-sized so common host blocks never allocate in `fill`.
-                outgoing_scratch: vec![0.0; 8192 * 2],
+                outgoing_scratch: vec![0.0; SCRATCH_FRAMES * 2],
             };
             match Speaker::open(deck) {
                 Ok(speaker) => {
@@ -230,7 +230,7 @@ mod tests {
                 current: None,
                 outgoing: [None, None],
                 playing: true,
-                outgoing_scratch: vec![0.0; 8192 * 2],
+                outgoing_scratch: vec![0.0; SCRATCH_FRAMES * 2],
             })),
             device_sr: 48_000,
         }
@@ -242,7 +242,9 @@ mod tests {
         // in-progress outgoing loop — the displaced fade keeps ramping out.
         let handle = test_handle();
         let mut out = vec![0.0f32; 256 * 2];
-        let mut prev = 0.0f32;
+        // Per-channel continuity: stepping across the interleave would diff
+        // L[i] against R[i].
+        let mut prev = [0.0f32; 2];
         let mut worst = 0.0f32;
         // ~10 ms of audio between swaps — the 20 ms fade is always mid-flight.
         for (i, freq) in [220.0, 330.0, 440.0, 550.0].iter().enumerate() {
@@ -251,10 +253,13 @@ mod tests {
             }
             for _ in 0..2 {
                 handle.deck.lock().unwrap().fill(&mut out);
-                for &s in out.iter() {
-                    assert!(s.is_finite(), "non-finite sample mid-crossfade");
-                    worst = worst.max((s - prev).abs());
-                    prev = s;
+                for f in 0..256 {
+                    for (ch, p) in prev.iter_mut().enumerate() {
+                        let s = out[f * 2 + ch];
+                        assert!(s.is_finite(), "non-finite sample mid-crossfade");
+                        worst = worst.max((s - *p).abs());
+                        *p = s;
+                    }
                 }
             }
         }
