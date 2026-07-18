@@ -216,11 +216,21 @@ impl SoundDoc {
                         self.duration, t.at
                     ));
                 }
+                let mut seen_lanes: Vec<AutoTarget> = Vec::new();
                 for lane in &t.automation {
                     let (lname, lo, hi) = match lane.target {
                         AutoTarget::Gain => ("gain", 0.0, 2.0),
                         AutoTarget::Pan => ("pan", -1.0, 1.0),
                     };
+                    // The renderer applies the first matching lane, so a
+                    // second lane for the same target is silently dead.
+                    if seen_lanes.contains(&lane.target) {
+                        return Err(format!(
+                            "{who}: duplicate automation lane for '{lname}' — only the first \
+                             applies, so this one would be dead"
+                        ));
+                    }
+                    seen_lanes.push(lane.target);
                     for (pi, p) in lane.points.iter().enumerate() {
                         if !p.t.is_finite() || p.t < 0.0 {
                             return Err(format!(
@@ -256,19 +266,34 @@ impl SoundDoc {
         if contains_tracks(&self.root) {
             return Err("tracks is the mixing console: it must be the document's root node".into());
         }
+        // A bare processor as the root has no input and renders digital
+        // silence — say so instead of "succeeding".
+        if self.root.is_processor() {
+            return Err(
+                "the root node must be a source (osc/noise/seq/mix/…), not a bare processor \
+                 (filter/eq/dynamics/fx) — it would render silence"
+                    .into(),
+            );
+        }
         validate_node(&self.root)
     }
 }
 
-/// True if a `tracks` node appears anywhere in this subtree.
+/// True if a `tracks` node appears anywhere in this subtree. Iterative (an
+/// explicit stack) so a pathologically deep programmatic document can't
+/// overflow the call stack before the depth cap in `validate_node_at` bites.
 fn contains_tracks(node: &Node) -> bool {
-    match node {
-        Node::Tracks { .. } => true,
-        Node::Mix { inputs } | Node::Mul { inputs } => inputs.iter().any(contains_tracks),
-        Node::Chain { stages } => stages.iter().any(contains_tracks),
-        Node::Duck { trigger, .. } => contains_tracks(trigger),
-        _ => false,
+    let mut stack = vec![node];
+    while let Some(n) = stack.pop() {
+        match n {
+            Node::Tracks { .. } => return true,
+            Node::Mix { inputs } | Node::Mul { inputs } => stack.extend(inputs),
+            Node::Chain { stages } => stack.extend(stages),
+            Node::Duck { trigger, .. } => stack.push(trigger),
+            _ => {}
+        }
     }
+    false
 }
 
 /// A finite value (rejects NaN/±inf — they would render NaN audio).
@@ -407,12 +432,33 @@ fn validate_value(v: &Value, what: &str) -> Result<(), String> {
             Modulator::EnvMod { adsr, from, to } => {
                 finite(&format!("{what}: env.from"), *from)?;
                 finite(&format!("{what}: env.to"), *to)?;
-                adsr.validate(&format!("{what}: env"))
+                adsr.validate(&format!("{what}: env"))?;
+                // The same flatten footgun as Node::Env: the ADSR fields are
+                // inlined on the modulator, so an "adsr" object is silently
+                // dropped and the parameter would pin at `from` forever.
+                if adsr.a == 0.0 && adsr.d == 0.0 && adsr.s == 0.0 && adsr.r == 0.0 {
+                    return Err(format!(
+                        "{what}: env is constant — a/d/s/r are all 0. The envelope fields \
+                         are inlined on the modulator (e.g. {{\"env\":{{\"a\":0.01,\"d\":0.1,\
+                         \"s\":0.7,\"r\":0.2,\"from\":..,\"to\":..}}}}); don't nest them \
+                         under \"adsr\""
+                    ));
+                }
+                Ok(())
             }
             Modulator::Rand { from, to, rate, .. } => {
                 finite(&format!("{what}: rand.from"), *from)?;
                 finite(&format!("{what}: rand.to"), *to)?;
-                positive(&format!("{what}: rand.rate"), *rate)
+                positive(&format!("{what}: rand.rate"), *rate)?;
+                // Past ~10k targets/s the walk is indistinguishable from noise,
+                // and the renderer's per-sample catch-up loop becomes a denial
+                // of service (rate 1e12 ⇒ ~1e7 iterations per sample).
+                if *rate > 10_000.0 {
+                    return Err(format!(
+                        "{what}: rand.rate must be in (0, 10000], got {rate}"
+                    ));
+                }
+                Ok(())
             }
         },
     }
@@ -421,10 +467,56 @@ fn validate_value(v: &Value, what: &str) -> Result<(), String> {
 /// Validate a `Value` that names a frequency: a constant must be finite and
 /// strictly positive (a modulated form is clamped per-sample at render time).
 fn validate_freq_value(v: &Value, what: &str) -> Result<(), String> {
-    if let Value::Const(c) = v {
-        positive(what, *c)?;
+    match v {
+        Value::Const(c) => {
+            positive(what, *c)?;
+            // 100 kHz sits above every supported Nyquist (96 kHz at 192 kHz
+            // sr); past it a constant is an authoring error, and products
+            // like fm.freq × fm.ratio can reach f32 overflow and render NaN.
+            if *c > 100_000.0 {
+                return Err(format!("{what} must be <= 100000 Hz, got {c}"));
+            }
+        }
+        // note_to_hz already bounds a resolved note to <= 100 kHz.
+        Value::Note(_) => {}
+        Value::Modulated(m) => validate_freq_mod(m, what)?,
     }
     validate_value(v, what)
+}
+
+/// Bound a modulated frequency's endpoints far below the f32-overflow regime,
+/// so products like fm.freq × fm.ratio can never turn oscillator phases NaN.
+fn validate_freq_mod(m: &Modulator, what: &str) -> Result<(), String> {
+    const MAX_HZ: f32 = 1e6;
+    let check = |name: &str, x: f32| {
+        if x.abs() > MAX_HZ {
+            Err(format!(
+                "{what}: {name} must be within ±{MAX_HZ} Hz, got {x}"
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    match m {
+        Modulator::Slide { from, to, .. } => {
+            check("slide.from", *from)?;
+            check("slide.to", *to)
+        }
+        Modulator::Lfo { depth, center, .. } => {
+            check("lfo.center", *center)?;
+            check("lfo.depth", *depth)
+        }
+        Modulator::Arp { steps, .. } => {
+            for (i, s) in steps.iter().enumerate() {
+                check(&format!("arp.steps[{i}]"), *s)?;
+            }
+            Ok(())
+        }
+        Modulator::EnvMod { from, to, .. } | Modulator::Rand { from, to, .. } => {
+            check("from", *from)?;
+            check("to", *to)
+        }
+    }
 }
 
 fn in_unit(name: &str, v: f32) -> Result<(), String> {
@@ -452,7 +544,21 @@ fn validate_unit_value(v: &Value, what: &str) -> Result<(), String> {
     validate_value(v, what)
 }
 
+/// Bounding the graph depth keeps validation (and the recursive renderer) off
+/// the stack for programmatically-built documents; JSON input is already capped
+/// well below this by serde's own recursion limit.
+const MAX_NODE_DEPTH: usize = 256;
+
 fn validate_node(node: &Node) -> Result<(), String> {
+    validate_node_at(node, 0)
+}
+
+fn validate_node_at(node: &Node, depth: usize) -> Result<(), String> {
+    if depth > MAX_NODE_DEPTH {
+        return Err(format!(
+            "the graph nests deeper than {MAX_NODE_DEPTH} levels — flatten it (e.g. into tracks)"
+        ));
+    }
     match node {
         Node::Square { freq, duty } => {
             validate_freq_value(freq, "square.freq")?;
@@ -472,7 +578,12 @@ fn validate_node(node: &Node) -> Result<(), String> {
         }
         Node::Fm { freq, ratio, index } => {
             validate_freq_value(freq, "fm.freq")?;
+            // Cap the ratio so freq × ratio can't reach f32 overflow — past
+            // it the modulator phase goes inf and renders NaN.
             positive("fm.ratio", *ratio)?;
+            if *ratio > 4096.0 {
+                return Err(format!("fm.ratio must be <= 4096, got {ratio}"));
+            }
             validate_value(index, "fm.index")
         }
         // Bound exhaustively (no `..`): the compiler then forces a validation
@@ -540,13 +651,26 @@ fn validate_node(node: &Node) -> Result<(), String> {
             if inputs.is_empty() {
                 return Err("mix/mul requires at least one input".into());
             }
-            inputs.iter().try_for_each(validate_node)
+            inputs
+                .iter()
+                .try_for_each(|n| validate_node_at(n, depth + 1))
         }
         Node::Chain { stages } => {
             if stages.is_empty() {
                 return Err("chain requires at least one stage".into());
             }
-            stages.iter().try_for_each(validate_node)
+            // A leading processor has no input and renders digital silence —
+            // the worst outcome for a sound authored blind. Sources first.
+            if stages[0].is_processor() {
+                return Err(
+                    "chain's first stage must be a source (osc/noise/seq/mix/…), not a \
+                     processor (filter/eq/dynamics/fx) — it would render silence"
+                        .into(),
+                );
+            }
+            stages
+                .iter()
+                .try_for_each(|n| validate_node_at(n, depth + 1))
         }
         Node::Lowpass { cutoff, q }
         | Node::Highpass { cutoff, q }
@@ -574,7 +698,14 @@ fn validate_node(node: &Node) -> Result<(), String> {
             if !(1..=16).contains(voices) {
                 return Err(format!("super.voices must be in [1, 16], got {voices}"));
             }
-            non_negative("super.detune_cents", *detune_cents)
+            // 10 octaves of unison spread; past it 2^(cents/1200) approaches
+            // f32 overflow and the voices render NaN.
+            if !(0.0..=12_000.0).contains(detune_cents) {
+                return Err(format!(
+                    "super.detune_cents must be in [0, 12000], got {detune_cents}"
+                ));
+            }
+            Ok(())
         }
         Node::Gain { amount } => validate_value(amount, "gain.amount"),
         Node::Bitcrush { bits } => {
@@ -653,7 +784,7 @@ fn validate_node(node: &Node) -> Result<(), String> {
             in_unit("duck.amount", *amount)?;
             non_negative("duck.attack", *attack)?;
             non_negative("duck.release", *release)?;
-            validate_node(trigger)
+            validate_node_at(trigger, depth + 1)
         }
         Node::Compress {
             threshold,
@@ -663,6 +794,8 @@ fn validate_node(node: &Node) -> Result<(), String> {
             makeup,
         } => {
             finite("compress.threshold", *threshold)?;
+            // JSON 1e308 deserializes to f32 inf — finite first, then the bound.
+            finite("compress.ratio", *ratio)?;
             if *ratio < 1.0 {
                 return Err(format!("compress.ratio must be >= 1, got {ratio}"));
             }
