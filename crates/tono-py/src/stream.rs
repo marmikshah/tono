@@ -381,7 +381,7 @@ impl AdaptiveMusic {
         // Render OFF the shared pump lock — the pump thread needs it every
         // 5 ms, and a full offline render under it would starve the ring and
         // drop audio. stinger_stereo installs the pre-rendered buffers.
-        let (left, right) = tono_core::adaptive::render_stereo_or_dup(&doc);
+        let (left, right) = tono_core::adaptive::render_stereo_pair(&doc);
         if let Some(music) = lock(&self.shared).get_mut::<CoreAdaptive>(self.id) {
             music.stinger_stereo(left, right);
         }

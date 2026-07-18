@@ -36,7 +36,7 @@ impl LoopBuffer {
     /// the doc with a `loop` playback so its tail meets its head, or trim it
     /// with [`from_stereo`](Self::from_stereo).)
     pub fn from_doc(doc: &SoundDoc) -> Self {
-        let (left, right) = render_stereo_or_dup(doc);
+        let (left, right) = render_stereo_pair(doc);
         LoopBuffer::from_stereo(left, right)
     }
 
@@ -66,7 +66,7 @@ impl LoopBuffer {
     /// loop grid so their layered cross-fades stay sample-aligned (never drift
     /// phase). See [`AdaptiveMusic::add_stem_set`].
     pub fn from_doc_len(doc: &SoundDoc, frames: usize) -> Self {
-        let (mut left, mut right) = render_stereo_or_dup(doc);
+        let (mut left, mut right) = render_stereo_pair(doc);
         left.resize(frames, 0.0);
         right.resize(frames, 0.0);
         LoopBuffer {
@@ -161,7 +161,7 @@ const DUCK_SNAP_EPSILON: f32 = 1e-4;
 /// adaptive playback bytes for treated docs, so the divergence is deliberate).
 /// Public so hosts can render off the audio thread and hand the buffers to
 /// [`AdaptiveMusic::stinger_stereo`].
-pub fn render_stereo_or_dup(doc: &SoundDoc) -> (Vec<f32>, Vec<f32>) {
+pub fn render_stereo_pair(doc: &SoundDoc) -> (Vec<f32>, Vec<f32>) {
     let p = render::render_product(doc);
     p.stereo.unwrap_or_else(|| (p.mono.clone(), p.mono))
 }
@@ -363,7 +363,7 @@ impl AdaptiveMusic {
         }
         // No tempo: the first stem's natural length is the grid — render it
         // once and reuse the buffers rather than rendering again for length.
-        let (left, right) = render_stereo_or_dup(&doc_at(first_doc, self.sample_rate));
+        let (left, right) = render_stereo_pair(&doc_at(first_doc, self.sample_rate));
         let grid = left.len();
         self.add_layer(LoopBuffer::from_stereo(left, right), *first_fade);
         for (doc, fade_in_at) in rest {
@@ -389,7 +389,7 @@ impl AdaptiveMusic {
 
     /// Fire a one-shot stinger over the bed (rendered now, mixed until it ends).
     pub fn stinger(&mut self, doc: &SoundDoc) {
-        let (left, right) = render_stereo_or_dup(&doc_at(doc, self.sample_rate));
+        let (left, right) = render_stereo_pair(&doc_at(doc, self.sample_rate));
         self.stinger_stereo(left, right);
     }
 
@@ -560,7 +560,7 @@ impl AdaptiveMusic {
     /// Fire a stinger on a beat/bar boundary. The stinger is **rendered now** (off
     /// the audio thread); only its playback is deferred to the boundary.
     pub fn stinger_at(&mut self, doc: &SoundDoc, q: Quantize) {
-        let (left, right) = render_stereo_or_dup(&doc_at(doc, self.sample_rate));
+        let (left, right) = render_stereo_pair(&doc_at(doc, self.sample_rate));
         self.stinger_stereo_at(left, right, q);
     }
 
@@ -624,8 +624,10 @@ impl AdaptiveMusic {
                 });
                 return;
             }
-            // A third section: abandon the in-flight fade and start fresh.
-            self.section_fade = None;
+            // A third section: leave the in-flight fade alone — the onward
+            // transition queues behind it (see begin_transition), because a
+            // hard cut would drop the fade target's partial contribution
+            // mid-ramp.
         }
         if self.current_section == Some(section) {
             return;
@@ -644,6 +646,29 @@ impl AdaptiveMusic {
         }
         if self.current_section.is_none() {
             self.current_section = Some(to);
+            return;
+        }
+        if let Some(f) = &self.section_fade {
+            // Already heading there (a duplicated schedule fired): no-op.
+            if f.to == to {
+                return;
+            }
+            // A mid-flight fade to ANOTHER section completes first: cutting
+            // over now would drop the fade target's partial contribution
+            // mid-ramp — the hard-cut click class the reversal avoids. Queue
+            // the onward transition for the frame the fade settles (at the
+            // target on a forward fade, back at the source on a reversal).
+            let g_now = f.from_gain + f.frames_done as f32 * f.step;
+            let wait = if f.step > 0.0 {
+                (1.0 - g_now) / f.step
+            } else {
+                g_now / -f.step
+            };
+            let fire_at = self.position + (wait.ceil().max(0.0) as u64);
+            self.pending.push(Scheduled {
+                fire_at,
+                action: Action::Transition { to },
+            });
             return;
         }
         self.sections[to].buffer.reset();
@@ -1305,5 +1330,28 @@ mod tests {
             "reset through the trait restarts the clock"
         );
         assert_eq!(m.active_stingers(), 0, "and clears stingers");
+    }
+
+    #[test]
+    fn third_section_switch_completes_the_fade_first() {
+        // Mid-fade A→B, transition_to(C): the in-flight fade completes (B's
+        // partial contribution is not hard-cut), then C fades in.
+        let mut m = AdaptiveMusic::new(48_000);
+        m.add_section("a", &tone(330.0));
+        let b = m.add_section("b", &tone(660.0));
+        let c = m.add_section("c", &tone(990.0));
+        m.transition_to(b, Quantize::Immediate);
+        advance(&mut m, 512); // 512 into the 2880-frame fade
+        m.transition_to(c, Quantize::Immediate);
+        advance(&mut m, 2880); // past the original fade's end (at 2880)
+        assert_eq!(
+            m.current_section(),
+            Some(b),
+            "the in-flight fade completed before the onward transition"
+        );
+        for _ in 0..20 {
+            advance(&mut m, 512);
+        }
+        assert_eq!(m.current_section(), Some(c), "then c faded in");
     }
 }
