@@ -67,7 +67,17 @@ pub fn write_ogg(
         target_quality: quality.clamp(0.0, 1.0),
     })
     .build()?;
-    encoder.encode_audio_block(channels)?;
+    // Feed the encoder in blocks: handing the whole render to libvorbis as
+    // one block slows it down by orders of magnitude on long programs.
+    const BLOCK: usize = 8192;
+    let n = channels.iter().map(|c| c.len()).min().unwrap_or(0);
+    let mut pos = 0;
+    while pos < n {
+        let end = (pos + BLOCK).min(n);
+        let block: Vec<&[f32]> = channels.iter().map(|c| &c[pos..end]).collect();
+        encoder.encode_audio_block(&block)?;
+        pos = end;
+    }
     encoder.finish()?;
     Ok(())
 }
@@ -192,6 +202,23 @@ mod tests {
     }
 
     #[test]
+    fn wav_round_trips_sample_values() {
+        // A wrong i16 scale constant would pass the sample-COUNT test above —
+        // write then read back and assert the actual amplitudes.
+        let left = ramp(1000);
+        let right: Vec<f32> = (0..1000).map(|i| 0.5 - i as f32 * 0.001).collect();
+        let path = tmp("values.wav");
+        write_wav_stereo(&path, &left, &right, 44_100, 16).unwrap();
+        let mut reader = hound::WavReader::open(&path).unwrap();
+        let got: Vec<i16> = reader.samples::<i16>().map(|s| s.unwrap()).collect();
+        for f in 0..1000 {
+            let q = |x: f32| (x.clamp(-1.0, 1.0) * 32767.0).round() as i16;
+            assert_eq!(got[f * 2], q(left[f]), "left sample {f}");
+            assert_eq!(got[f * 2 + 1], q(right[f]), "right sample {f}");
+        }
+    }
+
+    #[test]
     fn smpl_chunk_appends_60_bytes_and_patches_riff() {
         let path = tmp("loop.wav");
         write_wav_stereo(&path, &ramp(100), &ramp(100), 44_100, 16).unwrap();
@@ -228,6 +255,37 @@ mod tests {
         assert!(
             bytes.windows(6).any(|w| w == b"vorbis"),
             "vorbis identification header present"
+        );
+    }
+}
+
+#[cfg(test)]
+mod ogg_block_tests {
+    use super::*;
+
+    #[test]
+    fn ogg_encodes_long_signals_in_blocks() {
+        // Longer than the 8192-sample encode block: the chunked path must
+        // still produce a structurally valid stream spanning the whole signal.
+        // Deterministic noise keeps Vorbis honest (a sine compresses away).
+        let mut x = 0x1234_5678u32;
+        let samples: Vec<f32> = (0..44_100 * 3)
+            .map(|_| {
+                x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (x >> 8) as f32 / 16_777_216.0 * 1.4 - 0.7
+            })
+            .collect();
+        let dir = std::env::temp_dir().join("tono_audio_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ogg = dir.join("long.ogg");
+        write_ogg(&ogg, &[&samples], 44_100, 0.5).unwrap();
+        let bytes = std::fs::read(&ogg).unwrap();
+        assert_eq!(&bytes[0..4], b"OggS");
+        assert!(bytes.windows(6).any(|w| w == b"vorbis"));
+        assert!(
+            bytes.len() > 8_000,
+            "3 s of noise is real payload, not headers ({} bytes)",
+            bytes.len()
         );
     }
 }

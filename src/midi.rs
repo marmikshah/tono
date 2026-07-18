@@ -87,6 +87,9 @@ fn collect_seqs<'a>(node: &'a Node, out: &mut Vec<SeqRef<'a>>) {
                 collect_seqs(st, out);
             }
         }
+        // The trigger is where the kick pattern lives — a doc whose only seq
+        // is a duck trigger must still export it.
+        Node::Duck { trigger, .. } => collect_seqs(trigger, out),
         _ => {}
     }
 }
@@ -95,8 +98,11 @@ fn collect_seqs<'a>(node: &'a Node, out: &mut Vec<SeqRef<'a>>) {
 fn seq_track(s: &SeqRef, tempo: Option<u32>) -> (Track<'static>, usize) {
     // Ticks from the absolute step, rounded per event — a truncated per-step
     // tick count would drift cumulatively for steps_per_beat values that do
-    // not divide the PPQ (e.g. septuplets).
-    let tick = |step: u32| ((step as u64 * PPQ as u64 + s.spb as u64 / 2) / s.spb as u64) as u32;
+    // not divide the PPQ (e.g. septuplets). Clamped to the MIDI u28 max: a
+    // pathological step would otherwise wrap the wire format's delta times.
+    let tick = |step: u32| {
+        ((step as u64 * PPQ as u64 + s.spb as u64 / 2) / s.spb as u64).min(0x0FFF_FFFF) as u32
+    };
     // (absolute tick, is_note_on, key, velocity). Note-offs sort before
     // note-ons at the same tick so a zero-length gap re-strikes cleanly.
     let mut events: Vec<(u32, bool, u8, u8)> = Vec::with_capacity(s.notes.len() * 2);
@@ -105,7 +111,12 @@ fn seq_track(s: &SeqRef, tempo: Option<u32>) -> (Track<'static>, usize) {
         // MIDI velocity is the lossless carrier for the note's gain.
         let vel = (note.gain * 127.0).round().clamp(1.0, 127.0) as u8;
         events.push((tick(note.step), true, key, vel));
-        events.push((tick(note.step + note.len.max(1)), false, key, 0));
+        events.push((
+            tick(note.step.saturating_add(note.len.max(1))),
+            false,
+            key,
+            0,
+        ));
     }
     events.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
 
@@ -286,7 +297,9 @@ pub fn import_midi(src: &Path, steps_per_beat: u32) -> Result<(SoundDoc, ImportS
     }
 
     // Quantize onto the seq grid and build one seq node per MIDI track.
-    let tick_to_step = |tick: u64| -> u32 { ((tick * spb as u64 + ppq / 2) / ppq.max(1)) as u32 };
+    let tick_to_step = |tick: u64| -> u32 {
+        ((tick * spb as u64 + ppq / 2) / ppq.max(1)).min(u32::MAX as u64) as u32
+    };
     let mut tracks_json = Vec::new();
     let mut total_notes = 0usize;
     let mut end_step = 0u32;
@@ -301,7 +314,7 @@ pub fn import_midi(src: &Path, steps_per_beat: u32) -> Result<(SoundDoc, ImportS
         for n in notes {
             let step = tick_to_step(n.tick_on);
             let len = (tick_to_step(n.tick_off).saturating_sub(step)).max(1);
-            end_step = end_step.max(step + len);
+            end_step = end_step.max(step.saturating_add(len));
             total_notes += 1;
             seq_notes.push(serde_json::json!({
                 "step": step,
@@ -524,5 +537,47 @@ mod tests {
             ),
             "channel 10 → kit"
         );
+    }
+}
+
+#[cfg(test)]
+mod duck_and_bounds_tests {
+    use super::*;
+
+    #[test]
+    fn exports_a_seq_inside_a_duck_trigger() {
+        // The duck trigger is where the kick pattern lives — a doc whose only
+        // seq is a trigger must not export a note-less file.
+        let doc: SoundDoc = serde_json::from_str(
+            r#"{ "name":"pump", "duration":2.0, "root":{ "type":"chain", "stages":[
+              { "type":"sawtooth", "freq":110 },
+              { "type":"duck", "amount":0.8,
+                "trigger": { "type":"seq", "bpm":120, "steps_per_beat":4, "wave":"kit",
+                  "env":{"s":1},
+                  "notes":[ {"step":0,"len":2,"pitch":"midi:36"} ] } } ] } }"#,
+        )
+        .unwrap();
+        let dir = std::env::temp_dir().join("tono-midi-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pump.mid");
+        let s = export_midi(&doc, &path).unwrap();
+        assert_eq!(s.notes, 1, "the duck trigger's seq exported");
+    }
+
+    #[test]
+    fn pathological_step_values_never_panic() {
+        // A near-u32::MAX step must saturate, not overflow or wrap the export.
+        let doc: SoundDoc = serde_json::from_str(
+            r#"{ "name":"big", "duration":2.0, "root":{ "type":"seq", "bpm":120,
+              "steps_per_beat":4, "wave":"square", "env":{"s":1},
+              "notes":[ {"step":4294967290,"len":10,"pitch":"C4"} ] } }"#,
+        )
+        .unwrap();
+        let dir = std::env::temp_dir().join("tono-midi-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("big.mid");
+        export_midi(&doc, &path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        Smf::parse(&bytes).unwrap(); // a valid file comes back out
     }
 }

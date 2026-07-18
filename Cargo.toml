@@ -59,7 +59,9 @@ exclude = [
 ]
 
 [dependencies]
-tono-core = { workspace = true }
+# Feature-declared so a change to core's defaults can't silently unbuild this
+# crate: the CLI re-exports + uses the analysis surface and checks .sf2 paths.
+tono-core = { workspace = true, features = ["analysis", "sampler"] }
 anyhow = { workspace = true }
 flacenc = { workspace = true }
 hound = { workspace = true }

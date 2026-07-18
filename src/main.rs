@@ -121,6 +121,18 @@ fn load_doc(path: &str) -> anyhow::Result<SoundDoc> {
     Ok(doc)
 }
 
+/// A doc name doubles as an output file stem: reject anything that would
+/// escape the output directory (separators, parent refs) instead of failing
+/// later with a bare OS error.
+fn sanitize_stem(name: &str) -> anyhow::Result<String> {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
+        anyhow::bail!(
+            "doc name '{name}' can't name an output file (no path separators or parent refs)"
+        );
+    }
+    Ok(name.to_string())
+}
+
 fn render_cmd(args: &[String]) -> anyhow::Result<()> {
     let cli = Cli::parse(args, &["-o", "--out", "--format"])?;
     let file = cli.input("tono render FILE.json [-o DIR] [--format wav|flac|ogg]")?;
@@ -136,7 +148,7 @@ fn render_cmd(args: &[String]) -> anyhow::Result<()> {
             .unwrap_or("sound")
             .to_string()
     } else {
-        doc.name.clone()
+        sanitize_stem(&doc.name)?
     };
     render_to_dir(&doc, &stem, &out_dir, format)
 }
@@ -236,9 +248,9 @@ fn vary_cmd(args: &[String]) -> anyhow::Result<()> {
     let doc = load_doc(file)?;
     fs::create_dir_all(&out_dir)?;
     let base = if doc.name.is_empty() {
-        "sound"
+        "sound".to_string()
     } else {
-        &doc.name
+        sanitize_stem(&doc.name)?
     };
 
     for i in 1..=count {
@@ -278,7 +290,14 @@ fn schema_cmd(args: &[String]) -> anyhow::Result<()> {
 fn midi_cmd(args: &[String]) -> anyhow::Result<()> {
     let cli = Cli::parse(args, &["-o", "--out"])?;
     let file = cli.input("tono midi FILE.json [-o FILE.mid]")?;
-    let out = PathBuf::from(cli.flag(&["-o", "--out"]).unwrap_or("out.mid"));
+    let out = match cli.flag(&["-o", "--out"]) {
+        Some(o) => PathBuf::from(o),
+        // A defaulted output must never silently clobber an existing file.
+        None if Path::new("out.mid").exists() => {
+            anyhow::bail!("out.mid already exists — pass -o to choose a different output")
+        }
+        None => PathBuf::from("out.mid"),
+    };
     let doc = load_doc(file)?;
     let summary = tono::midi::export_midi(&doc, &out)?;
     println!(
@@ -306,7 +325,18 @@ fn import_cmd(args: &[String]) -> anyhow::Result<()> {
     }
     let out = match cli.flag(&["-o", "--out"]) {
         Some(o) => PathBuf::from(o),
-        None => Path::new(file).with_extension("json"),
+        None => {
+            // A defaulted output must never silently clobber an existing file
+            // (e.g. an authored doc sharing the MIDI file's stem).
+            let default = Path::new(file).with_extension("json");
+            if default.exists() {
+                anyhow::bail!(
+                    "{} already exists — pass -o to choose a different output",
+                    default.display()
+                );
+            }
+            default
+        }
     };
     let (doc, summary) = tono::midi::import_midi(Path::new(file), spb)?;
     fs::write(&out, serde_json::to_string_pretty(&doc)?)?;
@@ -386,5 +416,16 @@ mod tests {
         let after = Cli::parse(&args(&["f.json", "--format", "ogg"]), &["--format"]).unwrap();
         assert_eq!(before.flag(&["--format"]), after.flag(&["--format"]));
         assert_eq!(before.positionals, after.positionals);
+    }
+
+    #[test]
+    fn doc_names_stay_out_of_the_output_path() {
+        // A doc name doubles as a file stem — separators and parent refs must
+        // be rejected, not written through.
+        assert!(sanitize_stem("laser_zap").is_ok());
+        assert!(sanitize_stem("../escape").is_err());
+        assert!(sanitize_stem("a/b").is_err());
+        assert!(sanitize_stem("a\\b").is_err());
+        assert!(sanitize_stem("..").is_err());
     }
 }
