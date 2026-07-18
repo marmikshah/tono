@@ -275,7 +275,7 @@ pub fn note_to_hz(s: &str) -> Option<f32> {
         .or_else(|| s.strip_prefix(['m', 'M']))
         && let Ok(n) = num.trim().parse::<f32>()
     {
-        return Some(midi_to_hz(n));
+        return midi_to_hz(n);
     }
     // Note name: letter, optional #/b accidentals, optional octave (default 4).
     let mut chars = s.chars().peekable();
@@ -303,11 +303,17 @@ pub fn note_to_hz(s: &str) -> Option<f32> {
     } else {
         rest.parse().ok()?
     };
-    Some(midi_to_hz(((octave + 1) * 12 + semis) as f32))
+    // i64 headroom: huge octaves ("A200000000") would overflow i32 arithmetic.
+    midi_to_hz(((octave as i64 + 1) * 12 + semis as i64) as f32)
 }
 
-fn midi_to_hz(m: f32) -> f32 {
-    440.0 * 2f32.powf((m - 69.0) / 12.0)
+fn midi_to_hz(m: f32) -> Option<f32> {
+    let hz = 440.0 * 2f32.powf((m - 69.0) / 12.0);
+    // Reject pitches that would poison the render: non-finite or non-positive
+    // Hz turns oscillator phase accumulators to NaN, and anything far above
+    // the highest supported Nyquist (96 kHz at 192 kHz sr) is an authoring
+    // error, not a sound.
+    (hz.is_finite() && hz > 0.0 && hz <= 100_000.0).then_some(hz)
 }
 
 /// Interpolation curve for a [`Modulator::Slide`].

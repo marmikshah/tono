@@ -375,3 +375,129 @@ fn validate_checks_automation_lanes() {
     );
     assert!(d.validate().unwrap_err().contains("[-1, 1]"));
 }
+
+#[test]
+fn validate_rejects_pitches_that_resolve_non_finite() {
+    // midi:10000 → 440·2^827.6 = f32 inf; the oscillator phase would go NaN.
+    let d = doc(r#"{ "name": "n", "root": { "type": "sine", "freq": "midi:10000" } }"#);
+    assert!(d.validate().unwrap_err().contains("not a valid note"));
+    assert_eq!(note_to_hz("midi:10000"), None);
+    assert_eq!(note_to_hz("midi:-100000"), None);
+    // A huge octave must not panic the parser (i32 overflow) — just reject.
+    let d = doc(r#"{ "name": "n", "root": { "type": "sine", "freq": "A200000000" } }"#);
+    assert!(d.validate().unwrap_err().contains("not a valid note"));
+    assert_eq!(note_to_hz("A200000000"), None);
+}
+
+#[test]
+fn validate_rejects_overflow_regime_knobs() {
+    // 2^(cents/1200) must stay far from f32 overflow or the voices render NaN.
+    let d =
+        doc(r#"{ "name": "n", "root": { "type": "super", "freq": 110, "detune_cents": 200000 } }"#);
+    assert!(d.validate().unwrap_err().contains("detune_cents"));
+    // fm.freq × fm.ratio must stay far from f32 overflow for the same reason.
+    let d =
+        doc(r#"{ "name": "n", "root": { "type": "fm", "freq": 440, "ratio": 1e20, "index": 1 } }"#);
+    assert!(d.validate().unwrap_err().contains("fm.ratio"));
+    let d =
+        doc(r#"{ "name": "n", "root": { "type": "fm", "freq": 1e20, "ratio": 2.0, "index": 1 } }"#);
+    assert!(d.validate().unwrap_err().contains("fm.freq"));
+    let d = doc(
+        r#"{ "name": "n", "root": { "type": "fm", "ratio": 2.0, "index": 1,
+                "freq": { "slide": { "from": 1e20, "to": 440, "secs": 0.1 } } } }"#,
+    );
+    assert!(d.validate().unwrap_err().contains("slide.from"));
+}
+
+#[test]
+fn validate_caps_rand_rate() {
+    // Past the cap the walk is indistinguishable from noise, and the
+    // renderer's per-sample catch-up loop becomes a denial of service.
+    let d = doc(r#"{ "name": "n", "root": { "type": "chain", "stages": [
+                { "type": "noise" },
+                { "type": "lowpass", "cutoff": { "rand": { "from": 200, "to": 1200, "rate": 1e12 } } }
+            ] } }"#);
+    assert!(d.validate().unwrap_err().contains("rand.rate"));
+    let ok = doc(r#"{ "name": "n", "root": { "type": "chain", "stages": [
+                { "type": "noise" },
+                { "type": "lowpass", "cutoff": { "rand": { "from": 200, "to": 1200, "rate": 9000 } } }
+            ] } }"#);
+    assert!(ok.validate().is_ok());
+}
+
+#[test]
+fn validate_rejects_non_finite_compress_ratio() {
+    // 1e308 overflows the silent f64→f32 cast to inf — it used to slip past
+    // the ratio >= 1 check.
+    let d = doc(r#"{ "name": "n", "root": { "type": "chain", "stages": [
+                { "type": "noise" }, { "type": "compress", "threshold": 0.5, "ratio": 1e308 }
+            ] } }"#);
+    assert!(d.validate().unwrap_err().contains("compress.ratio"));
+}
+
+#[test]
+fn validate_rejects_silent_processor_positions() {
+    // A chain leading with a processor has no input and renders silence.
+    let d = doc(r#"{ "name": "n", "root": { "type": "chain", "stages": [
+                { "type": "lowpass", "cutoff": 800 }, { "type": "sine", "freq": 440 }
+            ] } }"#);
+    assert!(d.validate().unwrap_err().contains("first stage"));
+    // Same for a bare-processor document root.
+    let d = doc(r#"{ "name": "n", "root": { "type": "lowpass", "cutoff": 800 } }"#);
+    assert!(d.validate().unwrap_err().contains("root node"));
+    // A source-first chain still validates.
+    let ok = doc(r#"{ "name": "n", "root": { "type": "chain", "stages": [
+                { "type": "sine", "freq": 440 }, { "type": "lowpass", "cutoff": 800 }
+            ] } }"#);
+    assert!(ok.validate().is_ok());
+}
+
+#[test]
+fn validate_rejects_duplicate_automation_lanes() {
+    // The renderer applies the first matching lane; a second is silently dead.
+    let d = doc(
+        r#"{ "name": "n", "version": 2, "root": { "type": "tracks", "tracks": [
+                { "id": "a", "node": { "type": "noise" },
+                  "automation": [
+                    { "target": "gain", "points": [ { "t": 0, "v": 0.5 } ] },
+                    { "target": "gain", "points": [ { "t": 0, "v": 1.0 } ] }
+                  ] }
+            ] } }"#,
+    );
+    assert!(
+        d.validate()
+            .unwrap_err()
+            .contains("duplicate automation lane")
+    );
+}
+
+#[test]
+fn validate_rejects_silent_all_zero_envmod() {
+    // The same flatten footgun as Node::Env: the "adsr" object is silently
+    // dropped and the parameter would pin at `from`.
+    let d = doc(r#"{ "name": "n", "root": { "type": "chain", "stages": [
+                { "type": "noise" },
+                { "type": "lowpass",
+                  "cutoff": { "env": { "adsr": { "a": 0.1 }, "from": 200, "to": 800 } } }
+            ] } }"#);
+    assert!(d.validate().unwrap_err().contains("env is constant"));
+    let ok = doc(r#"{ "name": "n", "root": { "type": "chain", "stages": [
+                { "type": "noise" },
+                { "type": "lowpass", "cutoff": { "env": { "a": 0.1, "from": 200, "to": 800 } } }
+            ] } }"#);
+    assert!(ok.validate().is_ok());
+}
+
+#[test]
+fn validate_bounds_graph_depth() {
+    // serde caps JSON nesting, but a programmatic document can nest without
+    // bound — the recursive validator/renderer would overflow the stack.
+    let mut node = Node::Noise {
+        color: NoiseColor::White,
+    };
+    for _ in 0..300 {
+        node = Node::Chain { stages: vec![node] };
+    }
+    let d = SoundDoc::new("deep", node);
+    assert!(d.validate().unwrap_err().contains("deeper"));
+}
