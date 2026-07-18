@@ -2,7 +2,9 @@ name: Python
 
 # The PyO3 bindings (crates/tono-py) are off the default build/CI (a non-default
 # workspace member), so this is their own gate: a determinism smoke test plus abi3
-# wheels for every platform. It does not touch the main `CI` workflow.
+# wheels (Linux, Windows, Apple Silicon — universal2 was dropped: it doubled the
+# macOS build minutes to cover Intel Macs we don't support). It does not touch
+# the main `CI` workflow.
 
 on:
   push:
@@ -55,7 +57,8 @@ jobs:
             args: --release
           - os: macos-latest
             manylinux: auto
-            args: --release --target universal2-apple-darwin
+            # Apple Silicon only: universal2 compiled arm64 + Intel in one job.
+            args: --release --target aarch64-apple-darwin
           - os: windows-latest
             manylinux: auto
             args: --release
