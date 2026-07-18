@@ -7,7 +7,13 @@ hang, panic, or silently corrupt are closed, the real-time layers keep their
 promises at any block size, and every fix lands with its regression test.
 Every pre-existing document still renders byte-for-byte (the golden corpus is
 unchanged); the new validation caps only reject documents that previously
-produced NaN, silence, or a hang.
+produced NaN, silence, a hang, or ultrasonic output no host can play (a
+finite-but-unplayable pitch like `"midi:170"` is an authoring error now —
+only unvalidated direct renders see the note-fallback change).
+
+### Deprecated (deleted at 2.0)
+- `MixerError::NoSampleRate` — unreachable today: every `Mixer` constructor
+  takes the rate up front.
 
 ### Fixed
 - **Validation rejects the overflow regime.** Pitches resolving to non-finite
@@ -33,8 +39,10 @@ produced NaN, silence, or a hang.
   count — a 128-frame AudioWorklet and a 512-frame cpal callback render
   identical audio. Also: a mid-fade `transition_to` the fade's target is a
   no-op, requesting the previous section cancels the fade back (click-free),
-  `AdaptiveMusic` honors `AudioSource::reset` through trait objects, and layer
-  cross-fades snap at their target instead of asymptoting forever.
+  a mid-fade switch to a third section lets the in-flight fade complete
+  before the onward transition (no hard cut), `AdaptiveMusic` honors
+  `AudioSource::reset` through trait objects, and layer cross-fades snap at
+  their target instead of asymptoting forever.
 - **Runtime engine hardening.** A `PatchId`/`ParamId` from another `Engine`
   resolves inert instead of panicking (the documented contract); a param
   change landing mid-crossfade carries the blend weight instead of restarting
