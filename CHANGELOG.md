@@ -1,5 +1,73 @@
 # Changelog
 
+## Unreleased
+
+A full-codebase review hardening pass: the input edges that could render NaN,
+hang, panic, or silently corrupt are closed, the real-time layers keep their
+promises at any block size, and every fix lands with its regression test.
+Every pre-existing document still renders byte-for-byte (the golden corpus is
+unchanged); the new validation caps only reject documents that previously
+produced NaN, silence, or a hang.
+
+### Fixed
+- **Validation rejects the overflow regime.** Pitches resolving to non-finite
+  Hz (`"midi:10000"`), huge octave numbers (`"A200000000"` — it could panic the
+  parser's i32 arithmetic), `super.detune_cents` above 10 octaves, `fm.ratio`
+  above 4096, constant frequencies above 100 kHz (and modulated frequency
+  endpoints above ±1 MHz), `rand` rates above 10 000/s (a validated doc could
+  hang the renderer for hours), and a non-finite `compress.ratio` all fail
+  validation with a clear message instead of rendering NaN or hanging.
+- **Silent-authoring-error guards.** A `chain` leading with a processor, a
+  bare-processor document root, duplicate automation lanes for one target, and
+  an all-zero `env` *modulator* ADSR (the flatten footgun `Node::Env` already
+  caught) are validation errors now, not digital silence / dead knobs.
+- **Unvalidated documents can't panic the renderer** (the codebase's stated
+  contract): bitcrush `bits ≥ 32`, negative `piano_inharm`, sample rates below
+  40 Hz, and absurd durations (an allocation abort) are clamped defensively;
+  `peak_limit` scrubs non-finite samples instead of passing NaN to the
+  encoders; and graph validation is depth-capped and stack-safe for
+  programmatically-built documents.
+- **Adaptive music is block-size invariant.** Quantized stingers, intensity
+  changes, and transitions fired up to one host block early; they now apply at
+  their exact frame, and section cross-fades compute from an absolute frame
+  count — a 128-frame AudioWorklet and a 512-frame cpal callback render
+  identical audio. Also: a mid-fade `transition_to` the fade's target is a
+  no-op, requesting the previous section cancels the fade back (click-free),
+  `AdaptiveMusic` honors `AudioSource::reset` through trait objects, and layer
+  cross-fades snap at their target instead of asymptoting forever.
+- **Runtime engine hardening.** A `PatchId`/`ParamId` from another `Engine`
+  resolves inert instead of panicking (the documented contract); a param
+  change landing mid-crossfade carries the blend weight instead of restarting
+  the fade; a NaN `pan`/`glide` can no longer poison the whole mix; `split(0)`
+  floors to a one-frame ring instead of silently never playing.
+  `Engine`/`Mixer`/`StreamSource` pre-allocate their scratch (no callback
+  allocation for blocks up to 8192 frames), and the docs state the real
+  threading contracts (`Engine`'s mutating calls are O(duration) — use
+  `split` for real-time).
+- **Song compile.** `u32` arithmetic on note steps/bars saturates instead of
+  panicking in debug or wrapping in release; a degenerate `bpm` (< 1) clamps
+  consistently for duration AND note placement (notes past bar 0 used to drop
+  silently); `add_track` slugifies and dedups names like the fluent path.
+- **Instrument.** MIDI convention honored: `note_on` with velocity 0 is a
+  note-off (it used to leak a stuck silent voice); `transpose` leaves an
+  unparseable note as authored instead of substituting a silent A4;
+  `with_tremolo(0.0, depth)` is off instead of a constant gain cut.
+- **CLI.** MIDI export includes seqs inside `duck` triggers (a doc whose only
+  seq was the kick trigger exported note-less) and saturates pathological step
+  values instead of overflowing; `tono import` / `tono midi` no longer
+  silently overwrite an existing default output file; doc names can't escape
+  the output directory; OGG encodes in 8192-sample blocks (a whole-render
+  block is orders of magnitude slower in libvorbis).
+- **tono-py / tono-desktop.** `stinger` renders off the shared pump lock (it
+  used to render under it — an audible dropout); `Engine(sample_rate=0)` is
+  rejected; the desktop deck keeps up to two fade generations so rapid doc
+  swaps don't hard-cut and pre-allocates its callback scratch; `analyze`
+  surfaces PNG-encode failures instead of reporting success with empty images.
+- `Patch::instantiate` can't panic on NaN parameter specs (a NaN value skips
+  the write); `mutate` clamps to every validation bound (the 30 s delay cap
+  and the new detune/rand-rate/frequency caps) so a mutated doc always
+  re-validates; `humanize`'s coherent transpose reaches `duck` triggers.
+
 ## 1.8.0 — 2026-07-11
 
 The structure release: a full quality review swept every lens, the god-files
