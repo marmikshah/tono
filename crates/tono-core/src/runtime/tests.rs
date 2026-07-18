@@ -550,3 +550,186 @@ fn gain_node(amount: f32) -> Node {
 fn reverb_node() -> Node {
     serde_json::from_str(r#"{ "type": "reverb", "room": 0.6, "mix": 0.5 }"#).unwrap()
 }
+
+#[test]
+fn foreign_patch_and_param_handles_are_inert_never_panic() {
+    // Handles are Copy and can cross Engines by mistake; the documented
+    // contract is "inert, never a panic".
+    let mut a = Engine::new(44_100);
+    let patch_a = a.load(&doc(0.5)); // a's patch 0 is param-less
+    let h = a.play(patch_a);
+
+    let mut b = Engine::new(44_100);
+    let patch_b = b.load_patch(&pitch_patch()); // b's patch 0 has one param
+    let pid = b.param(patch_b, "pitch").unwrap(); // {patch: 0, index: 0}
+    // a's patch 0 has no params — this used to index out of bounds and panic.
+    a.set_param(h, pid, 880.0, Tween::IMMEDIATE);
+
+    // A PatchId from an Engine with more patches than this one.
+    let foreign = b.load(&doc(0.5)); // b's patch 1; a has no patch 1
+    let h2 = a.play(foreign);
+    assert!(
+        !a.is_active(h2),
+        "a foreign PatchId resolves to the inert handle"
+    );
+
+    let mut out = vec![0.0f32; 256];
+    a.fill(&mut out);
+    assert!(peak(&out) > 0.0, "the legit instance still sounds");
+}
+
+#[test]
+fn param_change_mid_crossfade_carries_the_blend_weight() {
+    // A second set_param landing mid-crossfade must continue the blend, not
+    // restart it from 0 — restarting drops the in-progress fade tail at full
+    // weight, an audible click.
+    let mut e = Engine::new(44_100);
+    let p = e.load_patch(&pitch_patch());
+    let h = e.play_looping(p);
+    let pid = e.param(p, "pitch").unwrap();
+    let mut block = vec![0.0f32; 441 * 2];
+    e.fill(&mut block); // get sounding
+    e.set_param(h, pid, 880.0, Tween::ms(100.0, 44_100));
+    e.fill(&mut block); // ≈10% into the first fade
+    let w = e.fade_weight(0).expect("first crossfade installed");
+    assert!(w > 0.0, "the fade has started (w={w})");
+    e.set_param(h, pid, 1320.0, Tween::ms(100.0, 44_100));
+    let w2 = e.fade_weight(0).expect("second crossfade installed");
+    assert_eq!(
+        w.to_bits(),
+        w2.to_bits(),
+        "the new fade continues at the old weight"
+    );
+    for _ in 0..20 {
+        e.fill(&mut block);
+        assert!(block.iter().all(|x| x.is_finite()), "output stays finite");
+    }
+}
+
+#[test]
+fn nan_pan_is_sanitized_not_mixed() {
+    let mut e = Engine::new(44_100);
+    let p = e.load(&doc(0.5));
+    let h = e.play_looping(p);
+    e.set_pan(h, f32::NAN, Tween::IMMEDIATE); // clamp() passes NaN through
+    let mut out = vec![0.0f32; 256];
+    e.fill(&mut out);
+    assert!(
+        out.iter().all(|x| x.is_finite()),
+        "a NaN pan must not poison the whole mix"
+    );
+    assert!(peak(&out) > 0.0);
+}
+
+#[test]
+fn engine_single_instance_matches_offline_bounce() {
+    // The runtime's headline promise: one sounding instance through
+    // Engine::fill is byte-identical to an offline bounce.
+    let d = doc(0.5);
+    let (exp_l, exp_r) = crate::player::render_stereo(&d);
+    let n = exp_l.len();
+
+    let mut e = Engine::new(44_100);
+    let p = e.load(&d);
+    e.play(p); // one-shot
+    let mut got = Vec::with_capacity(n * 2);
+    while got.len() < n * 2 {
+        let mut block = vec![0.0f32; 257 * 2];
+        e.fill(&mut block);
+        got.extend_from_slice(&block);
+    }
+    let bits = |s: &[f32]| s.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    let gl: Vec<f32> = got[..n * 2].iter().step_by(2).copied().collect();
+    let gr: Vec<f32> = got[..n * 2].iter().skip(1).step_by(2).copied().collect();
+    assert_eq!(bits(&gl), bits(&exp_l), "left byte-identical");
+    assert_eq!(bits(&gr), bits(&exp_r), "right byte-identical");
+}
+
+#[test]
+fn spsc_threaded_pump_and_drain_is_byte_identical() {
+    // The ring's Release/Acquire ordering was previously exercised only
+    // single-threaded; soak it across real threads and demand byte-equality.
+    let mk = || {
+        let mut e = Engine::new(44_100);
+        let p = e.load(&doc(0.5));
+        e.play_looping(p);
+        e
+    };
+    let total = 22_050usize; // 0.5 s at 44.1 kHz
+    let mut reference = mk();
+    let mut expected = vec![0.0f32; total * 2];
+    reference.fill(&mut expected);
+
+    let (mut ctl, mut rend) = mk().split(2048);
+    let producer = std::thread::spawn(move || {
+        let mut done = 0usize;
+        while done < total {
+            done += ctl.pump(512);
+        }
+    });
+    let mut got = Vec::with_capacity(total * 2);
+    while got.len() < total * 2 {
+        // Wait for a full block so an underrun can't insert fake silence.
+        while rend.ring.len() < 192 * 2 {
+            std::thread::yield_now();
+        }
+        let mut block = vec![0.0f32; 192 * 2];
+        rend.fill(&mut block);
+        got.extend_from_slice(&block);
+    }
+    producer.join().unwrap();
+    assert_eq!(
+        &got[..expected.len()],
+        &expected[..],
+        "threaded pump/drain diverged from the unsplit engine"
+    );
+}
+
+#[test]
+fn split_zero_ring_is_floored_not_dead() {
+    // split(0) used to build a ring that can never hold a whole frame —
+    // pump returned 0 forever, silently. It is floored to one frame now.
+    let mut e = Engine::new(44_100);
+    let p = e.load(&doc(0.5));
+    let (mut ctl, mut rend) = e.split(0);
+    ctl.play_looping(p);
+    assert_eq!(ctl.pump(8), 1, "a one-frame ring pushes a frame at a time");
+    let mut out = vec![0.0f32; 2];
+    assert_eq!(rend.fill(&mut out), 1);
+    assert!(ctl.pump(8) > 0, "and keeps going after a drain");
+}
+
+#[test]
+fn set_bus_effects_on_unknown_bus_errors() {
+    let mut m = Mixer::new(44_100);
+    let mut other = Mixer::new(44_100);
+    other.bus("a");
+    let foreign = other.bus("b"); // index 2 — beyond m's buses
+    let err = m.set_bus_effects(foreign, Vec::new()).unwrap_err();
+    assert_eq!(err, MixerError::UnknownBus);
+}
+
+#[test]
+fn stream_source_serves_varying_block_sizes() {
+    let d: SoundDoc = serde_json::from_str(
+        r#"{ "name":"s", "duration":0.2, "root": { "type":"sine", "freq": 440 } }"#,
+    )
+    .unwrap();
+    let mut whole_src = StreamSource::from_doc(&d).unwrap();
+    let mut whole = vec![0.0f32; 4410 * 2];
+    whole_src.fill(&mut whole);
+
+    let mut s = StreamSource::from_doc(&d).unwrap();
+    let mut got = Vec::new();
+    // Varying sizes, including one bigger than the pre-allocated scratch.
+    for frames in [37usize, 512, 9000, 3, 1000] {
+        let mut block = vec![0.0f32; frames * 2];
+        s.fill(&mut block);
+        got.extend_from_slice(&block);
+    }
+    assert_eq!(
+        &got[..whole.len()],
+        &whole[..],
+        "block size must not change the stream"
+    );
+}

@@ -50,6 +50,8 @@ pub enum MixerError {
     /// The mixer was built without a sample rate ([`Mixer::new`]); effect chains
     /// need [`Mixer::new_at`].
     NoSampleRate,
+    /// The bus handle names no live bus (foreign or stale).
+    UnknownBus,
 }
 
 impl std::fmt::Display for MixerError {
@@ -60,6 +62,9 @@ impl std::fmt::Display for MixerError {
             }
             MixerError::NoSampleRate => {
                 write!(f, "mixer has no sample rate; build it with Mixer::new_at")
+            }
+            MixerError::UnknownBus => {
+                write!(f, "unknown bus (foreign or stale BusId)")
             }
         }
     }
@@ -146,11 +151,13 @@ impl Mixer {
             buses: vec![master],
             next_id: 1,
             sample_rate,
-            scratch: Vec::new(),
-            master_l: Vec::new(),
-            master_r: Vec::new(),
-            bus_l: Vec::new(),
-            bus_r: Vec::new(),
+            // Pre-sized so common host blocks (up to 8192 frames) never
+            // allocate in `fill`; grow() stays as the fallback for bigger ones.
+            scratch: vec![0.0; 8192 * 2],
+            master_l: vec![0.0; 8192],
+            master_r: vec![0.0; 8192],
+            bus_l: vec![0.0; 8192],
+            bus_r: vec![0.0; 8192],
             fx_in: Vec::new(),
         }
     }
@@ -223,13 +230,17 @@ impl Mixer {
     }
 
     /// Set (or clear, with an empty list) a bus's insert chain. Works on any bus,
-    /// including master.
+    /// including master. Returns [`MixerError::UnknownBus`] for a foreign/stale
+    /// handle (it used to build the chain and silently discard it).
     pub fn set_bus_effects(&mut self, bus: BusId, effects: Vec<Node>) -> Result<(), MixerError> {
         let inserts = self.build_chain(&effects)?;
-        if let Some(b) = self.buses.get_mut(bus.0 as usize) {
-            b.inserts = inserts;
+        match self.buses.get_mut(bus.0 as usize) {
+            Some(b) => {
+                b.inserts = inserts;
+                Ok(())
+            }
+            None => Err(MixerError::UnknownBus),
         }
-        Ok(())
     }
 
     /// Set the master insert chain (a convenience for `set_bus_effects(MASTER, …)`).

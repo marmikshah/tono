@@ -498,3 +498,16 @@ fn loop_and_stereo_docs_fall_back_to_the_player() {
         .is_none()
     );
 }
+
+#[test]
+fn glide_pitch_nan_coeff_snaps_instead_of_poisoning() {
+    // clamp() passes NaN through; a NaN glide coefficient used to latch the
+    // pitch to NaN forever. It folds to an instant snap now.
+    let d = parse(r#"{ "name":"s", "duration":0.1, "root": { "type":"sine", "freq": 440 } }"#);
+    let mut g = StreamGraph::try_from_doc(&d).unwrap();
+    g.glide_pitch(2.0, f32::NAN);
+    let mut out = [0.0f32; 128];
+    g.fill(&mut out);
+    assert!(out.iter().all(|x| x.is_finite()));
+    assert_eq!(g.pitch(), 2.0, "NaN coeff folds to an instant snap");
+}

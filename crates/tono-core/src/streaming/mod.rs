@@ -75,7 +75,9 @@ impl StreamGraph {
         {
             return None;
         }
-        let n = ((doc.duration * doc.sample_rate as f32).ceil() as usize).max(1);
+        // The duration clamp mirrors the offline render paths so an
+        // unvalidated doc can't request an unbounded seq pre-render here.
+        let n = ((doc.duration.clamp(0.0, 600.0) * doc.sample_rate as f32).ceil() as usize).max(1);
         Some(StreamGraph {
             root: try_src(
                 &doc.root,
@@ -116,7 +118,13 @@ impl StreamGraph {
     /// eases toward it, so a note change or pitch-wheel move never clicks.
     pub fn glide_pitch(&mut self, scale: f32, coeff: f32) {
         self.pitch_target = scale.max(0.0);
-        self.glide = coeff.clamp(f32::MIN_POSITIVE, 1.0);
+        // clamp() passes NaN through, and a NaN glide would latch pitch to NaN
+        // forever — fold it to an instant snap instead.
+        self.glide = if coeff.is_nan() {
+            1.0
+        } else {
+            coeff.clamp(f32::MIN_POSITIVE, 1.0)
+        };
     }
 
     /// The note-pitch scale currently sounding (mid-glide, this trails the
