@@ -305,7 +305,9 @@ fn pluck_note(voice: &SeqVoice, f: &[f32], sr: u32, rng: &mut Rng) -> Signal {
     let srf = sr as f32;
     let n = f.len();
     let mut out = Vec::with_capacity(n);
-    let period = ((srf / f[0].clamp(20.0, srf / 2.0)).round() as usize).max(2);
+    // The .max(20.0) guard keeps the clamp ordered at absurd sample rates
+    // (sr < 40), so an unvalidated doc can't panic the kernel.
+    let period = ((srf / f[0].clamp(20.0, (srf / 2.0).max(20.0))).round() as usize).max(2);
     let mut string: Vec<f32> = (0..period).map(|_| rng.bi()).collect();
     let mut spos = 0usize;
     let bright = voice.pluck.pluck_tone.max(0.0);
@@ -374,11 +376,11 @@ fn piano_note_v3(voice: &SeqVoice, note: &SeqNote, f: &[f32], sr: u32, rng: &mut
         phase: [f32; 2],
     }
     // Five tone knobs (defaults reproduce the concert grand bit-for-bit).
+    // piano_inharm is validated positive; the .max(0.0) keeps an unvalidated
+    // negative/NaN from inverting the clamp bounds and panicking the kernel.
+    let inharm = voice.piano.piano_inharm.max(0.0);
     let f0 = f[0].max(20.0);
-    let b_inharm = (7.0e-5 * voice.piano.piano_inharm * (f0 / 55.0)).clamp(
-        5.0e-5 * voice.piano.piano_inharm,
-        1.2e-3 * voice.piano.piano_inharm,
-    );
+    let b_inharm = (7.0e-5 * inharm * (f0 / 55.0)).clamp(5.0e-5 * inharm, 1.2e-3 * inharm);
     let base_decay = (10.0 * voice.piano.piano_decay / (1.0 + f0 / 110.0)).clamp(0.45, 9.0);
     let strike = voice.piano.piano_strike.clamp(0.01, 0.5); // hammer position along the string
     let bright = 0.45 + 0.55 * note.gain; // velocity opens the high partials
@@ -695,6 +697,9 @@ fn load_soundfont(path: &str) -> anyhow::Result<std::sync::Arc<rustysynth::Sound
     if let Some(f) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(path) {
         return Ok(f.clone());
     }
+    // Deliberately lock-free across the parse: two concurrent renders of the
+    // same font may both parse (last insert wins — same bytes), which is
+    // strictly better than serializing renders on a multi-MB parse.
     let mut file = std::fs::File::open(path)?;
     let font = Arc::new(
         rustysynth::SoundFont::new(&mut file).map_err(|e| anyhow::anyhow!("parse: {e:?}"))?,

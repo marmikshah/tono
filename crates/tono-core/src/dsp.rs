@@ -136,10 +136,18 @@ pub const CEIL: f32 = 0.989;
 /// never exceeds [`CEIL`]. Leaving quiet sounds quiet keeps the analyzer's
 /// level readings meaningful; the shared gain keeps stereo images intact.
 pub fn peak_limit(channels: &mut [&mut [f32]]) {
-    let peak = channels
-        .iter()
-        .flat_map(|c| c.iter())
-        .fold(0.0f32, |m, &x| m.max(x.abs()));
+    // Sanitize first: an unvalidated document can put NaN/inf into the graph,
+    // and the f32::max fold discards NaN — the buffer would measure peak 0,
+    // skip limiting, and NaN the encoded file. Scrub non-finite to silence.
+    let mut peak = 0.0f32;
+    for c in channels.iter_mut() {
+        for x in c.iter_mut() {
+            if !x.is_finite() {
+                *x = 0.0;
+            }
+            peak = peak.max(x.abs());
+        }
+    }
     if peak > CEIL {
         let g = CEIL / peak;
         for c in channels.iter_mut() {
@@ -313,7 +321,9 @@ fn k_weight(samples: &[f32], sr: u32) -> Vec<f32> {
 /// relative gate; channel energies sum per the spec. Accumulates in f64, so
 /// long renders don't stall an f32 accumulator. Returns −120 for silence.
 pub fn loudness_lufs_gated(channels: &[&[f32]], sr: u32) -> f32 {
-    let n = channels.first().map_or(0, |c| c.len());
+    // Gate over the shortest channel so mismatched lengths can't panic the
+    // block slicing (in-repo callers pass equal lengths; the fn is pub).
+    let n = channels.iter().map(|c| c.len()).min().unwrap_or(0);
     if n == 0 {
         return -120.0;
     }
