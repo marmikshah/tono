@@ -1,6 +1,7 @@
 //! The routing [`Mixer`]: input/FX buses with insert chains, faders, and
 //! post-fader sends over any set of [`AudioSource`]s.
 
+use super::SCRATCH_FRAMES;
 use super::source::AudioSource;
 use crate::dsl::{ENGINE_VERSION, Node};
 use crate::streaming::EffectChain;
@@ -48,13 +49,19 @@ pub enum MixerError {
     /// An effect node is outside the real-time-streamable subset.
     NotStreamable,
     /// The mixer has no sample rate. Vestigial — every current constructor
-    /// takes the rate up front, so this is unreachable today.
+    /// takes the rate up front, so this is unreachable today. Deleted at 2.0.
+    #[deprecated(
+        since = "1.9.0",
+        note = "unreachable: every Mixer constructor takes the rate up front; deleted at 2.0"
+    )]
     NoSampleRate,
     /// The bus handle names no live bus (foreign or stale).
     UnknownBus,
 }
 
 impl std::fmt::Display for MixerError {
+    // The deprecated variant is still displayed until it is deleted at 2.0.
+    #[allow(deprecated)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MixerError::NotStreamable => {
@@ -151,13 +158,13 @@ impl Mixer {
             buses: vec![master],
             next_id: 1,
             sample_rate,
-            // Pre-sized so common host blocks (up to 8192 frames) never
-            // allocate in `fill`; grow() stays as the fallback for bigger ones.
-            scratch: vec![0.0; 8192 * 2],
-            master_l: vec![0.0; 8192],
-            master_r: vec![0.0; 8192],
-            bus_l: vec![0.0; 8192],
-            bus_r: vec![0.0; 8192],
+            // Pre-sized so common host blocks never allocate in `fill` (the
+            // grow() calls stay as the fallback for bigger ones).
+            scratch: vec![0.0; SCRATCH_FRAMES * 2],
+            master_l: vec![0.0; SCRATCH_FRAMES],
+            master_r: vec![0.0; SCRATCH_FRAMES],
+            bus_l: vec![0.0; SCRATCH_FRAMES],
+            bus_r: vec![0.0; SCRATCH_FRAMES],
             fx_in: Vec::new(),
         }
     }
@@ -294,6 +301,8 @@ impl Mixer {
         if effects.is_empty() {
             return Ok(None);
         }
+        // The deprecated variant is still constructed until it is deleted at 2.0.
+        #[allow(deprecated)]
         let sr = self.sample_rate.ok_or(MixerError::NoSampleRate)?;
         let build = || EffectChain::try_new(effects, sr, ENGINE_VERSION);
         let l = build().ok_or(MixerError::NotStreamable)?;
