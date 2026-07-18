@@ -1,0 +1,58 @@
+name: Wheels
+
+# abi3 wheel builds, RELEASE ONLY: python.yml's smoke test guards correctness
+# on PRs and master pushes, so a v* tag always points at already-verified
+# code — the 3-platform matrix (10x-cost macOS included) only earns its
+# minutes when a release needs the artifacts. Artifacts only, build-from-source
+# otherwise — the wheels are never published to PyPI.
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  wheels:
+    name: Wheels (${{ matrix.platform.os }})
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os: ubuntu-latest
+            # A container build (yum-based AlmaLinux 8) so the wheel is glibc-2.28
+            # compliant instead of linking the host's newer libs.
+            manylinux: "2_28"
+            args: --release
+          - os: macos-latest
+            manylinux: auto
+            # Apple Silicon only: universal2 compiled arm64 + Intel in one job.
+            args: --release --target aarch64-apple-darwin
+          - os: windows-latest
+            manylinux: auto
+            args: --release
+    steps:
+      - uses: actions/checkout@v5
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          # `manylinux` as an action input runs the Linux build INSIDE the
+          # container (ignored on macOS/Windows); passing it in `args` instead
+          # builds on the host and fails the compliance audit.
+          manylinux: ${{ matrix.platform.manylinux }}
+          # abi3-py39: one wheel per platform covers every CPython 3.9+.
+          args: ${{ matrix.platform.args }} --out dist -m crates/tono-py/Cargo.toml
+          # cpal needs ALSA dev headers to build. yum inside the manylinux
+          # container (root), apt on a Debian host (needs sudo).
+          before-script-linux: |
+            if command -v yum >/dev/null; then yum install -y alsa-lib-devel; fi
+            if command -v apt-get >/dev/null; then
+              (sudo apt-get update && sudo apt-get install -y libasound2-dev) \
+                || (apt-get update && apt-get install -y libasound2-dev)
+            fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform.os }}
+          path: dist
