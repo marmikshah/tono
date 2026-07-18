@@ -131,7 +131,13 @@ fn transpose(node: &mut Node, ratio: f32) {
     fn scale(v: &mut Value, ratio: f32) {
         match v {
             Value::Const(c) => *c *= ratio,
-            Value::Note(s) => *v = Value::Const(note_to_hz(s).unwrap_or(440.0) * ratio),
+            // An unparseable note is left as authored — substituting a silent
+            // A4 (the old unwrap_or(440.0)) would hide the typo.
+            Value::Note(s) => {
+                if let Some(hz) = note_to_hz(s) {
+                    *v = Value::Const(hz * ratio);
+                }
+            }
             Value::Modulated(_) => {}
         }
     }
@@ -291,9 +297,20 @@ impl Instrument {
     /// **quietest** voice is stolen (the least audible cut). In mono mode the one
     /// voice is retuned (gliding) to the new note. A patch made un-buildable by a
     /// bad param yields a silent voice rather than panicking — a control event
-    /// never crashes the audio thread.
+    /// never crashes the audio thread. MIDI convention: a note-on with
+    /// `velocity == 0.0` is a note-off (spawning a silent voice for it would
+    /// leak a voice that never releases) and returns the inert handle.
     pub fn note_on(&mut self, note: Note, velocity: f32) -> VoiceHandle {
-        let velocity = velocity.clamp(0.0, 1.0);
+        // NaN folds to 0.0 → the safe reading (note-off), not a loud surprise.
+        let velocity = if velocity.is_nan() {
+            0.0
+        } else {
+            velocity.clamp(0.0, 1.0)
+        };
+        if velocity == 0.0 {
+            self.note_off(note);
+            return VoiceHandle(0);
+        }
         if let PlayMode::Mono { legato } = self.design.mode {
             return self.mono_note_on(note, velocity, legato);
         }

@@ -43,7 +43,10 @@ pub enum PlayMode {
 
 /// Instrument-level modulation — LFOs that make a voice breathe. All off by
 /// default (an all-zero `Modulation` leaves the render byte-identical). Driven
-/// live at control rate, so it works on any instrument without re-authoring it.
+/// live at control rate (64-frame sub-blocks), so a *modulated* instrument's
+/// output is deterministic for a given block-size sequence but — unlike the
+/// unmodulated render — not block-size-invariant (LFO values quantize to
+/// sub-block boundaries). An LFO with a non-positive rate is disabled.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Modulation {
     /// Vibrato (pitch LFO) rate in Hz.
@@ -67,8 +70,13 @@ pub struct Modulation {
 }
 
 impl Modulation {
+    /// An LFO only counts when its rate is positive: `with_tremolo(0.0, d)`
+    /// (rate 0, depth > 0) is not a modulation but a constant mid-depth gain
+    /// cut — never a usable sound — so a non-positive rate disables the LFO.
     pub(super) fn is_active(&self) -> bool {
-        self.vibrato_cents > 0.0 || self.tremolo_depth > 0.0 || self.filter_octaves > 0.0
+        (self.vibrato_cents > 0.0 && self.vibrato_rate > 0.0)
+            || (self.tremolo_depth > 0.0 && self.tremolo_rate > 0.0)
+            || (self.filter_octaves > 0.0 && self.filter_rate > 0.0)
     }
 }
 

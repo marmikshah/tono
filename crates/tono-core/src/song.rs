@@ -209,10 +209,14 @@ impl Song {
         }
     }
 
-    /// Add an instrument track.
+    /// Add an instrument track. The name becomes the rendered layer id, so it
+    /// is slugified and deduplicated exactly like the fluent [`add`](Self::add)
+    /// path — a duplicate name would land a placement on BOTH tracks, and a
+    /// non-slug name would fail validation downstream at render.
     pub fn add_track(&mut self, name: impl Into<String>, wave: SeqWave, env: Adsr) -> &mut Self {
+        let name = self.unique_name(&slugify(&name.into()));
         self.tracks.push(SongTrack {
-            name: name.into(),
+            name,
             wave,
             env,
             gain: 1.0,
@@ -333,7 +337,7 @@ impl Song {
                     .find(|p| p.name == pl.pattern)
                     .map(|p| p.bars)
                     .unwrap_or(0);
-                pl.bar + bars
+                pl.bar.saturating_add(bars)
             })
             .max()
             .unwrap_or(0);
@@ -415,10 +419,10 @@ impl Song {
                 .iter()
                 .find(|p| p.name == pl.pattern)
                 .expect("pattern existence checked above");
-            let offset = pl.bar * steps_per_bar;
+            let offset = pl.bar.saturating_mul(steps_per_bar);
             for n in &pat.notes {
                 let placed = SeqNote {
-                    step: n.step + offset,
+                    step: n.step.saturating_add(offset),
                     len: n.len,
                     pitch: n.pitch.clone(),
                     gain: n.gain,
@@ -436,8 +440,11 @@ impl Song {
         // param can never be silently dropped here.
         let mut seq_json = serde_json::json!({
             "type": "seq",
-            "bpm": self.bpm,
-            "steps_per_beat": self.steps_per_beat,
+            // bpm/steps_per_beat are clamped exactly like to_doc's duration
+            // math — degenerate values would otherwise place notes beyond the
+            // computed duration (silently dropping them) or build an invalid seq.
+            "bpm": self.bpm.max(1.0),
+            "steps_per_beat": self.steps_per_beat.max(1),
             "wave": serde_json::to_value(t.wave).map_err(|e| SongError::Compile(e.to_string()))?,
             "env": serde_json::to_value(t.env).map_err(|e| SongError::Compile(e.to_string()))?,
             "swing": t.swing.unwrap_or(self.swing),
@@ -493,9 +500,11 @@ const SEND_ROOM: f32 = 0.6;
 const SEND_MIX_MAX: f32 = 0.5;
 
 /// Where a note stops sounding, in steps. Zero-length notes still occupy one
-/// step (the same floor the seq renderer applies).
+/// step (the same floor the seq renderer applies). Saturating: a pathological
+/// step/len wraps in release (and panics in debug) for no benefit — the seq
+/// renderer already caps notes at the render window.
 fn note_end(n: &SeqNote) -> u32 {
-    n.step + n.len.max(1)
+    n.step.saturating_add(n.len.max(1))
 }
 
 /// A per-track note writer, handed to the closure of [`Song::add`]. A moving
@@ -967,5 +976,61 @@ mod tests {
         assert_eq!(slugify("808 drums"), "808_drums");
         assert_eq!(slugify("steel guitar"), "steel_guitar");
         assert_eq!(slugify("  !!  "), "track");
+    }
+
+    #[test]
+    fn pathological_step_values_saturate_instead_of_wrapping() {
+        // u32 arithmetic on raw input used to panic in debug and wrap in
+        // release; a saturated tail end is harmless (the seq renderer caps
+        // notes at the render window anyway).
+        let mut song = Song::new("s", 120.0);
+        song.add_track("t", SeqWave::Square, amp());
+        song.tracks[0].notes.push(note(u32::MAX, 4, "C4"));
+        let doc = song.to_doc().unwrap(); // must not panic
+        assert!(doc.duration.is_finite());
+        // A huge placement bar takes the same path.
+        let mut song = Song::new("s", 120.0);
+        song.add_track("t", SeqWave::Square, amp());
+        song.add_pattern("p", 1, vec![note(0, 1, "C4")]);
+        song.arrange("t", "p", u32::MAX);
+        let doc = song.to_doc().unwrap();
+        assert!(doc.duration.is_finite());
+    }
+
+    #[test]
+    fn add_track_slugifies_and_dedups_names() {
+        // Duplicate names used to land a placement on BOTH tracks; non-slug
+        // names compiled to a doc that fails validation downstream.
+        let mut song = Song::new("s", 120.0);
+        song.add_track("My Bass", SeqWave::Bass, amp());
+        song.add_track("My Bass", SeqWave::Bass, amp());
+        assert_eq!(song.tracks[0].name, "my_bass");
+        assert_eq!(song.tracks[1].name, "my_bass_2");
+    }
+
+    #[test]
+    fn degenerate_bpm_keeps_duration_and_placement_consistent() {
+        // bpm < 1 used to size the duration for bpm=1 while the seq played at
+        // the real bpm — notes past bar 0 silently dropped. Both use the
+        // clamped value now.
+        let mut song = Song::new("s", 0.5);
+        song.add_track("t", SeqWave::Sine, amp());
+        song.tracks[0].notes.push(note(0, 2, "C4"));
+        song.tracks[0].notes.push(note(16, 2, "C4")); // ends at step 18
+        let doc = song.to_doc().unwrap();
+        doc.validate().unwrap();
+        let Node::Tracks { tracks, .. } = &doc.root else {
+            panic!("tracks root");
+        };
+        let Node::Seq { bpm, .. } = &tracks[0].node else {
+            panic!("a reverb-less track compiles to a bare seq");
+        };
+        assert_eq!(*bpm, 1.0, "the seq plays at the clamped bpm");
+        let expected = 18.0 * (60.0 / 4.0) + 2.0; // 15 s per step at bpm 1
+        assert!(
+            (doc.duration - expected).abs() < 1e-3,
+            "duration matches the clamped bpm: {}",
+            doc.duration
+        );
     }
 }
