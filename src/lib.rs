@@ -20,3 +20,4 @@ pub mod audio;
 pub mod diff;
 pub mod imaging;
 pub mod midi;
+pub mod target;
