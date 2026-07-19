@@ -13,7 +13,8 @@ sound is a function of its inputs, never a recorded asset.
 
 The lazy version of this whole page: a drum kit and a piano in one `Mixer`,
 notes sent live from your code — a runnable, compile-checked example at
-`make play EXAMPLE=live_band` ([source](../crates/tono-play/examples/live_band.rs)).
+`cargo run -p tono-play --example live_band`
+([source](../crates/tono-play/examples/live_band.rs)).
 
 Everything live implements one trait — `runtime::AudioSource` ("fill this
 interleaved-stereo buffer") — so your output adapter never depends on a

@@ -16,9 +16,9 @@ Never published to PyPI (the name is taken) — build it here:
 
 ```sh
 pip install maturin
-make python        # maturin develop → the `tono` module in your env
-make python-test   # the determinism smoke test
-make wheel         # a release abi3 wheel → target/wheels/
+maturin develop -m crates/tono-py/Cargo.toml   # the `tono` module in your env
+python3 crates/tono-py/tests/smoke.py          # the determinism smoke test
+maturin build --release -m crates/tono-py/Cargo.toml  # release abi3 wheel → target/wheels/
 ```
 
 abi3-py39: one wheel per platform covers every CPython 3.9+.

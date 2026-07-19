@@ -9,5 +9,6 @@ Not part of the default build or CI (webview/cpal/midir are heavy). Build and
 launch:
 
 ```sh
-make desktop
+cargo build -p tono-desktop --release
+./target/release/tono-desktop
 ```

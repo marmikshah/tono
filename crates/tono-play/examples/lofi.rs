@@ -1,6 +1,6 @@
 //! A full multi-instrument song, composed with the catalog + fluent builder.
 //!
-//!     make play EXAMPLE=lofi                               # hear it live
+//!     cargo run -p tono-play --example lofi               # hear it live
 //!     cargo run -p tono-play --example lofi -- song.json  # write the SoundDoc
 //!         # then: tono render song.json -o out/            # → audio + images
 //!

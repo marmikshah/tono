@@ -16,5 +16,5 @@ Not part of the default build (heavy platform deps). Run an example
 (the recipes: a live band, a song, drums, adaptive music, …):
 
 ```sh
-make play EXAMPLE=live_band
+cargo run -p tono-play --example live_band
 ```

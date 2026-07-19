@@ -1,5 +1,5 @@
 //! The programmatic playground: build sounds and instruments in code and hear
-//! them. Run:  make play   (EXAMPLE=playground is the default)
+//! them. Run:  cargo run -p tono-play --example playground
 
 use std::thread::sleep;
 use std::time::Duration;

@@ -81,7 +81,7 @@ human *or an agent* needs to author sound by inspection. The
 - **Embed in a game** — [docs/runtime.md](docs/runtime.md) (Engine/Mixer
   runtime, parametric patches).
 - **Python** — [crates/tono-py](crates/tono-py).
-- **No code** — the desktop pattern station (`make desktop`).
+- **No code** — the desktop pattern station ([build it](crates/tono-desktop)).
 
 All guides: [docs/README.md](docs/README.md).
 

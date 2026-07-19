@@ -1,7 +1,7 @@
 //! A live two-piece band: a drum kit and a piano in one Mixer, notes sent
 //! dynamically from your code.
 //!
-//!     make play EXAMPLE=live_band   (or `cargo run -p tono-play --example live_band`)
+//!     cargo run -p tono-play --example live_band
 //!
 //! The shape every dynamic-instrument use has: a Mixer sums any set of
 //! sources, `mixer.add` hands back a SourceId, and you drive that source live
