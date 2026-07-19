@@ -385,7 +385,10 @@ fn apply_processor(
             release,
             makeup,
         } => compress(input, *threshold, *ratio, *attack, *release, *makeup, sr),
-        _ => input.to_vec(),
+        // Every processor variant is matched above; this fires only if a new
+        // processor is added to the DSL without a render arm (the same guard
+        // render_node keeps for sources) — loud, never a silent identity.
+        _ => unreachable!("unhandled processor node in apply_processor"),
     }
 }
 
