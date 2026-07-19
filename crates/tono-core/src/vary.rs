@@ -80,6 +80,9 @@ fn transpose_value(v: &mut Value, ratio: f32) {
 
 /// Recursively transpose only the pitched sources (oscillator frequencies and
 /// seq note pitches) — filters / envelopes / levels are identity, not pitch.
+/// The recursion goes through the shared [`Node::children_mut`] traversal, so
+/// every nesting spot (mix/mul/chain, a tracks' layers AND its master chain,
+/// a duck's trigger) is covered by construction.
 fn transpose_node(node: &mut Node, ratio: f32) {
     match node {
         Node::Square { freq, .. }
@@ -91,18 +94,9 @@ fn transpose_node(node: &mut Node, ratio: f32) {
         Node::Seq { notes, .. } => notes
             .iter_mut()
             .for_each(|n| transpose_value(&mut n.pitch, ratio)),
-        Node::Mix { inputs } | Node::Mul { inputs } => {
-            inputs.iter_mut().for_each(|n| transpose_node(n, ratio))
-        }
-        Node::Chain { stages } => stages.iter_mut().for_each(|n| transpose_node(n, ratio)),
-        Node::Tracks { tracks, .. } => tracks
-            .iter_mut()
-            .for_each(|t| transpose_node(&mut t.node, ratio)),
-        // The trigger carries pitched material too (e.g. the kick pattern the
-        // pump follows) — it must shift with everything else.
-        Node::Duck { trigger, .. } => transpose_node(trigger, ratio),
         _ => {}
     }
+    node.children_mut().for_each(|c| transpose_node(c, ratio));
 }
 
 /// Return a perturbed copy of `doc`: numeric parameters are jittered by up to
@@ -233,10 +227,6 @@ fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
             adsr.r = jitter(adsr.r, amount, rng, 0.0);
             adsr.punch = jitter_unit(adsr.punch, amount, rng);
         }
-        Node::Mix { inputs } | Node::Mul { inputs } => {
-            inputs.iter_mut().for_each(|n| mutate_node(n, amount, rng))
-        }
-        Node::Chain { stages } => stages.iter_mut().for_each(|n| mutate_node(n, amount, rng)),
         Node::Lowpass { cutoff, q }
         | Node::Highpass { cutoff, q }
         | Node::Bandpass { cutoff, q }
@@ -314,23 +304,19 @@ fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
             *mix = jitter_unit(*mix, amount, rng);
         }
         Node::Compress { .. } => {}
-        Node::Tracks { tracks, master } => {
-            for t in tracks.iter_mut() {
-                mutate_node(&mut t.node, amount, rng);
-            }
-            for m in master.iter_mut() {
-                mutate_node(m, amount, rng);
-            }
-        }
-        Node::Duck {
-            trigger,
-            amount: amt,
-            ..
-        } => {
+        Node::Duck { amount: amt, .. } => {
             *amt = jitter_unit(*amt, amount, rng);
-            mutate_node(trigger, amount, rng);
         }
+        // Combinators carry no knobs of their own; the shared traversal below
+        // recurses into them. (Named explicitly — no `_`, so a new variant
+        // still forces a mutation decision here.)
+        Node::Mix { .. } | Node::Mul { .. } | Node::Chain { .. } | Node::Tracks { .. } => {}
     }
+    // The recursion goes through the shared `children_mut` traversal (the
+    // draw order above is unchanged: each variant's own knobs jitter first,
+    // then children in document order).
+    node.children_mut()
+        .for_each(|c| mutate_node(c, amount, rng));
 }
 
 #[cfg(test)]

@@ -285,13 +285,10 @@ impl SoundDoc {
 fn contains_tracks(node: &Node) -> bool {
     let mut stack = vec![node];
     while let Some(n) = stack.pop() {
-        match n {
-            Node::Tracks { .. } => return true,
-            Node::Mix { inputs } | Node::Mul { inputs } => stack.extend(inputs),
-            Node::Chain { stages } => stack.extend(stages),
-            Node::Duck { trigger, .. } => stack.push(trigger),
-            _ => {}
+        if matches!(n, Node::Tracks { .. }) {
+            return true;
         }
+        stack.extend(n.children());
     }
     false
 }

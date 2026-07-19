@@ -11,7 +11,7 @@ mod tests;
 mod tracks;
 mod validate;
 
-pub use node::{BassKnobs, FmKnobs, Node, PianoKnobs, PluckKnobs, Sf2Knobs};
+pub use node::{BassKnobs, Children, ChildrenMut, FmKnobs, Node, PianoKnobs, PluckKnobs, Sf2Knobs};
 pub use tracks::{AutoLane, AutoPoint, AutoTarget, Track};
 pub use validate::ValidateError;
 
@@ -627,23 +627,13 @@ impl SoundDoc {
     /// validation to check the files exist and fail loud at load time.
     pub fn sf2_paths(&self) -> Vec<&str> {
         fn walk<'doc>(node: &'doc Node, out: &mut Vec<&'doc str>) {
-            match node {
-                Node::Seq { wave, sf2, .. } => {
-                    if *wave == SeqWave::Sampler && !sf2.sf2.is_empty() {
-                        out.push(sf2.sf2.as_str());
-                    }
-                }
-                Node::Mix { inputs } | Node::Mul { inputs } => {
-                    inputs.iter().for_each(|n| walk(n, out));
-                }
-                Node::Chain { stages } => stages.iter().for_each(|n| walk(n, out)),
-                Node::Duck { trigger, .. } => walk(trigger, out),
-                Node::Tracks { tracks, master } => {
-                    tracks.iter().for_each(|t| walk(&t.node, out));
-                    master.iter().for_each(|n| walk(n, out));
-                }
-                _ => {}
+            if let Node::Seq { wave, sf2, .. } = node
+                && *wave == SeqWave::Sampler
+                && !sf2.sf2.is_empty()
+            {
+                out.push(sf2.sf2.as_str());
             }
+            node.children().for_each(|c| walk(c, out));
         }
         let mut out = Vec::new();
         walk(&self.root, &mut out);
