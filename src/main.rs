@@ -37,6 +37,10 @@ USAGE:
         tracks (GM programs map to the built-in voices; channel 10
         becomes the drum kit).
 
+    tono diff A.json B.json
+        Render both documents and report what changed: loudness, peak,
+        brightness, envelope metrics, and the sample-domain distance.
+
     tono --version | --help
 
 The SoundDoc format and the node vocabulary are documented in docs/cookbook.md
@@ -50,6 +54,7 @@ fn main() -> anyhow::Result<()> {
         Some("schema") => schema_cmd(&args[2..]),
         Some("midi") => midi_cmd(&args[2..]),
         Some("import") => import_cmd(&args[2..]),
+        Some("diff") => diff_cmd(&args[2..]),
         Some("--version") | Some("-V") => {
             println!("tono {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -347,6 +352,19 @@ fn import_cmd(args: &[String]) -> anyhow::Result<()> {
         summary.tracks,
         summary.bpm
     );
+    Ok(())
+}
+
+/// `tono diff` — what did the edit actually do? Render both docs and report
+/// the changed numbers (and the sample-domain distance).
+fn diff_cmd(args: &[String]) -> anyhow::Result<()> {
+    let cli = Cli::parse(args, &[])?;
+    let [a, b] = match cli.positionals.as_slice() {
+        [a, b] => [a, b],
+        _ => anyhow::bail!("usage: tono diff A.json B.json"),
+    };
+    let (da, db) = (load_doc(a)?, load_doc(b)?);
+    print!("{}", tono::diff::diff_report(&da, &db));
     Ok(())
 }
 
