@@ -581,7 +581,9 @@ impl Node {
     /// its `master` chain, and a `duck`'s trigger. The ONE traversal
     /// definition every walker shares, so a new variant can never be silently
     /// skipped the way the hand-written walkers were (the `duck`-trigger
-    /// omissions in the vary and MIDI walkers were exactly that class).
+    /// omissions in the vary and MIDI walkers were exactly that class). The
+    /// match is exhaustive *on purpose*: adding a variant without a children
+    /// decision is a compile error, never a silent skip.
     pub fn children(&self) -> Children<'_> {
         let kind = match self {
             Node::Mix { inputs } | Node::Mul { inputs } => ChildrenKind::Slice(inputs.iter()),
@@ -591,7 +593,36 @@ impl Node {
                 master: master.iter(),
             },
             Node::Duck { trigger, .. } => ChildrenKind::One(Some(trigger)),
-            _ => ChildrenKind::None,
+            Node::Square { .. }
+            | Node::Triangle { .. }
+            | Node::Sawtooth { .. }
+            | Node::Sine { .. }
+            | Node::Noise { .. }
+            | Node::Fm { .. }
+            | Node::Super { .. }
+            | Node::Seq { .. }
+            | Node::Impact { .. }
+            | Node::Dust { .. }
+            | Node::Env { .. }
+            | Node::Lowpass { .. }
+            | Node::Highpass { .. }
+            | Node::Bandpass { .. }
+            | Node::Notch { .. }
+            | Node::Peak { .. }
+            | Node::Lowshelf { .. }
+            | Node::Highshelf { .. }
+            | Node::Gain { .. }
+            | Node::Bitcrush { .. }
+            | Node::Downsample { .. }
+            | Node::Delay { .. }
+            | Node::Reverb { .. }
+            | Node::Modal { .. }
+            | Node::Drive { .. }
+            | Node::RingMod { .. }
+            | Node::Chorus { .. }
+            | Node::Flanger { .. }
+            | Node::Phaser { .. }
+            | Node::Compress { .. } => ChildrenKind::None,
         };
         Children { kind }
     }
@@ -608,7 +639,36 @@ impl Node {
                 master: master.iter_mut(),
             },
             Node::Duck { trigger, .. } => ChildrenMutKind::One(Some(trigger)),
-            _ => ChildrenMutKind::None,
+            Node::Square { .. }
+            | Node::Triangle { .. }
+            | Node::Sawtooth { .. }
+            | Node::Sine { .. }
+            | Node::Noise { .. }
+            | Node::Fm { .. }
+            | Node::Super { .. }
+            | Node::Seq { .. }
+            | Node::Impact { .. }
+            | Node::Dust { .. }
+            | Node::Env { .. }
+            | Node::Lowpass { .. }
+            | Node::Highpass { .. }
+            | Node::Bandpass { .. }
+            | Node::Notch { .. }
+            | Node::Peak { .. }
+            | Node::Lowshelf { .. }
+            | Node::Highshelf { .. }
+            | Node::Gain { .. }
+            | Node::Bitcrush { .. }
+            | Node::Downsample { .. }
+            | Node::Delay { .. }
+            | Node::Reverb { .. }
+            | Node::Modal { .. }
+            | Node::Drive { .. }
+            | Node::RingMod { .. }
+            | Node::Chorus { .. }
+            | Node::Flanger { .. }
+            | Node::Phaser { .. }
+            | Node::Compress { .. } => ChildrenMutKind::None,
         };
         ChildrenMut { kind }
     }
