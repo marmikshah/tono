@@ -7,7 +7,7 @@
 //! that scales with force, a footstep that varies by surface) with **zero baked
 //! files**. Pure and deterministic like the rest of the core: the same patch and
 //! the same values always render byte-identically, and it compiles native, to
-//! WASM, and into a game engine. This is the thing a DAW structurally can't do.
+//! WASM, and into a game engine.
 
 //!
 //! ```

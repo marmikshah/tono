@@ -1,6 +1,6 @@
 //! tono-desktop — the pattern station.
 //!
-//! The walking skeleton of the DAW: an FL-style step grid over catalog
+//! The walking skeleton of the studio: a step grid over catalog
 //! instruments, looping live through the native audio deck. Click a cell and
 //! hear it on the next block; every edit is undoable; the project saves as an
 //! ordinary tono [`Song`](tono_core::song::Song) wrapped with its grid rows.
