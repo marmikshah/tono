@@ -47,6 +47,10 @@ USAGE:
         Score a SoundDoc against a reference WAV — how close it is and
         where it misses (brightness, loudness, envelope, duration).
 
+    tono play FILE.json [--secs N]
+        Audition a SoundDoc through the speakers (needs the `play`
+        feature: cargo install tono --features play).
+
     tono --version | --help
 
 The SoundDoc format and the node vocabulary are documented in docs/cookbook.md
@@ -62,6 +66,7 @@ fn main() -> anyhow::Result<()> {
         Some("import") => import_cmd(&args[2..]),
         Some("diff") => diff_cmd(&args[2..]),
         Some("match") => match_cmd(&args[2..]),
+        Some("play") => play_cmd(&args[2..]),
         Some("--version") | Some("-V") => {
             println!("tono {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -447,6 +452,39 @@ fn match_cmd(args: &[String]) -> anyhow::Result<()> {
         tono::target::match_report(Path::new(reference), &doc)?
     );
     Ok(())
+}
+
+/// `tono play` — audition a doc through the speakers (feature `play`).
+#[cfg(feature = "play")]
+fn play_cmd(args: &[String]) -> anyhow::Result<()> {
+    let cli = Cli::parse(args, &["--secs"], &[])?;
+    let file = cli.input("tono play FILE.json [--secs N]")?;
+    let doc = load_doc(file)?;
+    let secs: f32 = match cli.flag(&["--secs"]) {
+        Some(v) => v
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--secs must be a number, got '{v}'"))?,
+        None => doc.duration + 1.0,
+    };
+    tono::play::play_doc(&doc, secs)
+}
+
+/// Without the `play` feature the subcommand still parses, but says why it
+/// can't help — a discoverable error, not "unknown option".
+#[cfg(not(feature = "play"))]
+fn play_cmd(_args: &[String]) -> anyhow::Result<()> {
+    anyhow::bail!(
+        "this build has no audio playback — rebuild with `cargo install tono --features play`"
+    )
+}
+
+#[cfg(all(test, not(feature = "play")))]
+mod play_tests {
+    #[test]
+    fn play_without_the_feature_says_so() {
+        let err = super::play_cmd(&[]).unwrap_err();
+        assert!(err.to_string().contains("--features play"));
+    }
 }
 
 #[cfg(test)]

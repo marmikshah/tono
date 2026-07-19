@@ -70,3 +70,8 @@ schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 vorbis_rs = { workspace = true }
+# Optional: speaker playback for `tono play` (`cargo install tono --features play`).
+cpal = { workspace = true, optional = true }
+
+[features]
+play = ["dep:cpal"]
