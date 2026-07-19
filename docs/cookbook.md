@@ -165,7 +165,7 @@ Use `wave: "noise"` for snares/hats (pitch ignored).
 
 Beyond the raw chiptune waves (`square`/`triangle`/`sawtooth`/`sine`/`noise`),
 `seq` ships a core instrument list — pick one per seq and layer seqs like
-tracks in a DAW:
+console tracks:
 
 | wave | sound | notes |
 |------|-------|-------|

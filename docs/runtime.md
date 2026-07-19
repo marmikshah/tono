@@ -6,8 +6,8 @@ desktop studio also runs **inside your game**. A game depends on the pure
 runtime** (an embeddable engine/mixer that serves real-time audio) and
 **patches** — `SoundDoc` templates with named parameters that render
 per-instance variations at runtime, an impact that scales with collision
-force, a footstep that varies by surface, with **zero baked WAV files**. No
-DAW can do this; it's the payoff of the deterministic, headless design.
+force, a footstep that varies by surface, with **zero baked WAV files** — a
+sound is a function of its inputs, never a recorded asset.
 
 ## The live runtime in 60 seconds
 
@@ -106,5 +106,6 @@ patch. A worked example: [`docs/examples/parametric-impact.patch.json`](examples
 
 ## Where it runs
 
-`tono-core` is pure (no I/O, no transport) and compiles to native and
+`tono-core` is pure (no I/O, no transport — apart from the opt-in `sampler`
+feature, which reads `.sf2` files by path) and compiles to native and
 game targets — so one patch plays identically in the studio and the shipped game.

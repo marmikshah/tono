@@ -106,9 +106,11 @@ Every face renders the same `SoundDoc` byte-identically:
 - **CLI** — `cargo install tono` — render to audio + spectrogram + stats.
 - **Rust library** — `cargo add tono-core` — the engine embedded in a game or tool.
 - **Python bindings** — live engine + deterministic numpy renders;
-  [build from source](crates/tono-py/README.md).
-- **Pattern station** — a Tauri studio: FL-style step grid, live audio, undo.
-- **Playground** — hear Rust snippets through the speakers.
+  [build from source](crates/tono-py).
+- **Pattern station** — a Tauri studio: a step grid over catalog instruments,
+  live audio, undo — [build](crates/tono-desktop).
+- **Playground** — hear Rust snippets through the speakers —
+  [examples](crates/tono-play).
 
 The last two are developer faces that live in this repo — the
 [architecture guide](https://marmikshah.github.io/tono/architecture.html)
@@ -122,11 +124,10 @@ myself. If tono helps you as a tool, a reference, or a kick-start, that makes
 me genuinely happy: the tokens are already spent; the least they can do is be
 useful to you too.
 
-> **⚠️ Versions below 2.0.0** are AI-generated and not fully human-reviewed.
-> I intend to follow SemVer, but breaking changes may slip into 1.x releases
-> despite my best intentions. 2.0.0 — the release where I review everything
-> myself — will be tagged by me, by hand; it is the one release an AI agent is
-> not allowed to cut. Until then, use at your own risk.
+> **⚠️ The 1.x series** is AI-generated and not fully human-reviewed.
+> Breaking changes may land in minor releases despite my best intentions —
+> every removal is called out in the [CHANGELOG](CHANGELOG.md). Use at your
+> own risk.
 
 ## License
 

@@ -1,57 +1,27 @@
-# tono (Python)
+# tono-py — the Python bindings
 
-Live procedural audio, adaptive music, and **zero-asset SFX** for Python games —
-a deterministic, Rust-grade synthesis engine. No WAVs to ship.
+The `tono` Python extension: the deterministic engine plus a live runtime,
+from Python. Two surfaces:
 
-Two shapes over one engine.
+- **Offline render** — `tono.render(doc_json)` → numpy arrays (deterministic,
+  CI-testable), `Patch.render(**params)` for parametric patches.
+- **Live engine** — `tono.Engine(sample_rate=48000)` owns a cpal output stream
+  and a render thread: instruments (`engine.instrument("warm_lead")`), a GM
+  drum kit (`engine.drumkit()`), SFX patches (`engine.load_patch(json).trigger(...)`),
+  and an adaptive-music bed (`engine.adaptive()`).
 
-## Owned stream — live playback
+## Build from source
 
-```python
-import tono
+Never published to PyPI (the name is taken) — build it here:
 
-engine = tono.Engine(48000)          # owns a cpal output stream + render thread
-kit    = engine.drumkit()
-lead   = engine.instrument("warm_lead")
-
-# game loop — control only; the audio thread never touches Python
-kit.note_on(36, 1.0)                  # kick
-lead.note_on("C4", 0.9)
-
-impact = engine.load_patch(open("impact.patch.json").read())
-impact.trigger(hardness=0.8, size=0.3)   # zero baked WAVs
-
-music = engine.adaptive()
-music.add_layer(open("combat_stem.json").read(), fade_in_at=0.6)
-music.set_intensity(0.9)             # stems swell with the action
+```sh
+pip install maturin
+make python        # maturin develop → the `tono` module in your env
+make python-test   # the determinism smoke test
+make wheel         # a release abi3 wheel → target/wheels/
 ```
 
-Runnable version: [`examples/live_pygame.py`](examples/live_pygame.py).
+abi3-py39: one wheel per platform covers every CPython 3.9+.
 
-## Pull — render to numpy, integrate anywhere
-
-```python
-import tono, numpy as np, sounddevice as sd
-
-# A zero-asset SFX patch: infinite variations from named params, no baked audio.
-impact = tono.Patch(open("impact.patch.json").read())
-buf = impact.render(hardness=0.7, size=0.3)   # -> np.float32 mono array
-sd.play(buf, 48000)
-
-# Deterministic: a pure function of (graph, seed, sample_rate) — testable in CI.
-assert np.array_equal(impact.render(hardness=0.7), impact.render(hardness=0.7))
-
-# Or bounce a whole SoundDoc offline.
-samples = tono.render(open("blip.json").read())
-```
-
-Runnable version: [`examples/render_numpy.py`](examples/render_numpy.py).
-
-## Build
-
-The bindings build from a clone of the repo (they are not on PyPI):
-`git clone https://github.com/marmikshah/tono && cd tono`, then `make python`
-(maturin develop into the active venv), or `make wheel` for a release build. CI builds `abi3` wheels (one per platform,
-CPython 3.9+) for manylinux / macOS universal2 / Windows. Built with
-[PyO3](https://pyo3.rs) + [maturin](https://github.com/PyO3/maturin). Part of
-[tono](https://github.com/marmikshah/tono).
+Requires stable Rust (see `rust-version` in the workspace `Cargo.toml`) and a
+CPython 3.9+ install.
