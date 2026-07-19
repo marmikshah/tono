@@ -13,12 +13,14 @@ use tono_core::render;
 const HELP: &str = "tono — a deterministic sound engine.
 
 USAGE:
-    tono render FILE.json [-o DIR] [--format wav|flac|ogg]
+    tono render FILE.json [-o DIR] [--format wav|flac|ogg] [--watch]
         Render a SoundDoc into DIR (default: .):
           <name>.wav|flac|ogg   the audio
           <name>.png            spectrogram   (look at this)
           <name>_wave.png       waveform      (and this)
           <name>.stats.json     peak/RMS/LUFS/spectral/transient analysis
+        --watch re-renders on every save (Ctrl-C to stop) — the
+        edit/inspect loop at full speed.
 
     tono vary FILE.json [-n COUNT] [--amount 0..1] [--seed N] [-o DIR] [--format wav|flac|ogg]
         Render COUNT deterministic variations of a SoundDoc (default 4,
@@ -76,16 +78,22 @@ fn main() -> anyhow::Result<()> {
 /// is a loud error instead of a silent default.
 struct Cli {
     flags: std::collections::BTreeMap<String, String>,
+    bools: std::collections::BTreeSet<String>,
     positionals: Vec<String>,
 }
 
 impl Cli {
-    fn parse(args: &[String], allowed_flags: &[&str]) -> anyhow::Result<Cli> {
+    fn parse(args: &[String], allowed_flags: &[&str], bool_flags: &[&str]) -> anyhow::Result<Cli> {
         let mut flags = std::collections::BTreeMap::new();
+        let mut bools = std::collections::BTreeSet::new();
         let mut positionals = Vec::new();
         let mut it = args.iter();
         while let Some(a) = it.next() {
             if a.starts_with('-') {
+                if bool_flags.contains(&a.as_str()) {
+                    bools.insert(a.clone());
+                    continue;
+                }
                 if !allowed_flags.contains(&a.as_str()) {
                     anyhow::bail!("unknown option '{a}'\n\n{HELP}");
                 }
@@ -97,7 +105,11 @@ impl Cli {
                 positionals.push(a.clone());
             }
         }
-        Ok(Cli { flags, positionals })
+        Ok(Cli {
+            flags,
+            bools,
+            positionals,
+        })
     }
 
     fn flag(&self, names: &[&str]) -> Option<&str> {
@@ -105,6 +117,11 @@ impl Cli {
             .iter()
             .find_map(|n| self.flags.get(*n))
             .map(String::as_str)
+    }
+
+    /// Whether a value-less flag was passed (e.g. `--watch`).
+    fn has(&self, name: &str) -> bool {
+        self.bools.contains(name)
     }
 
     /// The single expected positional (the input file).
@@ -144,23 +161,66 @@ fn sanitize_stem(name: &str) -> anyhow::Result<String> {
 }
 
 fn render_cmd(args: &[String]) -> anyhow::Result<()> {
-    let cli = Cli::parse(args, &["-o", "--out", "--format"])?;
-    let file = cli.input("tono render FILE.json [-o DIR] [--format wav|flac|ogg]")?;
+    let cli = Cli::parse(args, &["-o", "--out", "--format"], &["--watch"])?;
+    let file = cli.input("tono render FILE.json [-o DIR] [--format wav|flac|ogg] [--watch]")?;
     let out_dir = PathBuf::from(cli.flag(&["-o", "--out"]).unwrap_or("."));
     let format = parse_format(cli.flag(&["--format"]))?;
-
-    let doc = load_doc(file)?;
+    let watch = cli.has("--watch");
     fs::create_dir_all(&out_dir)?;
-    let stem = if doc.name.is_empty() {
-        Path::new(file)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("sound")
-            .to_string()
-    } else {
-        sanitize_stem(&doc.name)?
-    };
-    render_to_dir(&doc, &stem, &out_dir, format)
+
+    // Render once, then re-render on every save. With --watch, an edit that
+    // leaves the doc invalid is reported and watched through, not fatal.
+    let mut since: Option<std::time::SystemTime> = None;
+    loop {
+        let result = load_doc(file).and_then(|doc| {
+            let stem = if doc.name.is_empty() {
+                Path::new(file)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("sound")
+                    .to_string()
+            } else {
+                sanitize_stem(&doc.name)?
+            };
+            render_to_dir(&doc, &stem, &out_dir, format)
+        });
+        match result {
+            Ok(()) => {}
+            Err(e) if watch => eprintln!("{e:#}"),
+            Err(e) => return Err(e),
+        }
+        if !watch {
+            break;
+        }
+        since = Some(wait_for_change(
+            file,
+            since.or_else(|| file_mtime(file).ok()),
+        )?);
+    }
+    Ok(())
+}
+
+/// The file's modification time.
+fn file_mtime(path: &str) -> std::io::Result<std::time::SystemTime> {
+    fs::metadata(path).and_then(|m| m.modified())
+}
+
+/// Poll the file's mtime until it changes (250 ms ticks — no dependency).
+/// `since` is the mtime of the last render; `None` means the first change
+/// from whatever is there now.
+fn wait_for_change(
+    path: &str,
+    since: Option<std::time::SystemTime>,
+) -> anyhow::Result<std::time::SystemTime> {
+    loop {
+        let mtime = file_mtime(path)?;
+        match since {
+            Some(prev) if mtime == prev => {
+                std::thread::sleep(std::time::Duration::from_millis(250))
+            }
+            _ => return Ok(mtime),
+        }
+    }
 }
 
 /// Validate the `--format` flag once for every rendering command.
@@ -226,6 +286,7 @@ fn vary_cmd(args: &[String]) -> anyhow::Result<()> {
         &[
             "-n", "--count", "--amount", "--seed", "-o", "--out", "--format",
         ],
+        &[],
     )?;
     let file = cli.input(usage)?;
     let out_dir = PathBuf::from(cli.flag(&["-o", "--out"]).unwrap_or("."));
@@ -282,7 +343,7 @@ fn vary_cmd(args: &[String]) -> anyhow::Result<()> {
 
 /// `tono schema` — the machine-readable contract of the document formats.
 fn schema_cmd(args: &[String]) -> anyhow::Result<()> {
-    let cli = Cli::parse(args, &[])?;
+    let cli = Cli::parse(args, &[], &[])?;
     let target = cli
         .positionals
         .first()
@@ -298,7 +359,7 @@ fn schema_cmd(args: &[String]) -> anyhow::Result<()> {
 }
 
 fn midi_cmd(args: &[String]) -> anyhow::Result<()> {
-    let cli = Cli::parse(args, &["-o", "--out"])?;
+    let cli = Cli::parse(args, &["-o", "--out"], &[])?;
     let file = cli.input("tono midi FILE.json [-o FILE.mid]")?;
     let out = match cli.flag(&["-o", "--out"]) {
         Some(o) => PathBuf::from(o),
@@ -322,7 +383,7 @@ fn midi_cmd(args: &[String]) -> anyhow::Result<()> {
 /// `tono import` — a Standard MIDI File becomes a renderable SoundDoc.
 fn import_cmd(args: &[String]) -> anyhow::Result<()> {
     let usage = "tono import FILE.mid [-o DOC.json] [--steps-per-beat 4]";
-    let cli = Cli::parse(args, &["-o", "--out", "--steps-per-beat"])?;
+    let cli = Cli::parse(args, &["-o", "--out", "--steps-per-beat"], &[])?;
     let file = cli.input(usage)?;
     let spb: u32 = match cli.flag(&["--steps-per-beat"]) {
         Some(v) => v.parse().map_err(|_| {
@@ -363,7 +424,7 @@ fn import_cmd(args: &[String]) -> anyhow::Result<()> {
 /// `tono diff` — what did the edit actually do? Render both docs and report
 /// the changed numbers (and the sample-domain distance).
 fn diff_cmd(args: &[String]) -> anyhow::Result<()> {
-    let cli = Cli::parse(args, &[])?;
+    let cli = Cli::parse(args, &[], &[])?;
     let [a, b] = match cli.positionals.as_slice() {
         [a, b] => [a, b],
         _ => anyhow::bail!("usage: tono diff A.json B.json"),
@@ -375,7 +436,7 @@ fn diff_cmd(args: &[String]) -> anyhow::Result<()> {
 
 /// `tono match` — score a candidate doc against a reference WAV.
 fn match_cmd(args: &[String]) -> anyhow::Result<()> {
-    let cli = Cli::parse(args, &[])?;
+    let cli = Cli::parse(args, &[], &[])?;
     let [reference, candidate] = match cli.positionals.as_slice() {
         [a, b] => [a, b],
         _ => anyhow::bail!("usage: tono match REF.wav DOC.json"),
@@ -400,21 +461,21 @@ mod tests {
     fn flags_consume_their_values() {
         // "-o out" must never leave "out" behind as a positional — a real
         // bug class this parser was rewritten to kill.
-        let cli = Cli::parse(&args(&["-o", "out", "doc.json"]), &["-o", "--out"]).unwrap();
+        let cli = Cli::parse(&args(&["-o", "out", "doc.json"]), &["-o", "--out"], &[]).unwrap();
         assert_eq!(cli.flag(&["-o", "--out"]), Some("out"));
         assert_eq!(cli.positionals, vec!["doc.json"]);
     }
 
     #[test]
     fn flag_aliases_resolve_in_order() {
-        let cli = Cli::parse(&args(&["--out", "d", "f.json"]), &["-o", "--out"]).unwrap();
+        let cli = Cli::parse(&args(&["--out", "d", "f.json"]), &["-o", "--out"], &[]).unwrap();
         assert_eq!(cli.flag(&["-o", "--out"]), Some("d"), "long alias found");
         assert_eq!(cli.flag(&["--missing"]), None, "absent flag is None");
     }
 
     #[test]
     fn unknown_option_is_a_loud_error() {
-        let err = Cli::parse(&args(&["--bogus", "x", "f.json"]), &["-o"])
+        let err = Cli::parse(&args(&["--bogus", "x", "f.json"]), &["-o"], &[])
             .err()
             .unwrap();
         assert!(err.to_string().contains("unknown option '--bogus'"));
@@ -422,16 +483,18 @@ mod tests {
 
     #[test]
     fn flag_missing_its_value_is_a_loud_error() {
-        let err = Cli::parse(&args(&["f.json", "-o"]), &["-o"]).err().unwrap();
+        let err = Cli::parse(&args(&["f.json", "-o"]), &["-o"], &[])
+            .err()
+            .unwrap();
         assert!(err.to_string().contains("option '-o' needs a value"));
     }
 
     #[test]
     fn input_wants_exactly_one_positional() {
-        let one = Cli::parse(&args(&["f.json"]), &[]).unwrap();
+        let one = Cli::parse(&args(&["f.json"]), &[], &[]).unwrap();
         assert_eq!(one.input("usage").unwrap(), "f.json");
 
-        let none = Cli::parse(&args(&[]), &[]).unwrap();
+        let none = Cli::parse(&args(&[]), &[], &[]).unwrap();
         assert!(
             none.input("the-usage")
                 .err()
@@ -440,7 +503,7 @@ mod tests {
                 .contains("the-usage")
         );
 
-        let extra = Cli::parse(&args(&["a.json", "b.json"]), &[]).unwrap();
+        let extra = Cli::parse(&args(&["a.json", "b.json"]), &[], &[]).unwrap();
         let msg = extra.input("usage").err().unwrap().to_string();
         assert!(
             msg.contains("unexpected argument 'b.json'"),
@@ -450,8 +513,8 @@ mod tests {
 
     #[test]
     fn flag_order_does_not_matter() {
-        let before = Cli::parse(&args(&["--format", "ogg", "f.json"]), &["--format"]).unwrap();
-        let after = Cli::parse(&args(&["f.json", "--format", "ogg"]), &["--format"]).unwrap();
+        let before = Cli::parse(&args(&["--format", "ogg", "f.json"]), &["--format"], &[]).unwrap();
+        let after = Cli::parse(&args(&["f.json", "--format", "ogg"]), &["--format"], &[]).unwrap();
         assert_eq!(before.flag(&["--format"]), after.flag(&["--format"]));
         assert_eq!(before.positionals, after.positionals);
     }
@@ -466,5 +529,26 @@ mod tests {
         assert!(sanitize_stem("a\\b").is_err());
         assert!(sanitize_stem("C:evil").is_err());
         assert!(sanitize_stem("..").is_err());
+    }
+
+    #[test]
+    fn bool_flags_are_valuesless() {
+        let cli = Cli::parse(&args(&["--watch", "f.json"]), &[], &["--watch"]).unwrap();
+        assert!(cli.has("--watch"));
+        assert_eq!(cli.positionals, vec!["f.json"]);
+        let cli = Cli::parse(&args(&["f.json"]), &[], &["--watch"]).unwrap();
+        assert!(!cli.has("--watch"));
+    }
+
+    #[test]
+    fn wait_for_change_returns_when_the_mtime_differs() {
+        let dir = std::env::temp_dir().join("tono-watch-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("w.json");
+        std::fs::write(&f, "{}").unwrap();
+        // A `since` older than the file must return immediately, not block.
+        let got =
+            wait_for_change(f.to_str().unwrap(), Some(std::time::SystemTime::UNIX_EPOCH)).unwrap();
+        assert_eq!(got, file_mtime(f.to_str().unwrap()).unwrap());
     }
 }
