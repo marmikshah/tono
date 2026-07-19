@@ -15,7 +15,7 @@ pub(crate) use effects::{FilterKind, biquad_coeffs, drive_antideriv, drive_curve
 pub(crate) use osc::{osc, poly_blep};
 pub(crate) use seq::seq_to_signal;
 
-use crate::dsl::{Adsr, Curve, Modulator, Node, Playback, Shape, SoundDoc, Value};
+use crate::dsl::{Adsr, Node, Playback, Shape, SoundDoc, Value};
 use crate::dsp::{Rng, node_path, node_seed, peak_limit};
 use effects::{biquad, chorus, compress, drive_adaa, flanger, modal_bank, phaser, reverb};
 use osc::{
@@ -121,98 +121,14 @@ fn render_plain(doc: &SoundDoc) -> Signal {
     out
 }
 
-/// Evaluate a parameter into a per-sample buffer of length `n`.
+/// Evaluate a parameter into a per-sample buffer of length `n`. The streaming
+/// [`crate::streaming::value::Val`] is the single definition of every
+/// modulator's math — this is just a loop over it, so the offline and
+/// streaming paths can never diverge (the streaming byte-identity fuzz proves
+/// the loop reproduces the closed forms).
 fn eval_value(v: &Value, n: usize, sr: u32) -> Vec<f32> {
-    let srf = sr as f32;
-    match v {
-        Value::Const(c) => vec![*c; n],
-        Value::Note(s) => vec![crate::dsl::note_to_hz(s).unwrap_or(440.0); n],
-        Value::Modulated(Modulator::Slide {
-            from,
-            to,
-            secs,
-            curve,
-        }) => (0..n)
-            .map(|i| {
-                let t = i as f32 / srf;
-                // Floor `secs` so an unvalidated `secs == 0` can't make `t/secs`
-                // a NaN that then poisons the whole render.
-                let p = (t / secs.max(1e-6)).clamp(0.0, 1.0);
-                match curve {
-                    Curve::Lin => from + (to - from) * p,
-                    Curve::Exp if *from > 0.0 && *to > 0.0 => {
-                        // Geometric interpolation (natural for pitch / cutoff).
-                        from * (to / from).powf(p)
-                    }
-                    Curve::Exp => {
-                        // Fall back to an eased curve when values cross zero.
-                        let e = p * p;
-                        from + (to - from) * e
-                    }
-                }
-            })
-            .collect(),
-        Value::Modulated(Modulator::Lfo {
-            shape,
-            rate,
-            depth,
-            center,
-        }) => (0..n)
-            .map(|i| {
-                let phase = (i as f32 / srf * rate).fract();
-                center + depth * osc(*shape, phase)
-            })
-            .collect(),
-        Value::Modulated(Modulator::Arp { steps, rate }) if !steps.is_empty() => (0..n)
-            .map(|i| {
-                let t = i as f32 / srf;
-                let idx = (t * rate) as usize % steps.len();
-                steps[idx]
-            })
-            .collect(),
-        // Empty steps would divide by zero; an unvalidated doc must not panic.
-        Value::Modulated(Modulator::Arp { .. }) => vec![0.0; n],
-        Value::Modulated(Modulator::EnvMod {
-            adsr: env,
-            from,
-            to,
-        }) => {
-            let e = adsr(env, n, sr);
-            e.iter().map(|x| from + (to - from) * x).collect()
-        }
-        Value::Modulated(Modulator::Rand {
-            from,
-            to,
-            rate,
-            seed,
-        }) => {
-            // Smoothstep-interpolated random walk between `from` and `to`,
-            // drawing a fresh target every 1/`rate` seconds. Seeded ONLY from
-            // this modulator's own fields, so it is deterministic and stable
-            // under sibling edits (it never touches the shared render stream).
-            let mut rng = Rng::new(rand_seed(*seed, *from, *to, *rate));
-            // Segments per sample. validate() caps rate at 10k (inc ≤ 1.25 at
-            // 8 kHz sr); the .min(64.0) keeps an unvalidated absurd rate from
-            // turning the catch-up loop below into a hang.
-            let inc = (rate.max(1e-4) / srf).min(64.0);
-            let (mut prev, mut next) = (rng.range(*from, *to), rng.range(*from, *to));
-            let mut phase = 0.0f32;
-            (0..n)
-                .map(|_| {
-                    // Smoothstep for organic, slope-continuous motion.
-                    let s = phase * phase * (3.0 - 2.0 * phase);
-                    let v = prev + (next - prev) * s;
-                    phase += inc;
-                    while phase >= 1.0 {
-                        phase -= 1.0;
-                        prev = next;
-                        next = rng.range(*from, *to);
-                    }
-                    v
-                })
-                .collect()
-        }
-    }
+    let mut val = crate::streaming::value::Val::build(v, sr, n);
+    (0..n).map(|t| val.eval(t)).collect()
 }
 
 /// Edit-stable seed for a [`Modulator::Rand`]: a hash of only the modulator's
@@ -404,9 +320,9 @@ fn apply_processor(
             out
         }
         Node::Delay { secs, feedback } => {
-            // validate() caps secs at 30 s; the clamp guards direct render
-            // calls on unvalidated docs from an unbounded allocation.
-            let dn = ((secs.min(30.0) * sr as f32) as usize).max(1);
+            // validate() caps secs at 30 s; the shared clamp guards direct
+            // render calls on unvalidated docs from an unbounded allocation.
+            let dn = crate::dsp::delay_line_len(*secs, sr);
             let mut buf = vec![0.0f32; dn];
             let mut w = 0usize;
             let mut out = Vec::with_capacity(input.len());
