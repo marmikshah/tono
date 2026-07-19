@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.9.0 — 2026-07-19
 
 A full-codebase review hardening pass: the input edges that could render NaN,
 hang, panic, or silently corrupt are closed, the real-time layers keep their
@@ -118,6 +118,11 @@ product guarantee, independent of version numbers.
   the write); `mutate` clamps to every validation bound (the 30 s delay cap
   and the new detune/rand-rate/frequency caps) so a mutated doc always
   re-validates; `humanize`'s coherent transpose reaches `duck` triggers.
+- **Future-variant guards.** `Node::children()`/`children_mut()` are
+  exhaustive over every current variant — adding a variant without a
+  traversal decision is a compile error, never a silent skip — and
+  `apply_processor` now fails loud (like `render_node`) for a processor with
+  no render arm instead of silently passing the signal through.
 
 ## 1.8.0 — 2026-07-11
 

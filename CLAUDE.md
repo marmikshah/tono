@@ -77,6 +77,23 @@ transcendental kernels behind a future engine revision.
 - `make desktop` / `make play` — the native faces (heavy deps, off the default build).
 - `make hooks` — install the git hooks (`.githooks/pre-commit`, `pre-push`).
 
+## Release checklist
+
+Every release, in order (the `release` target enforces clean master + tags
+from `Cargo.toml`; CI publishes to crates.io and builds wheels on the tag):
+
+1. Bump **both** version fields in the root `Cargo.toml` together:
+   `workspace.package.version` and `workspace.dependencies.tono-core`
+   (cargo strips `path` at publish time and pins the crates.io dep to the
+   version field — a mismatch ships a CLI built against last release's core).
+2. Retitle the CHANGELOG's `## Unreleased` to `## X.Y.Z — <date>` (the
+   Release workflow extracts the notes by that exact header).
+3. Confirm `cargo publish --dry-run -p tono-core` passes. The `-p tono`
+   dry-run only resolves once `tono-core` X.Y.Z is on crates.io, so it runs
+   after step 4, not before.
+4. `make release` (tags `vX.Y.Z`, pushes; CI publishes `tono-core` then
+   `tono`, creates the GitHub Release, and builds the tag-only wheels).
+
 ## Conventions
 
 - Clippy clean at `-D warnings`; `cargo fmt` before committing. No dead code.
