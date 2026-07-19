@@ -72,6 +72,19 @@ That loop — write a doc, render, read the images and stats, refine — is all 
 human *or an agent* needs to author sound by inspection. The
 [cookbook](docs/cookbook.md) has the full node vocabulary and recipes.
 
+**Where next?** Pick your path:
+
+- **New here?** [docs/quickstart.md](docs/quickstart.md) — the guided first
+  ten minutes (hear a sound, change it on purpose).
+- **Make sounds** — the [cookbook](docs/cookbook.md), then `tono diff`,
+  `tono match REF.wav DOC.json`, and `tono render --watch` for the loop.
+- **Embed in a game** — [docs/runtime.md](docs/runtime.md) (Engine/Mixer
+  runtime, parametric patches).
+- **Python** — [crates/tono-py](crates/tono-py).
+- **No code** — the desktop pattern station (`make desktop`).
+
+All guides: [docs/README.md](docs/README.md).
+
 ## In a few lines
 
 ```rust
