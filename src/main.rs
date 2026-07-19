@@ -41,6 +41,10 @@ USAGE:
         Render both documents and report what changed: loudness, peak,
         brightness, envelope metrics, and the sample-domain distance.
 
+    tono match REF.wav DOC.json
+        Score a SoundDoc against a reference WAV — how close it is and
+        where it misses (brightness, loudness, envelope, duration).
+
     tono --version | --help
 
 The SoundDoc format and the node vocabulary are documented in docs/cookbook.md
@@ -55,6 +59,7 @@ fn main() -> anyhow::Result<()> {
         Some("midi") => midi_cmd(&args[2..]),
         Some("import") => import_cmd(&args[2..]),
         Some("diff") => diff_cmd(&args[2..]),
+        Some("match") => match_cmd(&args[2..]),
         Some("--version") | Some("-V") => {
             println!("tono {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -365,6 +370,21 @@ fn diff_cmd(args: &[String]) -> anyhow::Result<()> {
     };
     let (da, db) = (load_doc(a)?, load_doc(b)?);
     print!("{}", tono::diff::diff_report(&da, &db));
+    Ok(())
+}
+
+/// `tono match` — score a candidate doc against a reference WAV.
+fn match_cmd(args: &[String]) -> anyhow::Result<()> {
+    let cli = Cli::parse(args, &[])?;
+    let [reference, candidate] = match cli.positionals.as_slice() {
+        [a, b] => [a, b],
+        _ => anyhow::bail!("usage: tono match REF.wav DOC.json"),
+    };
+    let doc = load_doc(candidate)?;
+    print!(
+        "{}",
+        tono::target::match_report(Path::new(reference), &doc)?
+    );
     Ok(())
 }
 
