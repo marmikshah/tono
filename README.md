@@ -85,7 +85,53 @@ human *or an agent* needs to author sound by inspection. The
 
 All guides: [docs/README.md](docs/README.md).
 
-## In a few lines
+## Recipes — the lazy answers
+
+Copy-paste, runnable, no tour. (Each Rust one is also a compile-checked
+example in [crates/tono-play/examples](crates/tono-play/examples).)
+
+**Play notes live** — a drum kit and a piano in one mix, driven from your code:
+
+```rust
+use tono_core::{drumkit::DrumKit, instrument::{Instrument, Note}, presets::preset, runtime::Mixer};
+use tono_play::{Speaker, device_sample_rate};
+
+let sr = device_sample_rate()?;
+let mut mixer = Mixer::new(sr);
+let drums = mixer.add(DrumKit::general_midi(sr));
+let piano = mixer.add(Instrument::new(preset("fm_tine").unwrap(), sr)?);
+let speaker = Speaker::open(mixer)?;
+
+speaker.control(|m| m.get_mut::<DrumKit>(drums).unwrap().note_on(Note(36), 1.0));
+speaker.control(|m| m.get_mut::<Instrument>(piano).unwrap().note_on(Note::C4, 0.8));
+speaker.control(|m| m.get_mut::<Instrument>(piano).unwrap().note_off(Note::C4));
+```
+
+**Write a song** — the fluent builder, catalog instruments, one timeline:
+
+```rust
+use tono_core::{catalog::{GrandPiano, Bass, Drums}, song::Song};
+
+let song = Song::new("demo", 120.0)
+    .add(GrandPiano::grand(), |t| { t.at(0.0).chord(&["C4","E4","G4"], 4.0); })
+    .add(Bass::finger(), |t| { t.play("C2", 2.0).play("G1", 2.0); })
+    .add(Drums::acoustic(), |t| { t.kick().rest(1.0).snare().rest(1.0); });
+let doc = song.to_doc()?;          // an ordinary deterministic SoundDoc
+```
+
+**Zero-asset SFX** — one patch, endless variations from gameplay parameters:
+
+```rust
+use std::collections::BTreeMap;
+use tono_core::patch::Patch;
+
+let patch: Patch = serde_json::from_str(include_str!("impact.patch.json"))?;
+let hit = patch.render(&BTreeMap::from([
+    ("hardness".into(), force), ("size".into(), object_size),
+]))?;                              // mono samples, byte-identical per input
+```
+
+**Adaptive game music** — stems and section swaps on the beat:
 
 ```rust
 use tono_core::adaptive::{AdaptiveMusic, Quantize};
@@ -99,6 +145,8 @@ music.transition_to(battle, Quantize::Bar);  // combat! — swaps on the next ba
 music.set_intensity(0.9);                    // stems swell with the action
 music.stinger_at(&boss_hit, Quantize::Bar);  // lands on the downbeat
 ```
+
+**Python** — the same engine, one import:
 
 ```python
 import tono
