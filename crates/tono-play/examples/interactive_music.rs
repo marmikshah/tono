@@ -1,7 +1,7 @@
 //! Interactive music: sections that switch on the bar, a tension knob, and an
 //! on-beat stinger.
 //!
-//!     make play EXAMPLE=interactive_music   (or `cargo run -p tono-play --example interactive_music`)
+//!     cargo run -p tono-play --example interactive_music
 //!
 //! An "explore" section plays; combat starts, so we `transition_to` a "battle"
 //! section on the next bar (never a jarring mid-bar cut); intensity swells a lead

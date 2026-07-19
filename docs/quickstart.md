@@ -78,7 +78,8 @@ fresh images and stats. Ctrl-C to stop.
 - **Put it in a game** — [docs/runtime.md](runtime.md): the live Engine/Mixer
   runtime and parametric patches (zero-asset SFX at runtime).
 - **Use it from Python** — [crates/tono-py](../crates/tono-py/README.md).
-- **No code at all** — the desktop pattern station (`make desktop`) or the
-  playground examples (`make play EXAMPLE=live_band`).
+- **No code at all** — the desktop pattern station
+  ([build it](../crates/tono-desktop)) or the playground examples
+  (`cargo run -p tono-play --example live_band`).
 
 The full map lives in [docs/README.md](README.md).

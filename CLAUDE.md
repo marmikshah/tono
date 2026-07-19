@@ -13,6 +13,10 @@ programmatic playground.
   playback at runtime**. Docs, changelogs, and PRs describe it in its own
   vocabulary (SoundDoc, Patch, Engine, layers/sections) — never reference
   other products by name or by analogy.
+- **Docs are split by audience.** User-facing text (README, docs/, crate
+  READMEs, example headers) answers with cargo/maturin/pip commands and
+  runnable examples — the `Makefile` is the *contributor* interface and its
+  targets appear only here (CLAUDE.md) and in the architecture guide.
 - **There is never a 2.0.** Breaking changes land in ordinary 1.x minors, and
   deprecated surface is removed directly in the next minor — no long-lived
   deprecation shims. The byte-identity promise below is a product guarantee,
