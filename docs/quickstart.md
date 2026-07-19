@@ -79,6 +79,6 @@ fresh images and stats. Ctrl-C to stop.
   runtime and parametric patches (zero-asset SFX at runtime).
 - **Use it from Python** — [crates/tono-py](../crates/tono-py/README.md).
 - **No code at all** — the desktop pattern station (`make desktop`) or the
-  playground examples (`make play EXAMPLE=play_instrument`).
+  playground examples (`make play EXAMPLE=live_band`).
 
 The full map lives in [docs/README.md](README.md).

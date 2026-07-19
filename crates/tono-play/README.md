@@ -12,8 +12,9 @@ Also the shared cpal shim the other native faces (the desktop studio, the
 Python extension) build on: device open, the f32 gate, panic containment in
 the callback, and channel spreading — one place the platform plumbing lives.
 
-Not part of the default build (heavy platform deps). Run an example:
+Not part of the default build (heavy platform deps). Run an example
+(the recipes: a live band, a song, drums, adaptive music, …):
 
 ```sh
-make play EXAMPLE=play_instrument
+make play EXAMPLE=live_band
 ```
