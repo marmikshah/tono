@@ -7,6 +7,19 @@ engine powers a real-time streaming renderer, a playable-instrument layer, a
 song/arrangement layer, adaptive game music, a native desktop studio, and a
 programmatic playground.
 
+## Product voice & versioning
+
+- tono stands on its own: a **developer-friendly audio engine with live
+  playback at runtime**. Docs, changelogs, and PRs describe it in its own
+  vocabulary (SoundDoc, Patch, Engine, layers/sections) — never reference
+  other products by name or by analogy.
+- **There is never a 2.0.** Breaking changes land in ordinary 1.x minors, and
+  deprecated surface is removed directly in the next minor — no long-lived
+  deprecation shims. The byte-identity promise below is a product guarantee,
+  independent of version numbers.
+- The Bevy face lives in the separate `bevy_tono` repo — update it there,
+  don't grow a new adapter crate here.
+
 ## Workspace layout (one core, several faces)
 
 The root is the `tono` crate (the CLI); the sub-crates live under `crates/`.

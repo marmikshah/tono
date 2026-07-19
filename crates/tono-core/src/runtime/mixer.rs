@@ -48,27 +48,15 @@ enum BusKind {
 pub enum MixerError {
     /// An effect node is outside the real-time-streamable subset.
     NotStreamable,
-    /// The mixer has no sample rate. Vestigial — every current constructor
-    /// takes the rate up front, so this is unreachable today. Deleted at 2.0.
-    #[deprecated(
-        since = "1.9.0",
-        note = "unreachable: every Mixer constructor takes the rate up front; deleted at 2.0"
-    )]
-    NoSampleRate,
     /// The bus handle names no live bus (foreign or stale).
     UnknownBus,
 }
 
 impl std::fmt::Display for MixerError {
-    // The deprecated variant is still displayed until it is deleted at 2.0.
-    #[allow(deprecated)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MixerError::NotStreamable => {
                 write!(f, "effect chain contains a non-streamable node")
-            }
-            MixerError::NoSampleRate => {
-                write!(f, "mixer has no sample rate; build it with Mixer::new")
             }
             MixerError::UnknownBus => {
                 write!(f, "unknown bus (foreign or stale BusId)")
@@ -124,7 +112,7 @@ pub struct Mixer {
     /// `buses[0]` is always the master bus; a bus's index equals its [`BusId`].
     buses: Vec<Bus>,
     next_id: u64,
-    sample_rate: Option<u32>,
+    sample_rate: u32,
     // Reused planar scratch (grown lazily, never shrunk).
     scratch: Vec<f32>,
     master_l: Vec<f32>,
@@ -137,14 +125,13 @@ pub struct Mixer {
 
 impl Mixer {
     /// An empty mixer that renders at `sample_rate`, so buses can carry live
-    /// effect chains. (Every other runtime constructor — `Engine::new`,
-    /// `AdaptiveMusic::new`, `Instrument::new` — takes the rate up front; a
-    /// rate-less mixer deferred the failure to the first `fx_bus` call.)
+    /// effect chains (every other runtime constructor — `Engine::new`,
+    /// `AdaptiveMusic::new`, `Instrument::new` — takes the rate up front too).
     pub fn new(sample_rate: u32) -> Self {
-        Mixer::build(Some(sample_rate))
+        Mixer::build(sample_rate)
     }
 
-    fn build(sample_rate: Option<u32>) -> Self {
+    fn build(sample_rate: u32) -> Self {
         let master = Bus {
             name: "master".into(),
             kind: BusKind::Master,
@@ -301,9 +288,7 @@ impl Mixer {
         if effects.is_empty() {
             return Ok(None);
         }
-        // The deprecated variant is still constructed until it is deleted at 2.0.
-        #[allow(deprecated)]
-        let sr = self.sample_rate.ok_or(MixerError::NoSampleRate)?;
+        let sr = self.sample_rate;
         let build = || EffectChain::try_new(effects, sr, ENGINE_VERSION);
         let l = build().ok_or(MixerError::NotStreamable)?;
         let r = build().ok_or(MixerError::NotStreamable)?;
