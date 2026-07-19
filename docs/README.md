@@ -2,9 +2,12 @@
 
 The long-form guides, from most-to-least hands-on:
 
+- **[quickstart.md](quickstart.md)** — the guided first ten minutes: install,
+  first sound, hear it, change it on purpose, and where to go next. Start here
+  if you've never used tono.
 - **[cookbook.md](cookbook.md)** — the `SoundDoc` DSL and how to build sounds:
   the full node vocabulary, recipes (SFX, songs, loops), judging a render by
-  its stats, engine revisions. Start here.
+  its stats, engine revisions.
 - **[runtime.md](runtime.md)** — embedding the live runtime (Engine / Mixer /
   AdaptiveMusic / Instrument) and parametric patches (zero-asset SFX).
 - **[examples/](examples/)** — SoundDoc JSON recipes (pinned byte-for-byte in
