@@ -24,6 +24,40 @@ product guarantee, independent of version numbers.
   `EffectChain::is_empty` (a constructed chain is never empty), and
   `MixerError::NoSampleRate` (every `Mixer` constructor takes the rate).
 
+### Changed
+- **One graph traversal**: `Node::children()` / `children_mut()` (plus
+  `walk` / `walk_mut`) is now the single definition of "direct children"
+  (mix/mul inputs, chain stages, a tracks' layers then master, a duck's
+  trigger) — and every walker uses it, so a new variant can never be silently
+  skipped. Two latent omissions it exposed are fixed by construction:
+  `humanize`'s transpose now reaches a tracks' **master chain**, and the
+  instrument's transpose now reaches **duck triggers**.
+- **One modulator evaluator**: the offline `eval_value` is a loop over the
+  streaming renderer's `Val` — offline and streaming can no longer diverge
+  (the unification also fixed a divergence in the `rand` rate hang clamp).
+- **One home for shared kernel math** (`dsp.rs`): modal resonator
+  coefficients, the Freeverb layout and feedback, and the delay-line and
+  bitcrush clamps — previously mirrored line-by-line between the offline
+  effects and their streaming twins. All expression-identical: every render
+  is byte-for-byte as before.
+- **Structure**: `adaptive.rs` splits into `adaptive/{schedule,sections,
+  layers}` and `song.rs` into `song/{compile,phrase}`.
+- The CLI parser grows value-less boolean flags (`--watch`).
+
+### Added
+- **`tono diff A.json B.json`** — render two documents and report what
+  changed: loudness, peak, centroid, envelope metrics with deltas, and the
+  sample-domain distance.
+- **`tono match REF.wav DOC.json`** — target-driven sound design: score a
+  candidate against a reference WAV in the analyzer's own metrics, worst
+  offenders first, with an overall distance score.
+- **`tono render --watch`** — re-render on every save (mtime polling, no
+  dependency); a mid-save invalid doc is reported and watched through.
+- **`tono play`** — audition a doc through the speakers (feature-gated on
+  `play`, so the default install and crates.io publishing stay lean).
+- **docs/quickstart.md** — the guided first ten minutes; the README gains a
+  "Where next" routing block, and `docs/README.md` indexes the guides.
+
 ### Fixed
 - **Validation rejects the overflow regime.** Pitches resolving to non-finite
   Hz (`"midi:10000"`), huge octave numbers (`"A200000000"` — it could panic the
