@@ -130,16 +130,13 @@ pub(super) fn biquad(input: &[f32], cutoff: &Value, q: f32, sr: u32, kind: Filte
 /// Schroeder reverb: parallel feedback combs into series allpasses. Tunings are
 /// the classic Freeverb values, scaled to the sample rate.
 pub(super) fn reverb(input: &[f32], room: f32, mix: f32, sr: u32, spread: usize) -> Signal {
-    let scale = sr as f32 / 44_100.0;
-    let comb_tunings = crate::dsp::FREEVERB_COMB_TUNINGS.map(|t| t + spread);
-    let allpass_tunings = crate::dsp::FREEVERB_ALLPASS_TUNINGS.map(|t| t + spread);
-    let feedback = 0.7 + 0.28 * room.clamp(0.0, 1.0);
+    let (comb_lens, allpass_lens) = crate::dsp::freeverb_lengths(sr, spread);
+    let feedback = crate::dsp::freeverb_feedback(room);
     let damp = crate::dsp::FREEVERB_DAMP;
 
     let mut wet = vec![0.0f32; input.len()];
     // Parallel combs (summed).
-    for &tune in &comb_tunings {
-        let len = ((tune as f32 * scale) as usize).max(1);
+    for &len in &comb_lens {
         let mut buf = vec![0.0f32; len];
         let mut idx = 0usize;
         let mut filter_store = 0.0f32;
@@ -152,8 +149,7 @@ pub(super) fn reverb(input: &[f32], room: f32, mix: f32, sr: u32, spread: usize)
         }
     }
     // Series allpasses.
-    for &tune in &allpass_tunings {
-        let len = ((tune as f32 * scale) as usize).max(1);
+    for &len in &allpass_lens {
         let mut buf = vec![0.0f32; len];
         let mut idx = 0usize;
         let g = 0.5;
@@ -166,7 +162,7 @@ pub(super) fn reverb(input: &[f32], room: f32, mix: f32, sr: u32, spread: usize)
         }
     }
     let mix = mix.clamp(0.0, 1.0);
-    let comb_norm = 1.0 / comb_tunings.len() as f32;
+    let comb_norm = 1.0 / comb_lens.len() as f32;
     input
         .iter()
         .zip(wet)
@@ -285,20 +281,10 @@ pub(super) fn drive_adaa(input: &[f32], amount: &[f32], shape: DriveShape) -> Si
 /// recompute and no zipper. Deterministic: pure f32 arithmetic, fixed
 /// coefficients.
 pub(super) fn modal_bank(input: &[f32], modes: &[Mode], mix: f32, sr: u32) -> Signal {
-    let srf = sr as f32;
-    let nyq = srf * 0.5;
     let mix = mix.clamp(0.0, 1.0);
     let mut wet = vec![0.0f32; input.len()];
     for m in modes {
-        let f0 = m.freq.clamp(1.0, (nyq - 1.0).max(1.0));
-        let decay = m.decay.max(1e-3);
-        let w0 = TAU * f0 / srf;
-        let (sin0, cos0) = (w0.sin(), w0.cos());
-        // r so the ring reaches −60 dB (×0.001) after `decay` seconds.
-        let r = (crate::dsp::NEG_LN_1000 / (decay * srf)).exp();
-        let a1 = 2.0 * r * cos0;
-        let a2 = -r * r;
-        let b0 = m.gain * sin0; // impulse-response peak ≈ gain
+        let (a1, a2, b0) = crate::dsp::modal_coeffs(m.freq, m.decay, m.gain, sr);
         let (mut y1, mut y2) = (0.0f32, 0.0f32);
         for (o, &x) in wet.iter_mut().zip(input) {
             let y = b0 * x + a1 * y1 + a2 * y2;

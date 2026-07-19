@@ -394,6 +394,58 @@ pub fn hz_to_midi(hz: f32) -> f32 {
 /// (offline + streaming twins) and the pluck body bank.
 pub(crate) const NEG_LN_1000: f32 = -6.907_755;
 
+/// The LTI coefficients `(a1, a2, b0)` of one modal resonator (a two-pole
+/// damped sine): the pole radius places the ring at exactly −60 dB after
+/// `decay` seconds, and `b0` normalises the impulse-response peak to `gain`,
+/// so a mode's loudness is its gain regardless of ring time. One definition
+/// for the offline and streaming modal banks.
+pub(crate) fn modal_coeffs(freq: f32, decay: f32, gain: f32, sr: u32) -> (f32, f32, f32) {
+    let srf = sr as f32;
+    let nyq = srf * 0.5;
+    let f0 = freq.clamp(1.0, (nyq - 1.0).max(1.0));
+    let decay = decay.max(1e-3);
+    let w0 = std::f32::consts::TAU * f0 / srf;
+    let (sin0, cos0) = (w0.sin(), w0.cos());
+    // r so the ring reaches −60 dB (×0.001) after `decay` seconds.
+    let r = (NEG_LN_1000 / (decay * srf)).exp();
+    (2.0 * r * cos0, -r * r, gain * sin0)
+}
+
+/// The delay-line allocation for a `delay` node, in samples: validate() caps
+/// `secs` at 30 s, and the clamp guards unvalidated docs identically on the
+/// offline and streaming paths.
+pub(crate) fn delay_line_len(secs: f32, sr: u32) -> usize {
+    ((secs.min(30.0) * sr as f32) as usize).max(1)
+}
+
+/// The quantization levels of a bitcrush: `1 << bits`, with the shift clamped
+/// so an unvalidated `bits >= 32` can't overflow on either path.
+pub(crate) fn bitcrush_levels(bits: u8) -> f32 {
+    (1u32 << (bits as u32).min(31)) as f32
+}
+
+/// The Freeverb delay-line lengths in samples at `sr` — `(comb, allpass)`,
+/// with `spread` extra samples per line for stereo tail decorrelation (0 for
+/// mono). One layout for the offline and streaming reverb builds.
+pub(crate) fn freeverb_lengths(sr: u32, spread: usize) -> (Vec<usize>, Vec<usize>) {
+    let scale = sr as f32 / 44_100.0;
+    let combs = FREEVERB_COMB_TUNINGS
+        .iter()
+        .map(|t| (((t + spread) as f32 * scale) as usize).max(1))
+        .collect();
+    let allpasses = FREEVERB_ALLPASS_TUNINGS
+        .iter()
+        .map(|t| (((t + spread) as f32 * scale) as usize).max(1))
+        .collect();
+    (combs, allpasses)
+}
+
+/// The Freeverb room-size → feedback-coefficient mapping (shared by the
+/// offline and streaming reverb builds).
+pub(crate) fn freeverb_feedback(room: f32) -> f32 {
+    0.7 + 0.28 * room.clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

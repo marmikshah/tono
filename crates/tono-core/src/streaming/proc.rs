@@ -417,9 +417,9 @@ pub(super) fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -
             biquad(FilterKind::HighShelf(*gain_db), cst(cutoff)?, 0.707, sr)
         }
         Node::Bitcrush { bits } => {
-            // Mirrors the offline clamp: validate() bounds bits to 1..=16;
-            // .min(31) keeps an unvalidated doc from overflowing the shift.
-            let levels = (1u32 << (*bits as u32).min(31)) as f32;
+            // Shared with the offline path: validate() bounds bits to 1..=16,
+            // and the clamped shift can't overflow for unvalidated docs.
+            let levels = crate::dsp::bitcrush_levels(*bits);
             Proc::Bitcrush { half: levels / 2.0 }
         }
         Node::Downsample { factor } => Proc::Downsample {
@@ -427,9 +427,9 @@ pub(super) fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -
             held: 0.0,
         },
         Node::Delay { secs, feedback } => {
-            // Mirrors the offline clamp: validate() caps secs at 30 s; this
-            // guards unvalidated docs from an unbounded allocation.
-            let dn = ((secs.min(30.0) * srf) as usize).max(1);
+            // Shared with the offline path: validate() caps secs at 30 s;
+            // the clamp guards unvalidated docs from an unbounded allocation.
+            let dn = crate::dsp::delay_line_len(*secs, sr);
             Proc::Delay {
                 buf: vec![0.0; dn],
                 w: 0,
@@ -437,50 +437,32 @@ pub(super) fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -
             }
         }
         Node::Reverb { room, mix } => {
-            let scale = srf / 44_100.0;
-            let comb_tunings = crate::dsp::FREEVERB_COMB_TUNINGS;
-            let allpass_tunings = crate::dsp::FREEVERB_ALLPASS_TUNINGS;
-            let combs = comb_tunings
-                .iter()
-                .map(|&tn| {
-                    (
-                        vec![0.0f32; ((tn as f32 * scale) as usize).max(1)],
-                        0usize,
-                        0.0f32,
-                    )
-                })
-                .collect();
-            let allpasses = allpass_tunings
-                .iter()
-                .map(|&tn| (vec![0.0f32; ((tn as f32 * scale) as usize).max(1)], 0usize))
-                .collect();
+            let (comb_lens, allpass_lens) = crate::dsp::freeverb_lengths(sr, 0);
             Proc::Reverb {
-                combs,
-                allpasses,
-                feedback: 0.7 + 0.28 * room.clamp(0.0, 1.0),
+                combs: comb_lens
+                    .iter()
+                    .map(|&len| (vec![0.0f32; len], 0usize, 0.0f32))
+                    .collect(),
+                allpasses: allpass_lens
+                    .iter()
+                    .map(|&len| (vec![0.0f32; len], 0usize))
+                    .collect(),
+                feedback: crate::dsp::freeverb_feedback(*room),
                 damp: crate::dsp::FREEVERB_DAMP,
                 g: 0.5,
-                comb_norm: 1.0 / 6.0,
+                comb_norm: 1.0 / comb_lens.len() as f32,
                 mix: mix.clamp(0.0, 1.0),
             }
         }
         Node::Modal { modes, mix } => {
-            let nyq = srf * 0.5;
             let modes = modes
                 .iter()
                 .map(|m| {
-                    // The .max(1.0) guard keeps the clamp ordered at absurd
-                    // sample rates (sr < 4), matching the offline path.
-                    let f0 = m.freq.clamp(1.0, (nyq - 1.0).max(1.0));
-                    let decay = m.decay.max(1e-3);
-                    let w0 = TAU * f0 / srf;
-                    let (sin0, cos0) = (w0.sin(), w0.cos());
-                    // r so the ring reaches −60 dB (×0.001) after `decay` seconds.
-                    let r = (crate::dsp::NEG_LN_1000 / (decay * srf)).exp();
+                    let (a1, a2, b0) = crate::dsp::modal_coeffs(m.freq, m.decay, m.gain, sr);
                     ModalMode {
-                        a1: 2.0 * r * cos0,
-                        a2: -r * r,
-                        b0: m.gain * sin0,
+                        a1,
+                        a2,
+                        b0,
                         y1: 0.0,
                         y2: 0.0,
                     }
