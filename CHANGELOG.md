@@ -11,9 +11,18 @@ produced NaN, silence, a hang, or ultrasonic output no host can play (a
 finite-but-unplayable pitch like `"midi:170"` is an authoring error now —
 only unvalidated direct renders see the note-fallback change).
 
-### Deprecated (deleted at 2.0)
-- `MixerError::NoSampleRate` — unreachable today: every `Mixer` constructor
-  takes the rate up front.
+**Versioning policy:** tono never ships a 2.0. Breaking changes land in
+ordinary 1.x minors, and deprecated surface is removed directly in the next
+minor — no long-lived deprecation shims. The byte-identity promise is a
+product guarantee, independent of version numbers.
+
+### Removed
+- The surface deprecated at 1.6.0–1.8.0: `tono_core::stream` (use `player`),
+  `catalog::Instrument` (use `catalog::Voice`), `tono_core::voice` (use
+  `instrument::EnvGen`), `tono::audio::write_wav` (use `write_wav_stereo`),
+  `streaming::is_streamable` (use `StreamGraph::try_from_doc`),
+  `EffectChain::is_empty` (a constructed chain is never empty), and
+  `MixerError::NoSampleRate` (every `Mixer` constructor takes the rate).
 
 ### Fixed
 - **Validation rejects the overflow regime.** Pitches resolving to non-finite
@@ -80,11 +89,12 @@ only unvalidated direct renders see the note-fallback change).
 
 The structure release: a full quality review swept every lens, the god-files
 split into module directories, the native faces share one cpal shim, and the
-long-deprecated names are staged for deletion at 2.0. Every pre-existing
+long-deprecated names are staged for removal in the next minor (tono never
+ships a 2.0 — removals land in ordinary minors). Every pre-existing
 document still renders byte-for-byte (the golden corpus and the
 offline/streaming byte-identity fuzz are unchanged).
 
-### Deprecated (deleted at 2.0)
+### Deprecated (removed in the next minor)
 - The 1.6.0 rename aliases, now through two minors: `tono_core::stream`
   (use `player`) and `catalog::Instrument` (use `catalog::Voice`).
 - `tono_core::voice` — `EnvGen` lives with its only consumer as

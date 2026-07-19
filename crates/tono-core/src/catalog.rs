@@ -123,12 +123,6 @@ pub struct Voice {
     pub voice: VoiceParams,
 }
 
-/// The old name of [`Voice`] — it collided with the live-playable
-/// [`crate::instrument::Instrument`], the crate's other `Instrument`.
-/// Deleted at 2.0.
-#[deprecated(since = "1.6.0", note = "renamed to `catalog::Voice`")]
-pub type Instrument = Voice;
-
 impl Voice {
     /// Rename the instrument (the track / layer id). Handy when a song has two
     /// of the same instrument.
