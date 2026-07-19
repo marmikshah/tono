@@ -20,4 +20,6 @@ pub mod audio;
 pub mod diff;
 pub mod imaging;
 pub mod midi;
+#[cfg(feature = "play")]
+pub mod play;
 pub mod target;
