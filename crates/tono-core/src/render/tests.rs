@@ -1,5 +1,6 @@
 use super::*;
 use crate::dsl::DriveShape;
+use crate::dsl::Modulator;
 use crate::dsl::Stereo;
 use crate::dsp::{loudness_lufs, true_peak};
 

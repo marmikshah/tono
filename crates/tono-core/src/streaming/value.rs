@@ -5,11 +5,13 @@ use crate::dsl::{Curve, Modulator, Shape, Value, note_to_hz};
 use crate::dsp::{Rng, adsr_env};
 use crate::render::{osc, rand_seed};
 
-/// A per-sample evaluator for a dsl [`Value`], byte-identical to `eval_value` at
-/// the given absolute sample index. Const/Note are constant; the modulators match
-/// the offline formulas. `Rand` is stateful (carries its self-seeded walk) so it
-/// must be stepped once per sample in order.
-pub(super) enum Val {
+/// A per-sample evaluator for a dsl [`Value`], byte-identical to the offline
+/// `eval_value` at the given absolute sample index — in fact `eval_value` is a
+/// thin loop over this one definition, so the offline and streaming paths
+/// can't diverge. Const/Note are constant; the modulators are the closed
+/// forms. `Rand` is stateful (carries its self-seeded walk) so it must be
+/// stepped once per sample in order.
+pub(crate) enum Val {
     Const(f32),
     Slide {
         from: f32,
@@ -53,7 +55,7 @@ pub(super) enum Val {
 }
 
 impl Val {
-    pub(super) fn build(v: &Value, sr: u32, n: usize) -> Self {
+    pub(crate) fn build(v: &Value, sr: u32, n: usize) -> Self {
         let srf = sr as f32;
         match v {
             Value::Const(c) => Val::Const(*c),
@@ -112,7 +114,11 @@ impl Val {
                     seed,
                 } => {
                     let mut rng = Rng::new(rand_seed(*seed, *from, *to, *rate));
-                    let inc = rate.max(1e-4) / srf;
+                    // Segments per sample. validate() caps rate at 10k; the
+                    // .min(64.0) keeps an unvalidated absurd rate from turning
+                    // the catch-up loop in eval into a hang (same guard as the
+                    // offline path — they must agree bit-for-bit).
+                    let inc = (rate.max(1e-4) / srf).min(64.0);
                     let prev = rng.range(*from, *to);
                     let next = rng.range(*from, *to);
                     Val::Rand {
@@ -129,7 +135,7 @@ impl Val {
         }
     }
 
-    pub(super) fn eval(&mut self, t: usize) -> f32 {
+    pub(crate) fn eval(&mut self, t: usize) -> f32 {
         match self {
             Val::Const(c) => *c,
             Val::Slide {

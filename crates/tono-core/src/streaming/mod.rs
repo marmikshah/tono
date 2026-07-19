@@ -32,7 +32,7 @@
 
 mod proc;
 mod source;
-mod value;
+pub(crate) mod value;
 
 #[cfg(test)]
 mod tests;
