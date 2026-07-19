@@ -162,26 +162,12 @@ fn transpose(node: &mut Node, ratio: f32) {
                 scale(&mut note.pitch, ratio);
             }
         }
-        Node::Mix { inputs } | Node::Mul { inputs } => {
-            for i in inputs.iter_mut() {
-                transpose(i, ratio);
-            }
-        }
-        Node::Chain { stages } => {
-            for s in stages.iter_mut() {
-                transpose(s, ratio);
-            }
-        }
-        Node::Tracks { tracks, master } => {
-            for t in tracks.iter_mut() {
-                transpose(&mut t.node, ratio);
-            }
-            for m in master.iter_mut() {
-                transpose(m, ratio);
-            }
-        }
         _ => {}
     }
+    // The recursion goes through the shared `children_mut` traversal — every
+    // nesting spot (mix/mul/chain, a tracks' layers and master chain, a
+    // duck's trigger) is covered by construction.
+    node.children_mut().for_each(|c| transpose(c, ratio));
 }
 
 impl Instrument {

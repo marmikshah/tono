@@ -501,3 +501,31 @@ fn validate_bounds_graph_depth() {
     let d = SoundDoc::new("deep", node);
     assert!(d.validate().unwrap_err().contains("deeper"));
 }
+
+#[test]
+fn children_covers_every_nested_graph() {
+    // The one traversal definition: every combinator variant yields its
+    // children in document order, leaves yield none — so walkers can't
+    // silently skip a nesting spot (the historical `duck` bug class).
+    let duck: Node =
+        serde_json::from_str(r#"{ "type": "duck", "trigger": { "type": "sine", "freq": 55 } }"#)
+            .unwrap();
+    assert_eq!(duck.children().count(), 1, "a duck yields its trigger");
+    let mix: Node = serde_json::from_str(
+        r#"{ "type": "mix", "inputs": [ { "type": "noise" }, { "type": "sine", "freq": 440 } ] }"#,
+    )
+    .unwrap();
+    assert_eq!(mix.children().count(), 2);
+    let tracks: Node = serde_json::from_str(
+        r#"{ "type": "tracks", "tracks": [ { "node": { "type": "noise" } } ],
+             "master": [ { "type": "lowpass", "cutoff": 800 } ] }"#,
+    )
+    .unwrap();
+    assert_eq!(
+        tracks.children().count(),
+        2,
+        "a tracks node yields its layers, then the master chain"
+    );
+    let leaf: Node = serde_json::from_str(r#"{ "type": "sine", "freq": 440 }"#).unwrap();
+    assert_eq!(leaf.children().count(), 0);
+}

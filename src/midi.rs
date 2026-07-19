@@ -58,40 +58,23 @@ pub fn export_midi(doc: &SoundDoc, dest: &Path) -> Result<MidiSummary> {
 }
 
 fn collect_seqs<'a>(node: &'a Node, out: &mut Vec<SeqRef<'a>>) {
-    match node {
-        Node::Seq {
-            bpm,
-            steps_per_beat,
-            notes,
-            wave,
-            sf2,
-            ..
-        } => out.push(SeqRef {
+    if let Node::Seq {
+        bpm,
+        steps_per_beat,
+        notes,
+        wave,
+        sf2,
+        ..
+    } = node
+    {
+        out.push(SeqRef {
             bpm: *bpm,
             spb: (*steps_per_beat).max(1),
             notes,
             drums: *wave == SeqWave::Kit || (*wave == SeqWave::Sampler && sf2.sf2_bank == 128),
-        }),
-        Node::Tracks { tracks, .. } => {
-            for t in tracks {
-                collect_seqs(&t.node, out);
-            }
-        }
-        Node::Mix { inputs } | Node::Mul { inputs } => {
-            for inp in inputs {
-                collect_seqs(inp, out);
-            }
-        }
-        Node::Chain { stages } => {
-            for st in stages {
-                collect_seqs(st, out);
-            }
-        }
-        // The trigger is where the kick pattern lives — a doc whose only seq
-        // is a duck trigger must still export it.
-        Node::Duck { trigger, .. } => collect_seqs(trigger, out),
-        _ => {}
+        });
     }
+    node.children().for_each(|c| collect_seqs(c, out));
 }
 
 /// Build one MIDI track from a seq. `tempo` (if `Some`) writes the global tempo.

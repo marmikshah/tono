@@ -575,6 +575,120 @@ impl Node {
                 | Node::Duck { .. }
         )
     }
+
+    /// Every direct child of this node — the nested graphs of the combinator
+    /// variants: `mix`/`mul` inputs, `chain` stages, a `tracks`' layers then
+    /// its `master` chain, and a `duck`'s trigger. The ONE traversal
+    /// definition every walker shares, so a new variant can never be silently
+    /// skipped the way the hand-written walkers were (the `duck`-trigger
+    /// omissions in the vary and MIDI walkers were exactly that class).
+    pub fn children(&self) -> Children<'_> {
+        let kind = match self {
+            Node::Mix { inputs } | Node::Mul { inputs } => ChildrenKind::Slice(inputs.iter()),
+            Node::Chain { stages } => ChildrenKind::Slice(stages.iter()),
+            Node::Tracks { tracks, master } => ChildrenKind::Tracks {
+                tracks: tracks.iter(),
+                master: master.iter(),
+            },
+            Node::Duck { trigger, .. } => ChildrenKind::One(Some(trigger)),
+            _ => ChildrenKind::None,
+        };
+        Children { kind }
+    }
+
+    /// Mutable form of [`children`](Self::children).
+    pub fn children_mut(&mut self) -> ChildrenMut<'_> {
+        let kind = match self {
+            Node::Mix { inputs } | Node::Mul { inputs } => {
+                ChildrenMutKind::Slice(inputs.iter_mut())
+            }
+            Node::Chain { stages } => ChildrenMutKind::Slice(stages.iter_mut()),
+            Node::Tracks { tracks, master } => ChildrenMutKind::Tracks {
+                tracks: tracks.iter_mut(),
+                master: master.iter_mut(),
+            },
+            Node::Duck { trigger, .. } => ChildrenMutKind::One(Some(trigger)),
+            _ => ChildrenMutKind::None,
+        };
+        ChildrenMut { kind }
+    }
+
+    /// Apply `f` to this node and every descendant, depth-first (parents
+    /// before children, in document order).
+    pub fn walk(&self, f: &mut impl FnMut(&Node)) {
+        f(self);
+        for c in self.children() {
+            c.walk(f);
+        }
+    }
+
+    /// Mutable form of [`walk`](Self::walk).
+    pub fn walk_mut(&mut self, f: &mut impl FnMut(&mut Node)) {
+        f(self);
+        for c in self.children_mut() {
+            c.walk_mut(f);
+        }
+    }
+}
+
+/// The iterator returned by [`Node::children`].
+pub struct Children<'a> {
+    kind: ChildrenKind<'a>,
+}
+
+enum ChildrenKind<'a> {
+    None,
+    One(Option<&'a Node>),
+    Slice(std::slice::Iter<'a, Node>),
+    Tracks {
+        tracks: std::slice::Iter<'a, Track>,
+        master: std::slice::Iter<'a, Node>,
+    },
+}
+
+impl<'a> Iterator for Children<'a> {
+    type Item = &'a Node;
+    fn next(&mut self) -> Option<&'a Node> {
+        match &mut self.kind {
+            ChildrenKind::None => None,
+            ChildrenKind::One(x) => x.take(),
+            ChildrenKind::Slice(it) => it.next(),
+            ChildrenKind::Tracks { tracks, master } => match tracks.next() {
+                Some(t) => Some(&t.node),
+                None => master.next(),
+            },
+        }
+    }
+}
+
+/// The iterator returned by [`Node::children_mut`].
+pub struct ChildrenMut<'a> {
+    kind: ChildrenMutKind<'a>,
+}
+
+enum ChildrenMutKind<'a> {
+    None,
+    One(Option<&'a mut Node>),
+    Slice(std::slice::IterMut<'a, Node>),
+    Tracks {
+        tracks: std::slice::IterMut<'a, Track>,
+        master: std::slice::IterMut<'a, Node>,
+    },
+}
+
+impl<'a> Iterator for ChildrenMut<'a> {
+    type Item = &'a mut Node;
+    fn next(&mut self) -> Option<&'a mut Node> {
+        match &mut self.kind {
+            ChildrenMutKind::None => None,
+            ChildrenMutKind::One(x) => x.take(),
+            ChildrenMutKind::Slice(it) => it.next(),
+            ChildrenMutKind::Tracks { tracks, master } => match tracks.next() {
+                Some(t) => Some(&mut t.node),
+                None => master.next(),
+            },
+        }
+    }
 }
 
 /// FM voice knobs of a `seq` node (`wave: "fm"`), flattened onto the node in
