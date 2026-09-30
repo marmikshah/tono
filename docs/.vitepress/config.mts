@@ -42,6 +42,7 @@ export default defineConfig({
         {
           text: 'Guides',
           items: [
+            { text: 'Generate game SFX', link: '/guides/generation' },
             { text: 'Design sound effects', link: '/guides/sound-effects' },
             { text: 'Compose songs', link: '/guides/songs' },
             { text: 'Run live & embedded', link: '/guides/live' },

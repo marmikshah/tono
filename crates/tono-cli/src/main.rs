@@ -10,9 +10,23 @@ use std::path::{Path, PathBuf};
 use tono_core::dsl::SoundDoc;
 use tono_core::render;
 
+mod generation;
+
 const HELP: &str = "tono — a deterministic sound engine.
 
 USAGE:
+    tono templates
+        List the eight game SFX starters.
+
+    tono generate TEMPLATE [--seed N] [-n COUNT] [-o DIR] [--format wav|flac|ogg]
+        Generate COUNT candidates (default 4) with editable JSON, audio,
+        feedback images, stats, index.html to audition, and manifest.json.
+        DIR must be empty;
+        default: target/generated/<template>-<seed> (seed defaults to 0).
+        --brightness / --punch: 0..1 (default 0.5)
+        --variation: 0..1 (default 0.15); --sample-rate: Hz (default 48000)
+        COUNT must be 1..32. Seeds advance by one for each candidate.
+
     tono render FILE.json [-o DIR] [--format wav|flac|ogg] [--stems DIR] [--watch]
         Render a SoundDoc into DIR (default: .):
           <name>.wav|flac|ogg   the audio
@@ -94,6 +108,8 @@ The SoundDoc format and the node vocabulary are documented in the SoundDoc refer
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
+        Some("templates") => generation::templates_cmd(&args[2..]),
+        Some("generate") => generation::generate_cmd(&args[2..]),
         Some("render") => render_cmd(&args[2..]),
         Some("vary") => vary_cmd(&args[2..]),
         Some("schema") => schema_cmd(&args[2..]),
@@ -288,12 +304,23 @@ fn parse_format(flag: Option<&str>) -> anyhow::Result<&str> {
 
 /// The full render pipeline for one doc: audio file (+ `smpl` chunk for loop
 /// docs), the two feedback images, and the stats JSON — printing each output
-/// path. Shared by `render` and `vary`.
+/// path. Shared by `render`, `vary`, and `generate`.
 fn render_to_dir(doc: &SoundDoc, stem: &str, out_dir: &Path, format: &str) -> anyhow::Result<()> {
     let product = render::render_product(doc);
+    let treated = if product.stereo.is_none() && !matches!(doc.stereo, tono_core::dsl::Stereo::Mono)
+    {
+        Some(render::stereoize(
+            &product.mono,
+            doc.stereo,
+            doc.sample_rate,
+        ))
+    } else {
+        None
+    };
     let stereo = product
         .stereo
         .as_ref()
+        .or(treated.as_ref())
         .map(|(l, r)| (l.as_slice(), r.as_slice()));
     let (left, right) = stereo.unwrap_or((&product.mono, &product.mono));
 

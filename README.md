@@ -59,6 +59,19 @@ against a recording, `tono fit` hill-climbs parameters toward it, and
 first: `tono catalog` lists the 31 voices, `tono presets` the 16 factory
 sounds — each renders a demo you can inspect.
 
+From this checkout, generate game SFX without authoring a graph:
+
+```sh
+cargo run --locked -- templates
+cargo run --locked -- generate laser --seed 42
+# target/generated/laser-42/: audition page, four WAVs, editable JSON, analysis
+```
+
+Eight starters cover pickups, jumps, lasers, explosions, impacts, footsteps,
+and UI confirmation/cancellation. Control brightness, punch, and seeded
+variation; keep the source document with an audio candidate you like.
+See the [generation guide](docs/guides/generation.md) for controls and the Rust API.
+
 ## Compose a song
 
 A typed song API over the same engine — tracks from the instrument catalog,
