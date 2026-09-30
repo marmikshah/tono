@@ -79,8 +79,7 @@ fn default_batch_exports_replayable_documents_audio_and_manifest() {
         assert!(preview.contains(candidate["document"].as_str().unwrap()));
         assert!(preview.contains(candidate["audio"].as_str().unwrap()));
         let doc: SoundDoc = serde_json::from_slice(&fs::read(document).unwrap()).unwrap();
-        let mut replay = generate_sfx(&spec).unwrap();
-        replay.name = doc.name.clone();
+        let replay = generate_sfx(&spec).unwrap();
         assert_eq!(
             serde_json::to_value(&doc).unwrap(),
             serde_json::to_value(&replay).unwrap()

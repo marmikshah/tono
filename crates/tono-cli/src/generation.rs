@@ -89,26 +89,28 @@ pub(super) fn generate_cmd(args: &[String]) -> anyhow::Result<()> {
     for index in 0..count {
         let mut take = spec.clone();
         take.seed = seed.wrapping_add(index as u64);
-        let mut doc = generate_sfx(&take)?;
-        doc.name = format!("{template}_v{index}");
+        let doc = generate_sfx(&take)?;
+        // Export filenames identify takes; the document remains exactly what
+        // the saved spec generates, including its canonical content hash.
+        let stem = format!("{template}_v{index}");
         candidates.push(Candidate {
             spec: take,
             document_hash: tono_core::program::content_hash(&doc),
             duration_secs: doc.duration,
-            document: format!("{}.json", doc.name),
-            audio: format!("{}.{format}", doc.name),
-            spectrogram: format!("{}.png", doc.name),
-            waveform: format!("{}_wave.png", doc.name),
-            stats: format!("{}.stats.json", doc.name),
+            document: format!("{stem}.json"),
+            audio: format!("{stem}.{format}"),
+            spectrogram: format!("{stem}.png"),
+            waveform: format!("{stem}_wave.png"),
+            stats: format!("{stem}.stats.json"),
         });
-        docs.push(doc);
+        docs.push((doc, stem));
     }
     fs::create_dir_all(&out)?;
-    for (doc, candidate) in docs.iter().zip(&candidates) {
+    for ((doc, stem), candidate) in docs.iter().zip(&candidates) {
         let path = out.join(&candidate.document);
         fs::write(&path, serde_json::to_string_pretty(doc)?)?;
         println!("{}", path.display());
-        render_to_dir(doc, &doc.name, &out, format)?;
+        render_to_dir(doc, stem, &out, format)?;
     }
     let preview = out.join("index.html");
     fs::write(&preview, preview_html(template, &candidates))?;
