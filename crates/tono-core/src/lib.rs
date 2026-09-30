@@ -25,6 +25,7 @@
 //! Authoring: [`dsl`] (the `SoundDoc` graph + validation) · [`patch`]
 //! (templates with named parameters) · [`edit`] (path-addressed edits) ·
 //! [`vary`] (deterministic variations).
+//! [`generate`] supplies authored game SFX starters without an input graph.
 //!
 //! Rendering: [`render`] (the offline bounce) · [`streaming`] (real-time,
 //! byte-identical to the bounce) · [`dsp`] (RNG, loudness, limiting) ·
@@ -69,6 +70,7 @@ pub mod drumkit;
 pub mod dsl;
 pub mod dsp;
 pub mod edit;
+pub mod generate;
 pub mod ids;
 pub mod instrument;
 pub mod music;
@@ -97,6 +99,7 @@ pub mod prelude {
     };
     pub use crate::diag::{CompileError, Diagnostic, Severity};
     pub use crate::dsl::{Adsr, ENGINE_VERSION, Node, SeqNote, SeqWave, SoundDoc, Value};
+    pub use crate::generate::{SfxSpec, SfxTemplate, generate_sfx};
     pub use crate::instrument::{Instrument, InstrumentDesign, Note};
     pub use crate::music::{Chord, Interval, Key, Pitch, PitchClass, Scale};
     pub use crate::patch::Patch;
