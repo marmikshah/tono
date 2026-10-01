@@ -5,13 +5,14 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   base: '/tono/',
   title: 'tono',
-  description: 'Audio as a pure function — procedural, deterministic, CI-testable.',
+  description: 'Give your game its own sound. Create sound effects and compose music with tono, an open-source audio engine built in Rust.',
+  appearance: false,
   cleanUrls: true,
   lastUpdated: false,
-  head: [['link', { rel: 'icon', href: '/tono/img/logo.png' }]],
+  head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/tono/img/mark.svg' }]],
 
   themeConfig: {
-    logo: '/img/logo.png',
+    logo: '/img/mark.svg',
     nav: [
       { text: 'Get started', link: '/get-started/' },
       { text: 'Guides', link: '/guides/sound-effects' },
