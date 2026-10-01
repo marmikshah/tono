@@ -10,6 +10,15 @@ on:
       - "docs/**"
       - "package.json"
       - "package-lock.json"
+      - "scripts/site-audio.mjs"
+      - "crates/tono-cli/examples/site_samples.rs"
+      - "crates/tono-cli/Cargo.toml"
+      - "crates/tono-core/Cargo.toml"
+      - "crates/tono-core/src/**"
+      - "tsconfig.json"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -36,6 +45,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - run: npm run docs:check
       - run: npm run docs:build
       - uses: actions/upload-pages-artifact@v4
         with:
