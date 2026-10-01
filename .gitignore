@@ -21,6 +21,7 @@ __pycache__/
 /node_modules/
 /docs/.vitepress/dist/
 /docs/.vitepress/cache/
+/docs/public/generated/
 
 # Mandatory repository ignores
 # Secrets and agent-local state never belong in a repository.
