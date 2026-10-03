@@ -27,16 +27,9 @@ jobs:
           fi
   binaries:
     needs: github-release
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, name: linux-x86_64 }
-          - { os: macos-latest, target: aarch64-apple-darwin, name: macos-aarch64 }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc, name: windows-x86_64 }
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v5
@@ -44,13 +37,13 @@ jobs:
           python-version: "3.13"
       - uses: dtolnay/rust-toolchain@1.88.0
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-unknown-linux-gnu
       - shell: bash
         run: python scripts/release.py check-version "$GITHUB_REF_NAME"
       - name: Build the CLI
-        run: cargo build --locked --release -p tono --bin tono --target ${{ matrix.target }}
+        run: cargo build --locked --release -p tono --bin tono --target x86_64-unknown-linux-gnu
       - name: Package with checksum
-        run: python scripts/release.py package-cli ${{ matrix.target }} ${{ matrix.name }}
+        run: python scripts/release.py package-cli
       - name: Upload to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

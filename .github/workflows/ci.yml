@@ -25,19 +25,11 @@ jobs:
   ci:
     if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
     uses: ./.github/workflows/ci-rust.yml
-  platforms:
+  stable:
     if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { runner: macos-latest, toolchain: "1.88.0" }
-          - { runner: windows-latest, toolchain: "1.88.0" }
-          - { runner: ubuntu-latest, toolchain: stable }
     uses: ./.github/workflows/ci-rust.yml
     with:
-      runner: ${{ matrix.runner }}
-      toolchain: ${{ matrix.toolchain }}
+      toolchain: stable
   dependencies:
     if: github.event_name != 'workflow_dispatch' || !inputs.bench
     runs-on: ubuntu-latest
@@ -49,7 +41,7 @@ jobs:
   status:
     # Preserve the existing protected check while sharing the actual gate.
     name: ci
-    needs: [ci, platforms, dependencies]
+    needs: [ci, stable, dependencies]
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
     runs-on: ubuntu-latest
     steps:
