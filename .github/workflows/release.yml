@@ -18,13 +18,23 @@ jobs:
         with:
           python-version: "3.13"
       - run: python scripts/release.py check-version "$GITHUB_REF_NAME"
-      - name: Create the GitHub Release
+      - name: Create the GitHub Release from the changelog
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            exit 0
           fi
+          notes="$RUNNER_TEMP/release-notes.md"
+          if ! awk -v version="${GITHUB_REF_NAME#v}" '
+            $1 == "##" { included = $2 == version; next }
+            included { print; if (NF) found = 1 }
+            END { if (!found) exit 1 }
+          ' CHANGELOG.md > "$notes"; then
+            echo "::error::No changelog entries for $GITHUB_REF_NAME"
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$notes" --verify-tag
   binaries:
     needs: github-release
     runs-on: ubuntu-latest
