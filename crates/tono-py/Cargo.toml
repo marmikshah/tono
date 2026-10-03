@@ -11,6 +11,7 @@ publish = false
 [lib]
 name = "tono"
 doc = false
+test = false
 # cdylib only: the crate has no Rust tests (smoke coverage is Python-side), and
 # an rlib here collides with the root crate's libtono.rlib in workspace builds.
 crate-type = ["cdylib"]
@@ -23,6 +24,6 @@ tono-play = { path = "../tono-play" }
 serde_json = { workspace = true }
 # abi3-py39: one wheel per platform covers every CPython 3.9+. `extension-module`
 # is enabled only for the wheel build (see pyproject [tool.maturin].features), so
-# a plain `cargo build`/`test` still links dev libpython and runs the seam tests.
+# plain Cargo builds link dev libpython; installed-wheel tests run in Python.
 pyo3 = { version = "0.29", features = ["abi3-py39"] }
 numpy = "0.29"

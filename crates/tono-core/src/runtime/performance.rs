@@ -281,8 +281,8 @@ impl Performance {
     /// Load a compiled program, stopped at frame 0. The engine's sample rate
     /// is the program's.
     pub fn new(program: Arc<Program>) -> Self {
-        let sr = program.meta.sample_rate;
-        let transport = Transport::for_program(&program.meta);
+        let sr = program.doc.sample_rate;
+        let transport = Transport::for_program(&program);
         let song = SongSource::build(&program);
         Performance {
             program,
@@ -470,24 +470,13 @@ impl Performance {
     /// clean — a rejected target changes nothing (the last valid program
     /// keeps running).
     pub fn swap_to(&mut self, program: Arc<Program>, at: At) -> Result<u64, PerformanceError> {
-        if program.program_version != crate::program::PROGRAM_VERSION {
+        program
+            .verify()
+            .map_err(|e| PerformanceError::BadProgram(e.to_string()))?;
+        if program.doc.sample_rate != self.sample_rate {
             return Err(PerformanceError::BadProgram(format!(
-                "unsupported program version {}; expected {}",
-                program.program_version,
-                crate::program::PROGRAM_VERSION
-            )));
-        }
-        if program.hash != program.computed_hash() {
-            return Err(PerformanceError::BadProgram(
-                "hash mismatch — the program was edited after compilation".into(),
-            ));
-        }
-        if program.meta.sample_rate != self.sample_rate
-            || program.doc.sample_rate != self.sample_rate
-        {
-            return Err(PerformanceError::BadProgram(format!(
-                "sample rate mismatch — performance is {} Hz, program metadata is {} Hz, and its document is {} Hz",
-                self.sample_rate, program.meta.sample_rate, program.doc.sample_rate
+                "sample rate mismatch — performance is {} Hz, program is {} Hz",
+                self.sample_rate, program.doc.sample_rate
             )));
         }
         self.schedule(Command::Swap(program), at)
@@ -636,7 +625,7 @@ impl Performance {
                 if let Some(new_source) = self.swap_sources.remove(&stamped.seq) {
                     let outgoing = std::mem::replace(&mut self.song, new_source);
                     self.fade = Some((outgoing, SWAP_FADE_FRAMES));
-                    self.transport = Transport::for_program(&program.meta);
+                    self.transport = Transport::for_program(&program);
                     self.transport.play();
                     self.program = program;
                     self.metrics.swaps += 1;
@@ -965,7 +954,7 @@ mod tests {
         // Seek to bar 2 (beat 8, 4 s at 120 BPM — wait: 8 beats × 0.5 s = 4 s;
         // the demo is longer than that? length is 4 bars + tail).
         let bar2 = {
-            let t = Transport::for_program(&program.meta);
+            let t = Transport::for_program(&program);
             t.frame_at_bar(2) as usize
         };
         let mut p = Performance::new(program.clone());
@@ -980,7 +969,7 @@ mod tests {
         p.schedule(Command::SeekBar(1), At::Immediate).unwrap();
         p.schedule(Command::Play, At::Immediate).unwrap();
         let bar1 = {
-            let t = Transport::for_program(&p.program().meta);
+            let t = Transport::for_program(p.program());
             t.frame_at_bar(1) as usize
         };
         let span = bar2 - bar1;
@@ -1002,7 +991,7 @@ mod tests {
         let program = demo_program();
         let expected = bounce_interleaved(&program);
         let bar2 = {
-            let t = Transport::for_program(&program.meta);
+            let t = Transport::for_program(&program);
             t.frame_at_bar(2) as usize
         };
         let mut p = Performance::new(program);
@@ -1025,7 +1014,7 @@ mod tests {
         let stinger = stinger_doc();
         // Beat 4 at 120 BPM = 2 s = frame 88 200 at 44 100.
         let at = {
-            let t = Transport::for_program(&program.meta);
+            let t = Transport::for_program(&program);
             t.frame_at_beat(4.0) as usize
         };
         let mut p = Performance::new(program.clone());
@@ -1136,7 +1125,7 @@ mod tests {
             .swap_to(other_program_at(48_000), At::Immediate)
             .unwrap_err();
         assert!(matches!(err, PerformanceError::BadProgram(_)));
-        assert_eq!(p.program().meta.sample_rate, 44_100);
+        assert_eq!(p.program().doc.sample_rate, 44_100);
     }
 
     #[test]

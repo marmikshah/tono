@@ -100,7 +100,7 @@ fn command_label(command: &Command) -> String {
         Command::SetLoopBars(start, end) => format!("SetLoopBars({start}, {end})"),
         Command::ClearLoop => "ClearLoop".into(),
         Command::SetGain(gain) => format!("SetGain({gain})"),
-        Command::Swap(program) => format!("Swap({:?})", program.meta.name),
+        Command::Swap(program) => format!("Swap({:?})", program.doc.name),
         Command::Stinger { gain, .. } => format!("Stinger(gain={gain})"),
     }
 }
@@ -267,7 +267,7 @@ impl Performance {
         headless: bool,
     ) -> PyResult<Self> {
         let program = program.shared();
-        let program_rate = program.meta.sample_rate;
+        let program_rate = program.doc.sample_rate;
         match sample_rate {
             // The same range SoundDoc::validate enforces, like the Engine.
             Some(sr) if !(8_000..=192_000).contains(&sr) => {
@@ -494,11 +494,11 @@ impl Performance {
     #[pyo3(signature = (program, at=None))]
     fn swap(&self, program: PyRef<'_, Program>, at: Option<&Bound<'_, PyAny>>) -> PyResult<u64> {
         let program = program.shared();
-        if program.meta.sample_rate != self.sample_rate {
+        if program.doc.sample_rate != self.sample_rate {
             return Err(PyValueError::new_err(format!(
                 "swap target runs at {} Hz but the performance renders at {} Hz — \
                  recompile the target at the performance's rate",
-                program.meta.sample_rate, self.sample_rate
+                program.doc.sample_rate, self.sample_rate
             )));
         }
         let at = resolve_at(at)?;

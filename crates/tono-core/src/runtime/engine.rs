@@ -315,13 +315,6 @@ impl Engine {
         self.spawn(patch, true, priority)
     }
 
-    /// Change a live instance's [`Priority`] (no-op for an unknown handle).
-    pub fn set_priority(&mut self, h: InstanceHandle, priority: Priority) {
-        if let Some(i) = self.instance_mut(h) {
-            i.priority = priority;
-        }
-    }
-
     fn spawn(&mut self, patch: PatchId, looping: bool, priority: Priority) -> InstanceHandle {
         // Enforce the polyphony budget (if any) before adding a voice.
         if let Some(max) = self.max_voices

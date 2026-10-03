@@ -89,18 +89,20 @@ struct StudioState {
 }
 
 /// Rebuild the view model and push the recompiled loop to the audio deck.
-fn refresh(app: &App) -> StudioState {
+fn refresh(app: &App, update_audio: bool) -> StudioState {
     let station = app.station();
     let project = &station.project;
     let mut error = None;
 
-    match project.loop_doc() {
-        Ok(doc) => {
-            if let Some(deck) = app.audio().as_ref() {
-                deck.set_doc(doc);
+    if update_audio {
+        match project.loop_doc() {
+            Ok(doc) => {
+                if let Some(deck) = app.audio().as_ref() {
+                    deck.set_doc(doc);
+                }
             }
+            Err(e) => error = Some(e),
         }
-        Err(e) => error = Some(e),
     }
 
     let steps = project.steps();
@@ -128,7 +130,7 @@ fn refresh(app: &App) -> StudioState {
                 name: t.name.clone(),
                 gain: t.gain,
                 pan: t.pan,
-                muted: project.muted.contains(&t.name),
+                muted: t.mute,
             })
             .collect(),
         can_undo: undo_depth > 0,
@@ -142,13 +144,13 @@ fn edit(app: &App, change: impl FnOnce(&mut studio::Project)) -> StudioState {
     {
         app.station().edit(change);
     }
-    refresh(app)
+    refresh(app, true)
 }
 
 /// The full current view model (the frontend's initial render).
 #[tauri::command]
 fn state(app: State<App>) -> StudioState {
-    refresh(&app)
+    refresh(&app, true)
 }
 
 /// Flip a grid cell.
@@ -181,15 +183,11 @@ fn set_swing(swing: f32, app: State<App>) -> StudioState {
 #[tauri::command]
 fn set_track(name: String, gain: f32, pan: f32, muted: bool, app: State<App>) -> StudioState {
     edit(&app, |p| {
-        // Only mutate state for a real track — an unknown name must not leave
-        // a phantom entry in the serialized mute set.
+        // The named song track owns the mixer state.
         if let Some(t) = p.song.tracks.iter_mut().find(|t| t.name == name) {
             t.gain = gain.clamp(0.0, 2.0);
             t.pan = pan.clamp(-1.0, 1.0);
-            match muted {
-                true => p.muted.insert(name.clone()),
-                false => p.muted.remove(&name),
-            };
+            t.mute = muted;
         }
     })
 }
@@ -198,14 +196,14 @@ fn set_track(name: String, gain: f32, pan: f32, muted: bool, app: State<App>) ->
 #[tauri::command]
 fn undo(app: State<App>) -> StudioState {
     app.station().undo();
-    refresh(&app)
+    refresh(&app, true)
 }
 
 /// See [`undo`].
 #[tauri::command]
 fn redo(app: State<App>) -> StudioState {
     app.station().redo();
-    refresh(&app)
+    refresh(&app, true)
 }
 
 /// Save the project (Song + grid rows) as JSON.
@@ -216,11 +214,16 @@ fn save_project(path: String, app: State<App>) -> Result<(), String> {
 
 /// Load a project, replacing the current one (undoable).
 #[tauri::command]
-fn load_project(path: String, app: State<App>) -> Result<StudioState, String> {
-    {
-        app.station().load(&path)?;
+fn load_project(path: String, app: State<App>) -> StudioState {
+    let loaded = app.station().load(&path);
+    let mut state = refresh(&app, loaded.is_ok());
+    state.error = match loaded {
+        Ok(warning) => warning,
+        Err(error) => Some(error),
     }
-    Ok(refresh(&app))
+    .or(state.error);
+
+    state
 }
 
 /// Transport: `"play"` (spins the audio deck up on first use), `"pause"`,
@@ -235,7 +238,7 @@ fn transport(action: String, app: State<App>) -> Result<(), String> {
             Err(e) => return Err(format!("audio unavailable: {e}")),
         }
         drop(slot);
-        refresh(&app); // push the current loop to the fresh deck
+        refresh(&app, true); // push the current loop to the fresh deck
         slot = app.audio();
     }
     if let Some(deck) = slot.as_ref() {

@@ -132,15 +132,7 @@ fn scramble(value: &mut J, rng: &mut Rng, budget: &mut u32) {
 
 /// Top-level keys worth duplicating — serde rejects a duplicate struct field,
 /// so this exercises the `Json` error path with well-formed JSON text.
-const DUP_KEYS: &[&str] = &[
-    "program_version",
-    "schema_version",
-    "engine_version",
-    "hash",
-    "target",
-    "doc",
-    "meta",
-];
+const DUP_KEYS: &[&str] = &["program_version", "hash", "target", "doc", "meta"];
 
 /// Structured near-valid mutations of the real bundle's JSON text: a bounded
 /// value scramble, then an optional duplicated top-level key, then optional
@@ -191,7 +183,7 @@ fn assert_load_contract(text: &str) -> Result<(), TestCaseError> {
             );
         }
         Err(err) => {
-            // Typed errors only (Json / TooNew / HashMismatch); Display is
+            // Typed errors only (Json / UnsupportedVersion / HashMismatch / InvalidDocument); Display is
             // part of the error contract, so exercise it too.
             let _ = err.to_string();
         }

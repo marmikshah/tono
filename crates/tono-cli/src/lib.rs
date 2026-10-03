@@ -12,7 +12,7 @@
 #![warn(missing_docs)]
 
 pub use tono_core::{
-    adaptive, analysis, catalog, diag, drumkit, dsl, dsp, edit, generate, ids, instrument, patch,
+    adaptive, analysis, catalog, diag, drumkit, dsl, dsp, edit, generate, instrument, patch,
     player, prelude, presets, program, render, runtime, song, streaming, units, vary,
 };
 

@@ -71,7 +71,6 @@ pub mod dsl;
 pub mod dsp;
 pub mod edit;
 pub mod generate;
-pub mod ids;
 pub mod instrument;
 pub mod music;
 pub mod patch;

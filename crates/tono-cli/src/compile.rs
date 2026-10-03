@@ -29,23 +29,23 @@ pub fn compile_song(file: &str, sample_rate: Option<u32>) -> anyhow::Result<Prog
 pub fn inspect_json(program: &Program) -> serde_json::Value {
     let meta = &program.meta;
     serde_json::json!({
-        "name": meta.name,
+        "name": program.doc.name,
         "hash": program.hash,
         "program_version": program.program_version,
-        "schema_version": program.schema_version,
-        "engine_version": program.engine_version,
+        "schema_version": program.doc.version,
+        "engine_version": program.doc.engine,
         "target": program.target,
         "capabilities": program.capabilities(),
         "tempo_bpm": meta.tempo_bpm,
         "beats_per_bar": meta.beats_per_bar,
         "steps_per_beat": meta.steps_per_beat,
         "length_bars": meta.length_bars,
-        "duration_seconds": meta.duration_secs,
-        "duration_frames": meta.duration_frames,
-        "sample_rate": meta.sample_rate,
+        "duration_seconds": program.doc.duration,
+        "duration_frames": program.estimates.frames,
+        "sample_rate": program.doc.sample_rate,
         "streamable": program.is_streamable(),
-        "tracks": meta.tracks.iter().map(|t| serde_json::json!({
-            "id": t.id.get(),
+        "tracks": meta.tracks.iter().enumerate().map(|(index, t)| serde_json::json!({
+            "index": index,
             "name": t.name,
             "wave": t.wave,
             "notes": t.notes,
@@ -58,7 +58,7 @@ pub fn inspect_json(program: &Program) -> serde_json::Value {
             "peak_voices": program.estimates.peak_voices,
             "memory_bytes": program.estimates.memory_bytes,
         },
-        "warnings": program.warnings,
+        "warnings": program.warnings(),
     })
 }
 
@@ -99,10 +99,10 @@ mod tests {
             &serde_json::to_string(&demo_song()).unwrap(),
         );
         let program = compile_song(&path, Some(48_000)).expect("compiles");
-        assert_eq!(program.meta.name, "demo");
-        assert_eq!(program.meta.sample_rate, 48_000);
+        assert_eq!(program.doc.name, "demo");
+        assert_eq!(program.doc.sample_rate, 48_000);
         assert_eq!(program.meta.tracks.len(), 1);
-        assert_eq!(program.schema_version, tono_core::dsl::SCHEMA_VERSION);
+        assert_eq!(program.doc.version, tono_core::dsl::SCHEMA_VERSION);
     }
 
     #[test]
@@ -136,7 +136,7 @@ mod tests {
             tono_core::program::PROGRAM_VERSION
         );
         assert_eq!(inspect["tracks"][0]["name"], "bass");
-        assert_eq!(inspect["tracks"][0]["id"], 1);
+        assert_eq!(inspect["tracks"][0]["index"], 0);
         assert_eq!(inspect["estimates"]["events"], 1);
         // A plain compiled song (schema v2, built-in waves) streams natively.
         assert_eq!(

@@ -22,7 +22,7 @@
 
 use proptest::prelude::*;
 use tono_core::dsl::{TempoPoint, tempo_map_beat_at_seconds, tempo_map_seconds_at};
-use tono_core::program::ProgramMeta;
+use tono_core::program::Program;
 use tono_core::runtime::Transport;
 use tono_core::units::{
     Beat, Frames, MeterPoint, SampleRate, Tempo, bar_count_at_beat, beat_at_bar, beat_to_frames,
@@ -92,25 +92,15 @@ fn arb_tempo_map() -> BoxedStrategy<Vec<TempoPoint>> {
         .boxed()
 }
 
-/// A plain-meter ProgramMeta for building a Transport directly (no compile —
-/// the fields are the contract).
-fn meta(tempo_bpm: f32, sample_rate: u32) -> ProgramMeta {
-    ProgramMeta {
-        name: "fuzz-time".into(),
-        tempo_bpm,
-        beats_per_bar: 4,
-        steps_per_beat: 4,
-        tempo_map: vec![],
-        meter_map: vec![],
-        pickup: None,
-        sections: vec![],
-        markers: vec![],
-        length_bars: 0,
-        duration_secs: 0.0,
-        duration_frames: 0,
-        sample_rate,
-        tracks: vec![],
-    }
+fn program(tempo_bpm: f32, sample_rate: u32) -> Program {
+    let mut song = tono_core::song::Song::new("fuzz-time", tempo_bpm.max(1.0))
+        .add(tono_core::catalog::Bass::finger().named("bass"), |_| {});
+    song.tracks[0].notes.push(tono_core::song::note(0, 1, "C2"));
+    song.compile(&tono_core::song::CompileOptions {
+        sample_rate: Some(sample_rate),
+        ..Default::default()
+    })
+    .unwrap()
 }
 
 proptest! {
@@ -150,7 +140,7 @@ proptest! {
         rate in proptest::sample::select(vec![8_000u32, 44_100, 48_000]),
         beat in (-64i64..=512, 1..=16u32).prop_map(|(n, d)| Beat::new(n, d)),
     ) {
-        let transport = Transport::for_program(&meta(bpm, rate));
+        let transport = Transport::for_program(&program(bpm, rate));
         prop_assert_eq!(
             Frames(transport.frame_at_beat(beat.to_f64())),
             beat_to_frames(beat, Tempo(bpm), SampleRate(rate)),

@@ -49,15 +49,16 @@ pub struct Transport {
 
 impl Transport {
     /// A transport for a compiled program, stopped at frame 0.
-    pub fn for_program(meta: &crate::program::ProgramMeta) -> Self {
+    pub fn for_program(program: &crate::program::Program) -> Self {
+        let meta = &program.meta;
         Transport {
-            sample_rate: meta.sample_rate,
+            sample_rate: program.doc.sample_rate,
             bpm: meta.tempo_bpm,
             beats_per_bar: meta.beats_per_bar,
             tempo_map: meta.tempo_map.clone(),
             meter_map: meta.meter_map.clone(),
             pickup: meta.pickup,
-            length_frames: meta.duration_frames,
+            length_frames: program.estimates.frames,
             state: TransportState::Stopped,
             position: 0,
             loop_range: None,

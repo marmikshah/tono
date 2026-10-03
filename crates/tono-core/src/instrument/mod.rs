@@ -524,7 +524,8 @@ impl Instrument {
     }
 
     /// The note a live voice is playing.
-    pub fn voice_note(&self, handle: VoiceHandle) -> Option<Note> {
+    #[cfg(test)]
+    fn voice_note(&self, handle: VoiceHandle) -> Option<Note> {
         self.voices
             .iter()
             .find(|v| v.handle == handle.0)
@@ -534,7 +535,8 @@ impl Instrument {
     /// The pitch scale a voice is currently sounding at (1.0 = its built note),
     /// following an in-progress glide, excluding the pitch wheel. Useful for a
     /// live pitch readout.
-    pub fn voice_pitch_scale(&self, handle: VoiceHandle) -> Option<f32> {
+    #[cfg(test)]
+    fn voice_pitch_scale(&self, handle: VoiceHandle) -> Option<f32> {
         self.voices
             .iter()
             .find(|v| v.handle == handle.0)

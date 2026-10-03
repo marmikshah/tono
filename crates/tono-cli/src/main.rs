@@ -499,7 +499,7 @@ fn compile_cmd(args: &[String]) -> anyhow::Result<()> {
             None => None,
         };
     let program = tono::compile::compile_song(file, sample_rate)?;
-    for w in &program.warnings {
+    for w in &program.warnings() {
         eprintln!("{} {} {}: {}", w.severity, w.code, w.path, w.message);
     }
     if cli.has("--inspect") {
@@ -510,14 +510,14 @@ fn compile_cmd(args: &[String]) -> anyhow::Result<()> {
     let out = match cli.flag(&["-o", "--out"]) {
         Some(o) => PathBuf::from(o),
         None => {
-            let stem = if program.meta.name.is_empty() {
+            let stem = if program.doc.name.is_empty() {
                 Path::new(file)
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("song")
                     .to_string()
             } else {
-                sanitize_stem(&program.meta.name)?
+                sanitize_stem(&program.doc.name)?
             };
             let default = PathBuf::from(format!("{stem}.program.json"));
             // A defaulted output must never silently clobber an existing file.
@@ -535,7 +535,7 @@ fn compile_cmd(args: &[String]) -> anyhow::Result<()> {
         "{} — hash {:#018x}, {:.2}s, {} tracks, {} events",
         out.display(),
         program.hash,
-        program.meta.duration_secs,
+        program.doc.duration,
         program.meta.tracks.len(),
         program.estimates.events,
     );

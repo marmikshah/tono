@@ -8,6 +8,8 @@
 //! everything is unit-testable.
 
 use std::collections::BTreeSet;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tono_core::catalog::{Bass, Drums, GrandPiano};
@@ -29,9 +31,9 @@ pub struct Row {
 }
 
 /// The saveable project: the song plus the grid rows viewing it. Serialized
-/// as-is — the embedded [`Song`] carries its own engine/version pins, so a
-/// saved pattern replays byte-identically across engine upgrades.
+/// as-is; the embedded [`Song`] must use the current engine and schema.
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Project {
     /// The music — the single source of truth the grid views.
     pub song: Song,
@@ -39,9 +41,6 @@ pub struct Project {
     pub rows: Vec<Row>,
     /// Pattern length in bars.
     pub bars: u32,
-    /// Tracks left out of the mix (kept in the song, skipped at compile).
-    #[serde(default)]
-    pub muted: BTreeSet<String>,
 }
 
 impl Project {
@@ -71,13 +70,71 @@ impl Project {
                 lane("Keys 2", "keys", "G4", 2),
             ],
             bars: 1,
-            muted: BTreeSet::new(),
         }
     }
 
     /// Total grid steps (bars × beats × steps per beat).
     pub fn steps(&self) -> u32 {
-        self.bars * self.song.beats_per_bar.max(1) * self.song.steps_per_beat.max(1)
+        self.bars
+            .saturating_mul(self.song.beats_per_bar)
+            .saturating_mul(self.song.steps_per_beat)
+    }
+
+    /// Check the current song and the grid's references before replacing live state.
+    fn validate(&self) -> Result<(), String> {
+        let steps = self
+            .bars
+            .checked_mul(self.song.beats_per_bar)
+            .and_then(|n| n.checked_mul(self.song.steps_per_beat))
+            .filter(|&n| n > 0 && n <= 4096)
+            .ok_or("pattern grid must have 1..4096 steps")?;
+        if self.rows.is_empty()
+            || self.rows.len() > 128
+            || self.rows.len() * steps as usize > 65_536
+        {
+            return Err("pattern grid must have 1..128 rows and at most 65536 cells".into());
+        }
+        if !(30.0..=300.0).contains(&self.song.bpm) || self.loop_secs() > 600.0 {
+            return Err(
+                "pattern tempo must be 30..300 BPM and its loop at most 600 seconds".into(),
+            );
+        }
+        let mut lanes = BTreeSet::new();
+        for row in &self.rows {
+            if self.track_index(&row.track).is_none()
+                || note_to_hz(&row.pitch).is_none()
+                || row.len == 0
+                || row.len > steps
+                || !lanes.insert((&row.track, &row.pitch))
+            {
+                return Err(format!("invalid or duplicate grid lane '{}'", row.label));
+            }
+        }
+        if self
+            .song
+            .tracks
+            .iter()
+            .flat_map(|t| &t.notes)
+            .any(|n| n.step >= steps || n.len == 0 || n.len > steps)
+        {
+            return Err("pattern notes must lie on the grid".into());
+        }
+        // Empty lanes are valid projects. Silent notes in the validation clone
+        // let the compiler check their voices and routing as well.
+        let mut song = self.song.clone();
+        for track in &mut song.tracks {
+            if track.notes.is_empty() {
+                track.notes.push(SeqNote {
+                    step: 0,
+                    len: 1,
+                    pitch: Value::Note("C4".into()),
+                    gain: 0.0,
+                });
+            }
+        }
+        song.compile(&Default::default())
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     /// The exact loop length in seconds — the compiled doc's duration, so the
@@ -98,13 +155,16 @@ impl Project {
                 self.song.tracks[t]
                     .notes
                     .iter()
-                    .any(|n| n.step == step && pitch_str(&n.pitch) == row.pitch)
+                    .any(|n| n.step == step && has_pitch(&n.pitch, &row.pitch))
             })
             .unwrap_or(false)
     }
 
     /// Flip the row's cell at `step` (add or remove the note).
     pub fn toggle(&mut self, row_ix: usize, step: u32) {
+        if step >= self.steps() {
+            return;
+        }
         let Some(row) = self.rows.get(row_ix).cloned() else {
             return;
         };
@@ -114,7 +174,7 @@ impl Project {
         let notes = &mut self.song.tracks[t].notes;
         let existing = notes
             .iter()
-            .position(|n| n.step == step && pitch_str(&n.pitch) == row.pitch);
+            .position(|n| n.step == step && has_pitch(&n.pitch, &row.pitch));
         match existing {
             Some(i) => {
                 notes.remove(i);
@@ -140,9 +200,17 @@ impl Project {
         let Some(row) = self.rows.get(row_ix).cloned() else {
             return false;
         };
+        if self
+            .rows
+            .iter()
+            .enumerate()
+            .any(|(i, r)| i != row_ix && r.track == row.track && r.pitch == pitch)
+        {
+            return false;
+        }
         if let Some(t) = self.track_index(&row.track) {
             for n in self.song.tracks[t].notes.iter_mut() {
-                if pitch_str(&n.pitch) == row.pitch {
+                if has_pitch(&n.pitch, &row.pitch) {
                     n.pitch = Value::Note(pitch.to_string());
                 }
             }
@@ -156,8 +224,7 @@ impl Project {
     /// ring-out tail would break the seam). `None` when the grid is silent.
     pub fn loop_doc(&self) -> Result<Option<SoundDoc>, String> {
         let mut song = self.song.clone();
-        song.tracks
-            .retain(|t| !t.notes.is_empty() && !self.muted.contains(&t.name));
+        song.tracks.retain(|t| !t.notes.is_empty() && !t.mute);
         if song.tracks.is_empty() {
             return Ok(None);
         }
@@ -175,13 +242,8 @@ impl Default for Project {
     }
 }
 
-/// A note's pitch as the grid's comparison key (rows store note names).
-fn pitch_str(v: &Value) -> String {
-    match v {
-        Value::Note(s) => s.clone(),
-        Value::Const(c) => format!("{c}"),
-        Value::Modulated(_) => String::new(),
-    }
+fn has_pitch(value: &Value, pitch: &str) -> bool {
+    matches!(value, Value::Note(name) if name == pitch)
 }
 
 /// The station: the live project plus snapshot undo/redo. Snapshots are whole
@@ -244,18 +306,57 @@ impl Station {
         (self.undo.len(), self.redo.len())
     }
 
-    /// Save the project as JSON at `path`.
+    /// Save atomically: a failed write keeps the previous file intact.
     pub fn save(&self, path: &str) -> Result<(), String> {
+        self.project.validate()?;
+        let path = expand_home(path);
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
         let json = serde_json::to_string_pretty(&self.project).map_err(|e| e.to_string())?;
-        std::fs::write(expand_home(path), json).map_err(|e| e.to_string())
+        let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+        file.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
+        file.persist(path).map_err(|e| e.error.to_string())?;
+        Ok(())
     }
 
-    /// Load a project from `path`, replacing the current one (undoable).
-    pub fn load(&mut self, path: &str) -> Result<(), String> {
-        let json = std::fs::read_to_string(expand_home(path)).map_err(|e| e.to_string())?;
-        let project: Project = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-        self.edit(|p| *p = project);
-        Ok(())
+    /// Load a validated project. Unreadable paths preserve the working project;
+    /// unsupported/corrupt content is replaced by a fresh current project.
+    pub fn load(&mut self, path: &str) -> Result<Option<String>, String> {
+        const MAX_BYTES: u64 = 8 * 1024 * 1024;
+        let file = std::fs::File::open(expand_home(path)).map_err(|e| e.to_string())?;
+        let mut bytes = Vec::new();
+        file.take(MAX_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        let loaded = if bytes.len() as u64 > MAX_BYTES {
+            Err("project file exceeds 8 MiB".into())
+        } else {
+            String::from_utf8(bytes)
+                .map_err(|e| e.to_string())
+                .and_then(|json| serde_json::from_str::<Project>(&json).map_err(|e| e.to_string()))
+                .and_then(|project| {
+                    project.validate()?;
+                    Ok(project)
+                })
+        };
+        match loaded {
+            Ok(project) => {
+                self.edit(|p| *p = project);
+                Ok(None)
+            }
+            Err(error) => {
+                self.edit(|p| *p = Project::new());
+                let saved = self.save(path);
+                Ok(Some(match saved {
+                    Ok(()) => format!("{error}; replaced with a fresh current project"),
+                    Err(write) => format!(
+                        "{error}; started a fresh project but could not replace the file: {write}"
+                    ),
+                }))
+            }
+        }
     }
 }
 
@@ -265,11 +366,13 @@ impl Default for Station {
     }
 }
 
-/// `~/` paths expand against $HOME so the save box takes the obvious spelling.
-fn expand_home(path: &str) -> String {
-    match (path.strip_prefix("~/"), std::env::var("HOME")) {
-        (Some(rest), Ok(home)) => format!("{home}/{rest}"),
-        _ => path.to_string(),
+/// Expand a home-relative path on Unix and Windows.
+fn expand_home(path: &str) -> PathBuf {
+    let relative = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\"));
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    match (relative, home) {
+        (Some(rest), Some(home)) => PathBuf::from(home).join(rest),
+        _ => PathBuf::from(path),
     }
 }
 
@@ -319,7 +422,7 @@ mod tests {
         };
         assert_eq!(tracks.len(), 2);
         // Muting the bass drops it from the mix but keeps its notes.
-        p.muted.insert("bass".into());
+        p.song.tracks[1].mute = true;
         let doc = p.loop_doc().unwrap().unwrap();
         let tono_core::dsl::Node::Tracks { tracks, .. } = &doc.root else {
             panic!("tracks root");
@@ -334,7 +437,7 @@ mod tests {
         p.toggle(4, 0);
         assert!(p.set_row_pitch(4, "D2"));
         assert!(p.cell(&p.rows[4].clone(), 0), "note follows the lane");
-        assert_eq!(pitch_str(&p.song.tracks[1].notes[0].pitch), "D2");
+        assert!(has_pitch(&p.song.tracks[1].notes[0].pitch, "D2"));
         assert!(!p.set_row_pitch(4, "nonsense"), "bad names are rejected");
         assert_eq!(p.rows[4].pitch, "D2");
     }
@@ -361,14 +464,115 @@ mod tests {
         let mut p = Project::new();
         p.toggle(0, 0);
         p.set_row_pitch(4, "E2");
-        p.muted.insert("keys".into());
+        p.song.tracks[2].mute = true;
         let json = serde_json::to_string(&p).unwrap();
         let back: Project = serde_json::from_str(&json).unwrap();
         assert!(back.cell(&back.rows[0].clone(), 0));
         assert_eq!(back.rows[4].pitch, "E2");
-        assert!(back.muted.contains("keys"));
-        // The song inside carries its engine pin — saved patterns replay
-        // byte-identically across kernel upgrades.
+        assert!(back.song.tracks[2].mute);
+        // The embedded song carries the current engine pin.
         assert_eq!(back.song.engine, p.song.engine);
+    }
+    #[test]
+    fn pattern_mix_matches_the_recorded_baseline() {
+        let mut project = Project::new();
+        for (row, step) in [
+            (0, 0),
+            (0, 8),
+            (1, 4),
+            (2, 2),
+            (2, 6),
+            (4, 0),
+            (4, 8),
+            (6, 4),
+        ] {
+            project.toggle(row, step);
+        }
+        project.set_row_pitch(4, "Eb2");
+        project.song.tracks[1].gain = 0.7;
+        project.song.tracks[1].pan = -0.25;
+        project.song.tracks[2].mute = true;
+        let doc = project.loop_doc().unwrap().unwrap();
+        let (left, right) = tono_core::render::render_product(&doc).into_stereo();
+        let mut hash = 0xCBF2_9CE4_8422_2325u64;
+        for x in left.iter().chain(&right) {
+            for byte in x.to_bits().to_le_bytes() {
+                hash = (hash ^ byte as u64).wrapping_mul(0x0000_0100_0000_01B3);
+            }
+        }
+        assert_eq!(left.len(), 88200);
+        assert_eq!(hash, 0xa15b_c9cf_9c9e_1793);
+    }
+
+    #[test]
+    fn rejected_projects_are_replaced_in_memory_and_on_disk() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("project.json");
+        let mut invalid = vec![b"not JSON".to_vec(), vec![0xff, 0xfe]];
+        for (field, value) in [("engine", 0), ("version", 1)] {
+            let mut saved = serde_json::to_value(Project::new()).unwrap();
+            saved["song"][field] = serde_json::json!(value);
+            invalid.push(serde_json::to_vec(&saved).unwrap());
+        }
+        let mut saved = serde_json::to_value(Project::new()).unwrap();
+        saved["muted"] = serde_json::json!(["bass"]);
+        invalid.push(serde_json::to_vec(&saved).unwrap());
+        let mut saved = serde_json::to_value(Project::new()).unwrap();
+        saved["bars"] = serde_json::json!(u32::MAX);
+        invalid.push(serde_json::to_vec(&saved).unwrap());
+        let mut saved = serde_json::to_value(Project::new()).unwrap();
+        saved["rows"][0]["track"] = serde_json::json!("missing");
+        invalid.push(serde_json::to_vec(&saved).unwrap());
+        for bytes in invalid {
+            let mut station = Station::new();
+            station.project.toggle(0, 0);
+            std::fs::write(&path, bytes).unwrap();
+            let message = station.load(path.to_str().unwrap()).unwrap().unwrap();
+            assert!(message.contains("fresh current project"), "{message}");
+            assert_eq!(station.project.steps(), 16);
+            assert!(station.project.loop_doc().unwrap().is_none());
+            let stored: Project = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            stored.validate().unwrap();
+            station.load(path.to_str().unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn file_failures_preserve_the_working_project_and_saved_file() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("project.json");
+        let mut station = Station::new();
+        station.project.toggle(0, 0);
+        station.project.song.tracks[1].mute = true;
+        station.save(path.to_str().unwrap()).unwrap();
+        let saved = std::fs::read(&path).unwrap();
+        assert!(
+            station
+                .load(folder.path().join("missing.json").to_str().unwrap())
+                .is_err()
+        );
+        assert!(station.project.cell(&station.project.rows[0], 0));
+        assert!(station.save(folder.path().to_str().unwrap()).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), saved);
+        station.project.song.bpm = 0.0;
+        assert!(station.save(path.to_str().unwrap()).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), saved);
+        station.project.song.bpm = 120.0;
+        station.project.toggle(0, 4);
+        station.save(path.to_str().unwrap()).unwrap();
+        let mut restored = Station::new();
+        restored.load(path.to_str().unwrap()).unwrap();
+        assert!(restored.project.cell(&restored.project.rows[0], 4));
+        assert!(restored.project.song.tracks[1].mute);
+    }
+
+    #[test]
+    fn grid_edits_cannot_create_out_of_range_notes_or_alias_lanes() {
+        let mut project = Project::new();
+        project.toggle(0, project.steps());
+        assert!(project.song.tracks[0].notes.is_empty());
+        assert!(!project.set_row_pitch(4, "G1"));
+        assert_eq!(project.rows[4].pitch, "C2");
+        project.validate().unwrap();
     }
 }
