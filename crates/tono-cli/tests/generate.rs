@@ -195,7 +195,13 @@ fn a_plain_document_exports_its_stereo_treatment() {
             .flat_map(|(l, r)| [pcm(*l), pcm(*r)])
             .collect::<Vec<_>>();
         assert_eq!(actual, expected);
-        assert!(actual.chunks_exact(2).any(|frame| frame[0] != frame[1]));
+        assert!(
+            actual
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .any(|frame| frame[0] != frame[1])
+        );
     }
 }
 

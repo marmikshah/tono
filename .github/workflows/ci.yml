@@ -3,21 +3,19 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [master]
   schedule:
     - cron: "17 4 * * 1"
   workflow_dispatch:
     inputs:
       bench:
-        description: Run the report-only Criterion benchmarks
+        description: Run report-only Criterion benchmarks
         type: boolean
         default: false
 
 permissions:
   contents: read
-  pull-requests: read
-
-env:
-  CARGO_TERM_COLOR: always
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -25,75 +23,50 @@ concurrency:
 
 jobs:
   ci:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
+    uses: ./.github/workflows/ci-rust.yml
+  platforms:
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-latest, toolchain: "1.88.0" }
+          - { runner: windows-latest, toolchain: "1.88.0" }
+          - { runner: ubuntu-latest, toolchain: stable }
+    uses: ./.github/workflows/ci-rust.yml
+    with:
+      runner: ${{ matrix.runner }}
+      toolchain: ${{ matrix.toolchain }}
+  dependencies:
+    if: github.event_name != 'workflow_dispatch' || !inputs.bench
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses
+  status:
+    # Preserve the existing protected check while sharing the actual gate.
+    name: ci
+    needs: [ci, platforms, dependencies]
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every validation job
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python -c 'import json, os; assert all(job["result"] == "success" for job in json.loads(os.environ["RESULTS"]).values()), os.environ["RESULTS"]'
+  benchmark:
+    if: github.event_name == 'workflow_dispatch' && inputs.bench
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.88.0
-        if: github.event_name != 'schedule'
-        with:
-          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-        if: github.event_name != 'schedule'
-      - uses: dorny/paths-filter@v3
-        id: changes
-        if: github.event_name == 'pull_request'
-        with:
-          filters: |
-            python:
-              - "crates/tono-core/**"
-              - "crates/tono-play/**"
-              - "crates/tono-py/**"
-              - "Cargo.toml"
-              - "Cargo.lock"
-              - "rust-toolchain.toml"
-              - ".github/workflows/ci.yml"
-      - name: Check formatting
-        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && !inputs.bench)
-        run: cargo fmt --all -- --check
-      - name: Lint
-        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && !inputs.bench)
-        run: cargo clippy --locked --all-targets -- -D warnings
-      - name: Test
-        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && !inputs.bench)
-        run: cargo test --locked
-      - uses: actions/setup-python@v5
-        if: (github.event_name == 'pull_request' && steps.changes.outputs.python == 'true') || (github.event_name == 'workflow_dispatch' && !inputs.bench)
-        with:
-          python-version: "3.9"
-      - name: Install Python build dependencies
-        if: (github.event_name == 'pull_request' && steps.changes.outputs.python == 'true') || (github.event_name == 'workflow_dispatch' && !inputs.bench)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev
-          python3 -m pip install --upgrade pip maturin numpy
-      - name: Build and test the installed Python extension
-        if: (github.event_name == 'pull_request' && steps.changes.outputs.python == 'true') || (github.event_name == 'workflow_dispatch' && !inputs.bench)
-        run: |
-          maturin build --out dist -m crates/tono-py/Cargo.toml
-          python3 -m pip install --no-index --find-links dist --force-reinstall --no-deps tono
-          python3 crates/tono-py/tests/smoke.py
-          python3 crates/tono-py/tests/test_typed.py
-      - name: Check dependency advisories and licenses
-        if: github.event_name != 'workflow_dispatch' || !inputs.bench
-        uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check advisories licenses
-      - name: Run report-only benchmarks
-        if: github.event_name == 'workflow_dispatch' && inputs.bench
-        run: cargo bench --locked -p tono-core 2>&1 | tee bench.txt
-      - name: Summarize benchmark results
-        if: github.event_name == 'workflow_dispatch' && inputs.bench
-        run: |
-          {
-            echo "### Criterion (report-only — no gate)"
-            echo '```'
-            grep -E '^[a-z_]+/[a-z_0-9]+|time:|change:' bench.txt | head -80
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+      - run: cargo bench --locked -p tono-core 2>&1 | tee bench.txt
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.bench
         with:
           name: criterion-report
           path: |

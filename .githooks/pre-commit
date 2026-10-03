@@ -1,5 +1,0 @@
-#!/bin/sh
-# Pre-commit gate: the repository's non-mutating Rust lint checks.
-set -e
-cargo fmt --all -- --check
-exec cargo clippy --locked --all-targets -- -D warnings

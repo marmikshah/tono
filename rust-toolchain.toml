@@ -1,8 +1,4 @@
-# The production toolchain (issue #52, WS9): every developer machine and CI
-# job builds with this exact compiler, so a build is reproducible down to the
-# rustc. It tracks the workspace MSRV (rust-version in Cargo.toml) — bump them
-# together. The latest stable is checked explicitly during the release-candidate
-# gate documented in RULE.md.
+# Pinned build toolchain; CI also checks the latest stable compiler.
 [toolchain]
 channel = "1.88.0"
 components = ["clippy", "rustfmt"]

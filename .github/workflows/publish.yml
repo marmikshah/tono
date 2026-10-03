@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to publish (e.g. v1.10.1) — for tags pushed before this workflow existed"
+        description: "Existing release tag to publish, such as v1.11.0"
         required: true
         type: string
 
@@ -34,23 +34,18 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ inputs.tag || github.ref }}
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: actions/setup-python@v5
         with:
-          toolchain: "1.88.0" # keep in sync with rust-toolchain.toml
-      - name: Guard — tag matches the workspace version
-        run: |
-          VERSION=$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)
-          echo "tag=$TAG workspace-version=$VERSION"
-          if [ "$TAG" != "v$VERSION" ]; then
-            echo "::error::tag $TAG does not match workspace version $VERSION — wrong commit tagged?"
-            exit 1
-          fi
+          python-version: "3.13"
+      - name: Check release configuration
+        run: python scripts/release.py check-version "$TAG"
       - name: Publish tono-core
         run: |
           if curl -sf -H "User-Agent: $UA" https://index.crates.io/to/no/tono-core | grep -qF "\"vers\":\"${TAG#v}\""; then
             echo "tono-core ${TAG#v} already on crates.io — skipping"
           else
-            cargo publish -p tono-core
+            cargo publish --locked -p tono-core
           fi
       - name: Wait for crates.io to index tono-core
         run: |
@@ -68,5 +63,5 @@ jobs:
           if curl -sf -H "User-Agent: $UA" https://index.crates.io/to/no/tono | grep -qF "\"vers\":\"${TAG#v}\""; then
             echo "tono ${TAG#v} already on crates.io — skipping"
           else
-            cargo publish -p tono
+            cargo publish --locked -p tono
           fi
