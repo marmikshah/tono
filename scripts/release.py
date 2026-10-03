@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check release metadata and prepare artifacts on Linux, macOS and Windows."""
+"""Check release metadata and prepare Linux release artifacts."""
 
 import argparse
 import hashlib
@@ -41,11 +41,10 @@ def checksums(directory):
         print(sidecar)
 
 
-def package_cli(target, name, target_dir, out):
-    suffix = ".exe" if "windows" in target else ""
-    source = target_dir / target / "release" / f"tono{suffix}"
+def package_cli(target_dir, out):
+    source = target_dir / "x86_64-unknown-linux-gnu" / "release" / "tono"
     out.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, out / f"tono-{name}{suffix}")
+    shutil.copy2(source, out / "tono-linux-x86_64")
     checksums(out)
 
 
@@ -54,9 +53,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     version = commands.add_parser("check-version", help="validate Cargo/desktop versions and an optional tag")
     version.add_argument("tag", nargs="?", help="release tag, such as v1.11.0")
-    package = commands.add_parser("package-cli", help="copy a target's CLI binary and write its SHA-256 sidecar")
-    package.add_argument("target", help="Rust target triple")
-    package.add_argument("name", help="artifact platform name, such as linux-x86_64")
+    package = commands.add_parser("package-cli", help="package the Linux x86_64 CLI binary with its SHA-256 sidecar")
     package.add_argument("--target-dir", type=Path, default=ROOT / "target")
     package.add_argument("--out", type=Path, default=ROOT / "dist")
     checksum = commands.add_parser("checksums", help="write SHA-256 sidecars for files in a directory")
@@ -66,7 +63,7 @@ def main():
         if args.command == "check-version":
             check_version(args.tag)
         elif args.command == "package-cli":
-            package_cli(args.target, args.name, args.target_dir, args.out)
+            package_cli(args.target_dir, args.out)
         else:
             checksums(args.directory)
     except (OSError, ValueError, KeyError) as error:

@@ -3,9 +3,6 @@ name: Rust gate
 on:
   workflow_call:
     inputs:
-      runner:
-        type: string
-        default: ubuntu-latest
       toolchain:
         type: string
         default: "1.88.0"
@@ -15,7 +12,7 @@ permissions:
 
 jobs:
   gate:
-    runs-on: ${{ inputs.runner }}
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       CARGO_TERM_COLOR: always
@@ -26,7 +23,6 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install Linux native dependencies
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
@@ -64,9 +60,9 @@ jobs:
           maturin build --locked --release --out dist -m crates/tono-py/Cargo.toml
           python scripts/wheel_test.py dist
       - uses: actions/setup-python@v5
-        if: runner.os == 'Linux' && inputs.toolchain == '1.88.0'
+        if: inputs.toolchain == '1.88.0'
         with:
           python-version: "3.9"
       - name: Check the minimum supported Python
-        if: runner.os == 'Linux' && inputs.toolchain == '1.88.0'
+        if: inputs.toolchain == '1.88.0'
         run: python scripts/wheel_test.py dist
