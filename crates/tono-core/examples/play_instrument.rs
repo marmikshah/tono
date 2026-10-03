@@ -12,7 +12,7 @@ use tono_core::runtime::{AudioSource, Mixer};
 /// playable instrument.
 fn lead() -> Patch {
     serde_json::from_str(
-        r#"{ "doc": { "name":"lead", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "doc": { "name":"lead", "duration":1.0, "engine":5, "root": { "type":"chain", "stages": [
                 { "type":"super", "wave":"sawtooth", "freq":220, "voices":5, "detune_cents":14 },
                 { "type":"lowpass", "cutoff":2400, "q":0.9 } ] } },
              "params": [ { "name":"pitch", "paths":["root.stages[0].freq"], "min":20, "max":8000, "default":220 } ] }"#,

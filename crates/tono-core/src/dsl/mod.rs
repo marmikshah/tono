@@ -18,44 +18,18 @@ pub use validate::ValidateError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Current DSL schema version. Stored on every doc so old graphs stay loadable
-/// as the vocabulary evolves. Version 2 gives every mixer track its own
-/// deterministic RNG stream (v1 threads one stream through the track list in
-/// order, so editing one track shifts the noise content of its siblings).
+/// The supported document schema revision.
 pub const SCHEMA_VERSION: u32 = 2;
 
-/// Current DSP-kernel (engine) revision. Distinct from [`SCHEMA_VERSION`]:
-/// that versions the *document schema* (what fields exist and how the graph is
-/// structured); this versions the *audio kernels* (how a node turns into
-/// samples). Splitting them lets a quality-improving kernel change ship
-/// WITHOUT altering the bytes of any document authored before it. A document's
-/// `engine` is `0` when omitted — the original kernels every shipped sound was
-/// rendered under, byte-identical forever. New documents are stamped with this
-/// value, opting them into the current kernels (e.g. anti-aliased `drive`).
-/// Revision 1 adds antiderivative anti-aliasing to [`Node::Drive`]. Revision 2
-/// gives each `noise`/`dust` node its own structurally-seeded RNG (derived from
-/// its position in the graph) instead of drawing from one shared, traversal-order
-/// stream — decorrelating sibling noise and, crucially, letting the real-time
-/// streaming renderer produce byte-identical randomness block-by-block.
-/// Revision 3 upgrades the `piano` seq voice to an inharmonic additive model
-/// (stretched partials, per-partial decay, a hammer-strike spectrum, and a
-/// detuned unison pair) — a far richer grand than the two-operator FM of
-/// engine ≤ 2, which stays bit-exact for older documents.
-/// Revision 4 corrects the mixer output stage — loudness normalization
-/// measures the stereo program jointly (one shared gain, preserving the
-/// authored balance), uses sample-rate-correct gated BS.1770 loudness, and
-/// limits against a real oversampled true-peak estimate — and seeds humanize
-/// jitter per note, so chords stop sharing one timing/velocity offset.
-/// Revision 5 makes the render byte-identical ACROSS PLATFORMS (ADR 0001):
-/// every transcendental in the byte-pinned render path — oscillators,
-/// envelopes, filters, dynamics, pitch conversion, the loudness/normalize
-/// measurement — evaluates through the deterministic `crate::det` kernels
-/// instead of platform libm (whose last bits differ between macOS-arm64 and
-/// linux-x86_64), and `convolve` runs a fixed-order radix-2 FFT (twiddles
-/// from `det::sin`/`det::cos`, f64 throughout, both signals zero-padded to
-/// the next power of two ≥ input + IR − 1) instead of rustfft. Engine ≤ 4
-/// documents keep their historical per-platform renders bit-for-bit.
+/// The supported deterministic DSP-kernel revision.
 pub const ENGINE_VERSION: u32 = 5;
+
+pub(crate) fn default_version() -> u32 {
+    SCHEMA_VERSION
+}
+pub(crate) fn default_engine() -> u32 {
+    ENGINE_VERSION
+}
 
 // Serde `default = "..."` requires free functions. Values with non-obvious
 // origins: haas 12 ms sits in the precedence-effect sweet spot, ceiling
@@ -99,21 +73,12 @@ pub struct SoundDoc {
     /// Seed for any stochastic node (noise). Same seed ⇒ identical audio.
     #[serde(default)]
     pub seed: u64,
-    /// DSL schema version. Omitted ⇒ 1, the semantics documents were authored
-    /// under before versioning mattered; the authoring tools stamp new
-    /// documents with the current [`SCHEMA_VERSION`]. Documents from a newer
-    /// tono are rejected by `validate` instead of silently misrendered.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<u32>,
-    /// DSP-kernel revision (see [`ENGINE_VERSION`]). Omitted ⇒ 0, the original
-    /// kernels — so every existing document renders byte-for-byte as before.
-    /// The authoring tools stamp new documents with the current
-    /// [`ENGINE_VERSION`]; raising a document's `engine` opts it into newer,
-    /// higher-quality kernels (anti-aliased `drive`, …) and DOES change its
-    /// output. A document from a newer tono (engine > `ENGINE_VERSION`) is
-    /// rejected by `validate` rather than silently misrendered.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub engine: Option<u32>,
+    /// Document schema revision. Omitted JSON pins use the current schema.
+    #[serde(default = "default_version")]
+    pub version: u32,
+    /// DSP-kernel revision. Only the current revision is supported.
+    #[serde(default = "default_engine")]
+    pub engine: u32,
     /// Optional stereo treatment applied to the final mono render. Defaults to
     /// mono (game SFX are usually authored mono and spatialised by the engine;
     /// use stereo for BGM, ambience, and UI stingers).
@@ -150,8 +115,8 @@ impl SoundDoc {
             duration: default_duration(),
             sample_rate: default_sample_rate(),
             seed: 0,
-            version: Some(SCHEMA_VERSION),
-            engine: Some(ENGINE_VERSION),
+            version: SCHEMA_VERSION,
+            engine: ENGINE_VERSION,
             stereo: Stereo::default(),
             normalize: None,
             playback: Playback::default(),
@@ -270,22 +235,9 @@ impl From<Modulator> for Value {
     }
 }
 
-/// Parse a musical pitch into Hz: a note name (`"A4"`, `"C#3"`, `"Gb5"`,
-/// `"F#-1"`; octave defaults to 4) or a MIDI number (`"midi:69"` / `"m69"`).
-/// A4 = 440 Hz, 12-tone equal temperament. Returns `None` if unparseable.
-///
-/// This is the engine-0 (platform-libm) conversion — the historical public
-/// behavior, kept for API compatibility. The render paths call the
-/// engine-aware variant with the document's engine so engine ≥ 5 documents
-/// convert through the deterministic kernels (ADR 0001).
+/// Resolve a note name (`C4`, `F#3`, `midi:69`, `m69`) to Hz with deterministic
+/// pitch conversion. Octave defaults to 4. Invalid or out-of-range names return None.
 pub fn note_to_hz(s: &str) -> Option<f32> {
-    note_to_hz_e(s, 0)
-}
-
-/// [`note_to_hz`] at a given engine revision: engine ≥ 5 evaluates the final
-/// `2^((m−69)/12)` through `crate::det::powff` (cross-platform identical),
-/// below that through platform libm (bit-exact with every historical render).
-pub(crate) fn note_to_hz_e(s: &str, engine: u32) -> Option<f32> {
     let s = s.trim();
     if s.is_empty() {
         return None;
@@ -296,7 +248,7 @@ pub(crate) fn note_to_hz_e(s: &str, engine: u32) -> Option<f32> {
         .or_else(|| s.strip_prefix(['m', 'M']))
         && let Ok(n) = num.trim().parse::<f32>()
     {
-        return midi_to_hz_e(n, engine);
+        return midi_to_hz(n);
     }
     // Note name: letter, optional #/b accidentals, optional octave (default 4).
     let mut chars = s.chars().peekable();
@@ -325,11 +277,11 @@ pub(crate) fn note_to_hz_e(s: &str, engine: u32) -> Option<f32> {
         rest.parse().ok()?
     };
     // i64 headroom: huge octaves ("A200000000") would overflow i32 arithmetic.
-    midi_to_hz_e(((octave as i64 + 1) * 12 + semis as i64) as f32, engine)
+    midi_to_hz(((octave as i64 + 1) * 12 + semis as i64) as f32)
 }
 
-fn midi_to_hz_e(m: f32, engine: u32) -> Option<f32> {
-    let hz = 440.0 * crate::dsp::powf(2.0, (m - 69.0) / 12.0, engine);
+fn midi_to_hz(m: f32) -> Option<f32> {
+    let hz = 440.0 * crate::dsp::powf(2.0, (m - 69.0) / 12.0);
     // Reject pitches that would poison the render: non-finite or non-positive
     // Hz turns oscillator phase accumulators to NaN, and anything far above
     // the highest supported Nyquist (96 kHz at 192 kHz sr) is an authoring
@@ -739,18 +691,6 @@ pub fn tempo_map_beat_at_seconds(map: &[TempoPoint], seconds: f64) -> f64 {
 }
 
 impl SoundDoc {
-    /// The schema version this document's render semantics follow (omitted ⇒ 1).
-    pub fn effective_version(&self) -> u32 {
-        self.version.unwrap_or(1)
-    }
-
-    /// The DSP-kernel revision this document renders under (omitted ⇒ 0, the
-    /// original kernels). Gates byte-changing kernel upgrades so old documents
-    /// stay bit-exact; see [`ENGINE_VERSION`].
-    pub fn effective_engine(&self) -> u32 {
-        self.engine.unwrap_or(0)
-    }
-
     /// Every SoundFont path the document references (each `seq` with
     /// `wave: "sampler"` and a non-empty `sf2`). [`validate`](Self::validate)
     /// is filesystem-free — the core is pure compute — so a *loader* (the CLI,

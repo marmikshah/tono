@@ -179,7 +179,7 @@ fn adsr(a: f32, d: f32, s: f32, r: f32) -> Adsr {
 
 fn warm_lead() -> InstrumentDesign {
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"warm_lead", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "doc": { "name":"warm_lead", "duration":1.0, "engine":5, "root": { "type":"chain", "stages": [
                 { "type":"sawtooth", "freq":220 },
                 { "type":"lowpass", "cutoff":2200, "q":0.9 } ] } },
              "params": [
@@ -195,7 +195,7 @@ fn warm_lead() -> InstrumentDesign {
 
 fn square_lead() -> InstrumentDesign {
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"square_lead", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "doc": { "name":"square_lead", "duration":1.0, "engine":5, "root": { "type":"chain", "stages": [
                 { "type":"square", "freq":220, "duty":0.5 },
                 { "type":"lowpass", "cutoff":4000, "q":0.7 } ] } },
              "params": [
@@ -210,7 +210,7 @@ fn brass_stab() -> InstrumentDesign {
     // A single held seq note is the voice; the amp env cuts it short into a
     // stab, and velocity drives the note gain — the brass model's brightness.
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"brass_stab", "duration":1.0, "engine":2, "root": { "type":"seq",
+        r#"{ "doc": { "name":"brass_stab", "duration":1.0, "engine":5, "root": { "type":"seq",
                 "bpm":60, "steps_per_beat":1, "wave":"brass",
                 "env": { "a":0.003, "d":0.1, "s":0.0, "r":0.06 },
                 "notes": [ { "step":0, "len":32, "pitch":"C4" } ] } },
@@ -223,7 +223,7 @@ fn brass_stab() -> InstrumentDesign {
 
 fn flute_lead() -> InstrumentDesign {
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"flute_lead", "duration":1.0, "engine":2, "root": { "type":"seq",
+        r#"{ "doc": { "name":"flute_lead", "duration":1.0, "engine":5, "root": { "type":"seq",
                 "bpm":60, "steps_per_beat":1, "wave":"flute",
                 "env": { "a":0.04, "s":1.0, "r":0.25 },
                 "notes": [ { "step":0, "len":32, "pitch":"C4" } ] } },
@@ -238,7 +238,7 @@ fn flute_lead() -> InstrumentDesign {
 
 fn supersaw_pad() -> InstrumentDesign {
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"supersaw_pad", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "doc": { "name":"supersaw_pad", "duration":1.0, "engine":5, "root": { "type":"chain", "stages": [
                 { "type":"sawtooth", "freq":220 },
                 { "type":"lowpass", "cutoff":3000, "q":0.6 } ] } },
              "params": [
@@ -256,7 +256,7 @@ fn dark_pad() -> InstrumentDesign {
     // The same detuned unison as supersaw_pad, but choked by a low lowpass
     // and swelling slower — the shadow to supersaw_pad's shine.
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"dark_pad", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "doc": { "name":"dark_pad", "duration":1.0, "engine":5, "root": { "type":"chain", "stages": [
                 { "type":"super", "wave":"sawtooth", "freq":220, "voices":7, "detune_cents":30 },
                 { "type":"lowpass", "cutoff":700, "q":0.7 } ] } },
              "params": [
@@ -272,7 +272,7 @@ fn dark_pad() -> InstrumentDesign {
 
 fn hollow_pad() -> InstrumentDesign {
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"hollow_pad", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "doc": { "name":"hollow_pad", "duration":1.0, "engine":5, "root": { "type":"chain", "stages": [
                 { "type":"triangle", "freq":220 },
                 { "type":"lowpass", "cutoff":2500, "q":0.5 } ] } },
              "params": [
@@ -288,7 +288,7 @@ fn hollow_pad() -> InstrumentDesign {
 
 fn sub_bass() -> InstrumentDesign {
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"sub_bass", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "doc": { "name":"sub_bass", "duration":1.0, "engine":5, "root": { "type":"chain", "stages": [
                 { "type":"mix", "inputs": [ { "type":"sine", "freq":55 }, { "type":"sawtooth", "freq":55 } ] },
                 { "type":"lowpass", "cutoff":500, "q":0.8 } ] } },
              "params": [
@@ -302,7 +302,7 @@ fn sub_bass() -> InstrumentDesign {
 
 fn reese_bass() -> InstrumentDesign {
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"reese_bass", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "doc": { "name":"reese_bass", "duration":1.0, "engine":5, "root": { "type":"chain", "stages": [
                 { "type":"sawtooth", "freq":55 },
                 { "type":"lowpass", "cutoff":700, "q":0.8 } ] } },
              "params": [
@@ -316,7 +316,7 @@ fn reese_bass() -> InstrumentDesign {
 
 fn fm_tine() -> InstrumentDesign {
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"fm_tine", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "doc": { "name":"fm_tine", "duration":1.0, "engine":5, "root": { "type":"chain", "stages": [
                 { "type":"fm", "freq":220, "ratio":3.0, "index":3.5 },
                 { "type":"lowpass", "cutoff":6000, "q":0.5 } ] } },
              "params": [
@@ -331,7 +331,7 @@ fn bell() -> InstrumentDesign {
     // The bell model rings on its own (the amp env just leaves the gate
     // open); a long release lets the hum outlive the key.
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"bell", "duration":1.0, "engine":2, "root": { "type":"seq",
+        r#"{ "doc": { "name":"bell", "duration":1.0, "engine":5, "root": { "type":"seq",
                 "bpm":60, "steps_per_beat":1, "wave":"bell",
                 "env": { "a":0.001, "s":1.0, "r":2.0 },
                 "notes": [ { "step":0, "len":8, "pitch":"C4" } ] } },
@@ -344,7 +344,7 @@ fn bell() -> InstrumentDesign {
 
 fn pluck() -> InstrumentDesign {
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"pluck", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "doc": { "name":"pluck", "duration":1.0, "engine":5, "root": { "type":"chain", "stages": [
                 { "type":"sawtooth", "freq":220 },
                 { "type":"lowpass", "cutoff":3200, "q":0.8 } ] } },
              "params": [
@@ -360,7 +360,7 @@ fn marimba() -> InstrumentDesign {
     // A short woody decay on the mallet model; velocity drives the note
     // gain, which brightens the strike partials.
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"marimba", "duration":1.0, "engine":2, "root": { "type":"seq",
+        r#"{ "doc": { "name":"marimba", "duration":1.0, "engine":5, "root": { "type":"seq",
                 "bpm":60, "steps_per_beat":1, "wave":"mallet",
                 "env": { "a":0.001, "d":0.3, "s":0.0, "r":0.1 },
                 "notes": [ { "step":0, "len":4, "pitch":"C4" } ] } },
@@ -373,7 +373,7 @@ fn marimba() -> InstrumentDesign {
 
 fn nylon() -> InstrumentDesign {
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"nylon", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "doc": { "name":"nylon", "duration":1.0, "engine":5, "root": { "type":"chain", "stages": [
                 { "type":"mix", "inputs": [ { "type":"sawtooth", "freq":220 }, { "type":"triangle", "freq":220 } ] },
                 { "type":"lowpass", "cutoff":2200, "q":0.7 } ] } },
              "params": [
@@ -386,7 +386,7 @@ fn nylon() -> InstrumentDesign {
 
 fn vibrato_lead() -> InstrumentDesign {
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"vibrato_lead", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "doc": { "name":"vibrato_lead", "duration":1.0, "engine":5, "root": { "type":"chain", "stages": [
                 { "type":"sawtooth", "freq":220 },
                 { "type":"lowpass", "cutoff":2600, "q":0.8 } ] } },
              "params": [
@@ -400,7 +400,7 @@ fn vibrato_lead() -> InstrumentDesign {
 
 fn wobble_bass() -> InstrumentDesign {
     InstrumentDesign::new(patch(
-        r#"{ "doc": { "name":"wobble_bass", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "doc": { "name":"wobble_bass", "duration":1.0, "engine":5, "root": { "type":"chain", "stages": [
                 { "type":"sawtooth", "freq":55 },
                 { "type":"lowpass", "cutoff":600, "q":0.9 } ] } },
              "params": [

@@ -30,7 +30,7 @@ fn doc(json: &str) -> SoundDoc {
 
 /// (a) The minimal SFX kernel: one oscillator under an ADSR.
 fn blip() -> SoundDoc {
-    doc(r#"{ "name": "blip", "duration": 0.3, "engine": 4,
+    doc(r#"{ "name": "blip", "duration": 0.3, "engine": 5,
             "root": { "type": "mul", "inputs": [
                 { "type": "sine", "freq": 880 },
                 { "type": "env", "a": 0.002, "d": 0.08, "s": 0.0, "r": 0.05 } ] } }"#)
@@ -40,7 +40,7 @@ fn blip() -> SoundDoc {
 /// with decorrelated tails (modeled on the golden `tracks-mix` case).
 fn tracks_mix() -> SoundDoc {
     doc(
-        r#"{ "name": "tracks-mix", "duration": 0.5, "seed": 9, "engine": 4,
+        r#"{ "name": "tracks-mix", "duration": 0.5, "seed": 9, "engine": 5,
             "normalize": { "target_lufs": -14, "ceiling_dbtp": -1.0 },
             "root": { "type": "tracks", "tracks": [
                 { "id": "pad", "node": { "type": "sine", "freq": 220 }, "pan": -0.8, "gain": 0.3 },
@@ -54,7 +54,7 @@ fn tracks_mix() -> SoundDoc {
 
 /// (c) A melodic seq on the additive piano voice (the costliest seq voice).
 fn seq_piano() -> SoundDoc {
-    doc(r#"{ "name": "seq-piano", "duration": 0.5, "engine": 4,
+    doc(r#"{ "name": "seq-piano", "duration": 0.5, "engine": 5,
             "root": { "type": "seq", "bpm": 240, "wave": "piano",
             "env": { "a": 0.002, "s": 1.0, "r": 0.2 },
             "notes": [
@@ -66,7 +66,7 @@ fn seq_piano() -> SoundDoc {
 /// (d) A heavy effects chain: unison source → filter → delay → reverb →
 /// compressor (delay lines, comb/allpass tails, and envelope followers).
 fn fx_chain() -> SoundDoc {
-    doc(r#"{ "name": "fx-chain", "duration": 0.4, "engine": 4,
+    doc(r#"{ "name": "fx-chain", "duration": 0.4, "engine": 5,
             "root": { "type": "chain", "stages": [
                 { "type": "super", "freq": 110, "voices": 7, "detune_cents": 25 },
                 { "type": "lowpass", "cutoff": 1200, "q": 0.9 },
@@ -78,7 +78,7 @@ fn fx_chain() -> SoundDoc {
 /// (e) A streamable graph: deterministic nodes only, constant filter
 /// cutoffs, no normalize/loop/stereo — so `StreamGraph` covers it natively.
 fn streamable() -> SoundDoc {
-    doc(r#"{ "name": "streamable", "duration": 0.5, "engine": 4,
+    doc(r#"{ "name": "streamable", "duration": 0.5, "engine": 5,
             "root": { "type": "chain", "stages": [
                 { "type": "square", "freq": 220, "duty": 0.3 },
                 { "type": "lowpass", "cutoff": 1800, "q": 0.8 },

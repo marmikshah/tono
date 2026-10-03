@@ -15,7 +15,7 @@ categories = ["multimedia::audio", "game-development"]
 [dependencies]
 anyhow = { workspace = true }
 image = { workspace = true, optional = true }
-rustfft = { workspace = true }
+rustfft = { workspace = true, optional = true }
 rustysynth = { workspace = true, optional = true }
 schemars = { workspace = true }
 serde = { workspace = true }
@@ -25,6 +25,7 @@ tracing = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 proptest = { workspace = true }
+rustfft = { workspace = true }
 
 [[bench]]
 name = "render"
@@ -33,6 +34,6 @@ harness = false
 [features]
 default = ["analysis", "sampler"]
 # Spectral analysis + spectrogram/waveform PNGs (the authoring/critique surface).
-analysis = ["dep:image"]
+analysis = ["dep:image", "dep:rustfft"]
 # SoundFont (.sf2) sampler instrument — pulls in rustysynth + file I/O.
 sampler = ["dep:rustysynth"]

@@ -1,4 +1,4 @@
-//! Real-time allocation gates (issue #52, workstream 9): the audio-callback
+//! Real-time allocation gates: the audio-callback
 //! paths must not touch the heap once their scratch is grown.
 //!
 //! A counting [`GlobalAlloc`] wraps the system allocator for THIS test crate
@@ -13,19 +13,18 @@
 //! and every call after it — at any block size up to the largest seen — must
 //! be allocation-free.
 //!
-//! Tests here share one allocator, so each holds a mutex across its measured
-//! section to keep a neighbor's allocations out of its count.
+//! Counting is thread-local so allocations from another test or the test
+//! harness cannot contaminate the measured audio path.
 //!
 //! Not covered (documented control-side operations, off the audio path):
 //! scheduling commands, `Performance::stinger`/`swap_to` (they render at
 //! schedule time), `Pump::pump` (the control thread's own buffer), and a
 //! stream seek / loop wrap (the `SongSource::Stream` rebuild is an O(duration)
-//! re-probe — a documented design trade-off of the alpha runtime, not a
-//! stray allocation).
+//! re-probe — a control-side operation).
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::cell::Cell;
+use std::sync::Arc;
 
 use tono_core::dsl::{Adsr, SeqWave, SoundDoc};
 use tono_core::runtime::{
@@ -37,15 +36,17 @@ use tono_core::song::{CompileOptions, Song, note};
 // The counting allocator.
 // ---------------------------------------------------------------------------
 
-static ENABLED: AtomicBool = AtomicBool::new(false);
-static COUNT: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static ENABLED: Cell<bool> = const { Cell::new(false) };
+    static COUNT: Cell<usize> = const { Cell::new(0) };
+}
 
 struct Counting;
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if ENABLED.load(Ordering::SeqCst) {
-            COUNT.fetch_add(1, Ordering::SeqCst);
+        if ENABLED.get() {
+            COUNT.set(COUNT.get() + 1);
         }
         unsafe { System.alloc(layout) }
     }
@@ -54,8 +55,8 @@ unsafe impl GlobalAlloc for Counting {
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         // Vec growth goes through realloc — count it too.
-        if ENABLED.load(Ordering::SeqCst) {
-            COUNT.fetch_add(1, Ordering::SeqCst);
+        if ENABLED.get() {
+            COUNT.set(COUNT.get() + 1);
         }
         unsafe { System.realloc(ptr, layout, new_size) }
     }
@@ -64,23 +65,14 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static ALLOC: Counting = Counting;
 
-/// Serializes the measured sections (cargo runs a file's tests in parallel).
-static SERIAL: Mutex<()> = Mutex::new(());
-
-/// Lock, tolerating a poisoned mutex: one test's failure must not cascade
-/// into its neighbors' counts.
-fn serial() -> std::sync::MutexGuard<'static, ()> {
-    SERIAL.lock().unwrap_or_else(|e| e.into_inner())
-}
-
 fn start_counting() {
-    COUNT.store(0, Ordering::SeqCst);
-    ENABLED.store(true, Ordering::SeqCst);
+    COUNT.set(0);
+    ENABLED.set(true);
 }
 
 fn stop_counting() -> usize {
-    ENABLED.store(false, Ordering::SeqCst);
-    COUNT.load(Ordering::SeqCst)
+    ENABLED.set(false);
+    COUNT.get()
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +127,6 @@ const SIZES: [usize; 5] = [333, 512, 1024, SCRATCH_FRAMES, SCRATCH_FRAMES + 4096
 
 #[test]
 fn performance_fill_is_allocation_free_after_warmup() {
-    let _guard = serial();
     let mut p = Performance::new(program());
     // Control side: scheduling may allocate (queue growth) — never measured.
     p.schedule(Command::Play, At::Immediate).unwrap();
@@ -163,7 +154,6 @@ fn performance_fill_is_allocation_free_after_warmup() {
 
 #[test]
 fn performance_first_oversized_fill_grows_scratch_once() {
-    let _guard = serial();
     let mut p = Performance::new(program());
     p.schedule(Command::Play, At::Immediate).unwrap();
     // Blocks at or under SCRATCH_FRAMES never allocate: the scratch was
@@ -192,7 +182,6 @@ fn performance_first_oversized_fill_grows_scratch_once() {
 
 #[test]
 fn performance_fill_firing_a_stinger_is_allocation_free() {
-    let _guard = serial();
     let mut p = Performance::new(program());
     p.schedule(Command::Play, At::Immediate).unwrap();
     // Schedule-time work (the stinger's render + voice-capacity reserve)
@@ -218,7 +207,6 @@ fn performance_fill_firing_a_stinger_is_allocation_free() {
 
 #[test]
 fn stream_source_fill_is_allocation_free_after_warmup() {
-    let _guard = serial();
     let program = program();
     let mut src = StreamSource::from_doc(&program.doc).expect("the program streams");
     let mut block = vec![0.0f32; SIZES[SIZES.len() - 1] * 2];
@@ -240,7 +228,6 @@ fn stream_source_fill_is_allocation_free_after_warmup() {
 
 #[test]
 fn renderer_fill_is_allocation_free() {
-    let _guard = serial();
     let mut engine = Engine::new(48_000);
     let patch = engine.load(&blip());
     engine.play_looping(patch);
@@ -276,7 +263,6 @@ fn other_program() -> Arc<tono_core::program::Program> {
 
 #[test]
 fn performance_fill_across_a_swap_is_allocation_free() {
-    let _guard = serial();
     let mut p = Performance::new(program());
     p.schedule(Command::Play, At::Immediate).unwrap();
     // The new program's source builds HERE, at schedule time (a full probe

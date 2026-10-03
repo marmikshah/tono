@@ -141,7 +141,7 @@ pub enum ProgramError {
     /// The JSON didn't parse or didn't match the bundle shape.
     Json(String),
     /// The bundle's `program_version` is newer than this binary supports.
-    TooNew {
+    UnsupportedVersion {
         /// The bundle's revision.
         found: u32,
         /// This binary's [`PROGRAM_VERSION`].
@@ -161,9 +161,9 @@ impl std::fmt::Display for ProgramError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ProgramError::Json(e) => write!(f, "program JSON: {e}"),
-            ProgramError::TooNew { found, supported } => write!(
+            ProgramError::UnsupportedVersion { found, supported } => write!(
                 f,
-                "T3001: program version {found} is newer than this binary supports ({supported})"
+                "T3001: unsupported program version {found}; expected {supported}"
             ),
             ProgramError::HashMismatch { stored, computed } => write!(
                 f,
@@ -209,14 +209,8 @@ pub fn content_hash(doc: &SoundDoc) -> u64 {
 }
 
 impl Program {
-    /// Recompute this bundle's integrity hash. Version 1 covered only the
-    /// resolved document; version 2 covers every serialized semantic field
-    /// except `hash` itself. Keeping the v1 rule here preserves the shipped
-    /// compatibility fixture while new bundles protect their runtime metadata.
+    /// Recompute the integrity hash over all serialized semantic fields except `hash`.
     pub(crate) fn computed_hash(&self) -> u64 {
-        if self.program_version <= 1 {
-            return content_hash(&self.doc);
-        }
         let mut value = serde_json::to_value(self).expect("a program serializes");
         value
             .as_object_mut()
@@ -298,8 +292,8 @@ impl Program {
     pub fn from_json(json: &str) -> Result<Program, ProgramError> {
         let mut program: Program =
             serde_json::from_str(json).map_err(|e| ProgramError::Json(e.to_string()))?;
-        if program.program_version > PROGRAM_VERSION {
-            return Err(ProgramError::TooNew {
+        if program.program_version != PROGRAM_VERSION {
+            return Err(ProgramError::UnsupportedVersion {
                 found: program.program_version,
                 supported: PROGRAM_VERSION,
             });
@@ -327,8 +321,8 @@ pub(crate) fn blocker_warnings(doc: &SoundDoc) -> Vec<Diagnostic> {
             B::Normalize => "T1501",
             B::LoopPlayback => "T1502",
             B::StereoTreatment => "T1503",
-            B::TracksRoot => "T1504",
-            B::LegacyRng { .. } => "T1505",
+            B::NestedMixer => "T1504",
+
             B::Sampler => "T1506",
             B::ModulatedFilter => "T1507",
             B::OfflineEffect { .. } => "T1508",
@@ -413,14 +407,14 @@ mod tests {
     }
 
     #[test]
-    fn from_json_rejects_a_newer_revision() {
+    fn from_json_rejects_an_unsupported_revision() {
         let program = two_track_program();
         let mut value: serde_json::Value = serde_json::from_str(&program.to_json()).unwrap();
         value["program_version"] = serde_json::json!(PROGRAM_VERSION + 1);
         let err = Program::from_json(&serde_json::to_string(&value).unwrap()).unwrap_err();
         assert_eq!(
             err,
-            ProgramError::TooNew {
+            ProgramError::UnsupportedVersion {
                 found: PROGRAM_VERSION + 1,
                 supported: PROGRAM_VERSION,
             }

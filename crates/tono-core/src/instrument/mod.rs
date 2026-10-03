@@ -179,8 +179,7 @@ impl Instrument {
         let master = if design.master.is_empty() {
             None
         } else {
-            let engine = design.patch.doc.effective_engine();
-            let build = || EffectChain::try_new(&design.master, sample_rate, engine);
+            let build = || EffectChain::try_new(&design.master, sample_rate);
             let (l, r) = (
                 build().ok_or(InstrumentError::NotStreamable)?,
                 build().ok_or(InstrumentError::NotStreamable)?,

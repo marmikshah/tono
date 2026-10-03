@@ -15,7 +15,7 @@
 //! use tono_core::patch::Patch;
 //!
 //! let patch: Patch = serde_json::from_str(r#"{
-//!     "doc": { "name": "zap", "duration": 0.2, "engine": 4,
+//!     "doc": { "name": "zap", "duration": 0.2, "engine": 5,
 //!              "root": { "type": "sine", "freq": 880 } },
 //!     "params": [ { "name": "pitch", "paths": ["root.freq"],
 //!                   "min": 100.0, "max": 2000.0, "default": 880.0 } ]

@@ -1,7 +1,7 @@
 {
   "name": "hat",
   "duration": 0.15,
-  "engine": 2,
+  "engine": 5,
   "root": { "type": "mul", "inputs": [
     { "type": "chain", "stages": [
       { "type": "noise", "color": "white" },

@@ -1,1 +1,0 @@
-{"name":"compat-legacy-song","bpm":100.0,"tracks":[{"name":"lead","wave":"square","env":{"a":0.005,"d":0.1,"s":0.8,"r":0.2},"notes":[{"step":0,"len":4,"pitch":"C4","gain":1.0},{"step":8,"len":4,"pitch":"E4","gain":0.9}]}],"patterns":[],"arrangement":[]}

@@ -234,18 +234,12 @@ pub struct Song {
     /// the document default (0). Same song + same seed ⇒ same program hash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
-    /// DSP-kernel revision this song is pinned to (see [`ENGINE_VERSION`]),
-    /// stamped at creation. A song saved as JSON therefore reopens and renders
-    /// byte-identically on newer tonos, exactly like a `SoundDoc` — kernel
-    /// upgrades never silently change a saved project's audio. Omitted (saves
-    /// from before this field) ⇒ compiled with the current engine.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub engine: Option<u32>,
-    /// Document schema version for the compiled doc (see
-    /// [`crate::dsl::SCHEMA_VERSION`]), stamped at creation. Omitted (older
-    /// saves) ⇒ the compiled doc keeps its historical v1 semantics.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<u32>,
+    /// The supported DSP-kernel revision, stamped on the compiled document.
+    #[serde(default = "crate::dsl::default_engine")]
+    pub engine: u32,
+    /// The supported document schema revision.
+    #[serde(default = "crate::dsl::default_version")]
+    pub version: u32,
 }
 
 /// A note for a pattern at grid `step`, `len` steps long, pitched by name
@@ -321,8 +315,8 @@ impl Song {
             arrangement: Vec::new(),
             master: Vec::new(),
             seed: None,
-            engine: Some(ENGINE_VERSION),
-            version: Some(crate::dsl::SCHEMA_VERSION),
+            engine: ENGINE_VERSION,
+            version: crate::dsl::SCHEMA_VERSION,
         }
     }
 
@@ -795,29 +789,21 @@ mod tests {
     }
 
     #[test]
-    fn song_pins_engine_and_version_at_creation() {
+    fn song_uses_the_current_format_and_roundtrips() {
         let mut song = Song::new("pinned", 120.0);
         song.add_track("bass", SeqWave::Bass, amp());
         song.tracks[0].notes.push(note(0, 4, "C2"));
-        assert_eq!(song.engine, Some(ENGINE_VERSION));
+        assert_eq!(song.engine, ENGINE_VERSION);
+        assert_eq!(song.version, crate::dsl::SCHEMA_VERSION);
         let doc = song.to_doc().unwrap();
-        assert_eq!(doc.engine, Some(ENGINE_VERSION));
-        assert_eq!(doc.version, Some(crate::dsl::SCHEMA_VERSION));
-
-        // A save pinned to an older engine keeps it across upgrades — the
-        // audio of a saved project never silently changes.
-        song.engine = Some(3);
-        assert_eq!(song.to_doc().unwrap().engine, Some(3));
-
-        // Legacy saves (no pins) keep their historical behavior: current
-        // engine, v1 doc semantics.
-        let mut v = serde_json::to_value(&song).unwrap();
-        v.as_object_mut().unwrap().remove("engine");
-        v.as_object_mut().unwrap().remove("version");
-        let legacy: Song = serde_json::from_value(v).unwrap();
-        let doc = legacy.to_doc().unwrap();
-        assert_eq!(doc.engine, Some(ENGINE_VERSION));
-        assert_eq!(doc.version, None);
+        let saved = serde_json::to_string(&song).unwrap();
+        let back: Song = serde_json::from_str(&saved).unwrap();
+        assert_eq!(
+            serde_json::to_string(&doc).unwrap(),
+            serde_json::to_string(&back.to_doc().unwrap()).unwrap()
+        );
+        song.engine = ENGINE_VERSION - 1;
+        assert!(song.compile(&CompileOptions::default()).is_err());
     }
 
     #[test]

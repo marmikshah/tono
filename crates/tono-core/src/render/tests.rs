@@ -2,7 +2,7 @@ use super::*;
 use crate::dsl::DriveShape;
 use crate::dsl::Modulator;
 use crate::dsl::Stereo;
-use crate::dsp::{loudness_lufs, true_peak};
+use crate::dsp::{loudness_lufs_gated, true_peak_oversampled};
 
 fn doc(json: &str) -> SoundDoc {
     serde_json::from_str(json).expect("deserialize")
@@ -132,7 +132,7 @@ fn render_product_mid_is_the_track_bus_average() {
 }
 
 #[test]
-fn v2_tracks_have_independent_rng_streams() {
+fn tracks_have_independent_rng_streams() {
     // Two docs that differ ONLY in track 0 (a sine consumes no RNG draws, a
     // noise consumes one per sample). Track 1 is hard-panned right, so the
     // right channel is its noise alone. Gains stay at 0.5 so the joint peak
@@ -154,9 +154,7 @@ fn v2_tracks_have_independent_rng_streams() {
         right(&mk(sine, r#", "version": 2"#)),
         right(&mk(noise, r#", "version": 2"#))
     );
-    // v1 (version omitted) keeps the legacy threaded stream — and with it
-    // byte-identical replay of pre-versioning documents.
-    assert_ne!(right(&mk(sine, "")), right(&mk(noise, "")));
+    assert_eq!(right(&mk(sine, "")), right(&mk(noise, "")));
 }
 
 #[test]
@@ -175,7 +173,7 @@ fn layer_at_offset_shifts_and_truncates() {
 }
 
 #[test]
-fn muted_layer_is_exactly_absent_in_v2() {
+fn muted_layer_is_exactly_absent() {
     let with_muted = doc(r#"{ "name": "t", "duration": 0.05, "seed": 9, "version": 2,
                  "root": { "type": "tracks", "tracks": [
                     { "id": "keep", "node": { "type": "noise" }, "gain": 0.5 },
@@ -427,13 +425,13 @@ fn drive_hard_clips_to_unit_range() {
 fn drive_fold_terminates_on_any_input() {
     // The fold loop runs per sample on the real-time path: a non-finite
     // input must not hang it, and huge amplitudes must stay bounded.
-    assert_eq!(drive_curve(f32::NAN, DriveShape::Fold, 0), 0.0);
-    assert_eq!(drive_curve(f32::INFINITY, DriveShape::Fold, 0), 0.0);
-    assert_eq!(drive_curve(f32::NEG_INFINITY, DriveShape::Fold, 0), 0.0);
-    assert!((-1.0..=1.0).contains(&drive_curve(1.0e9, DriveShape::Fold, 0)));
+    assert_eq!(drive_curve(f32::NAN, DriveShape::Fold), 0.0);
+    assert_eq!(drive_curve(f32::INFINITY, DriveShape::Fold), 0.0);
+    assert_eq!(drive_curve(f32::NEG_INFINITY, DriveShape::Fold), 0.0);
+    assert!((-1.0..=1.0).contains(&drive_curve(1.0e9, DriveShape::Fold)));
     // Realistic inputs keep the exact reflection behavior.
-    assert_eq!(drive_curve(1.5, DriveShape::Fold, 0), 0.5);
-    assert_eq!(drive_curve(-1.5, DriveShape::Fold, 0), -0.5);
+    assert_eq!(drive_curve(1.5, DriveShape::Fold), 0.5);
+    assert_eq!(drive_curve(-1.5, DriveShape::Fold), -0.5);
 }
 
 #[test]
@@ -443,9 +441,8 @@ fn drive_antiderivative_matches_its_curve() {
     let h = 1e-3f32;
     for shape in [DriveShape::Tanh, DriveShape::Hard, DriveShape::Fold] {
         for &x in &[-3.5f32, -1.2, -0.4, 0.0, 0.6, 1.5, 4.2] {
-            let num =
-                (drive_antideriv(x + h, shape, 0) - drive_antideriv(x - h, shape, 0)) / (2.0 * h);
-            let exact = drive_curve(x, shape, 0);
+            let num = (drive_antideriv(x + h, shape) - drive_antideriv(x - h, shape)) / (2.0 * h);
+            let exact = drive_curve(x, shape);
             assert!(
                 (num - exact).abs() < 5e-3,
                 "{shape:?} at x={x}: dF/dx={num} vs f={exact}"
@@ -455,91 +452,52 @@ fn drive_antiderivative_matches_its_curve() {
 }
 
 #[test]
-fn adaa_engages_only_under_engine_1() {
-    // Identical bright-tone-into-fold graph at engine 0 vs engine 1.
-    let mk = |engine: u32| {
+fn adaa_can_be_disabled_explicitly() {
+    let mk = |aa: bool| {
         doc(&format!(
-            r#"{{ "name": "n", "duration": 0.1, "engine": {engine},
-                     "root": {{ "type": "chain", "stages": [
-                        {{ "type": "sine", "freq": 3000 }},
-                        {{ "type": "drive", "amount": 6, "shape": "fold" }}
-                     ] }} }}"#
+            r#"{{"name":"fold", "duration":0.1, "root":{{"type":"chain", "stages":[{{"type":"sine", "freq":3000}}, {{"type":"drive", "amount":6, "shape":"fold", "aa":{aa}}}]}}}}"#
         ))
     };
-    let legacy = render(&mk(0));
-    let aa = render(&mk(1));
-    // Engine 0 must be byte-identical to the original pointwise curve.
-    let n = legacy.len();
-    let mut rng = Rng::new(0);
-    let reference = {
-        let sine = render_node(
-            &Node::Sine {
-                freq: Value::Const(3000.0),
-            },
-            n,
-            44_100,
-            &mut rng,
-            0,
-            0,
-        );
-        let amt = eval_value(&Value::Const(6.0), n, 44_100, 0);
-        let raw: Vec<f32> = sine
-            .iter()
-            .zip(amt)
-            .map(|(x, a)| drive_curve(a.max(0.0) * x, DriveShape::Fold, 0))
-            .collect();
-        // render() applies the default peak-limit; mirror it.
-        let mut r = raw;
-        peak_limit(&mut [&mut r]);
-        r
-    };
-    assert_eq!(legacy, reference, "engine 0 drive must stay bit-exact");
-    // Engine 1 genuinely changes the signal …
-    assert_ne!(legacy, aa, "engine 1 must apply ADAA");
-    // … by band-limiting it: the mean-square of the sample-to-sample
-    // difference (a high-frequency-energy proxy) drops, because the
-    // inharmonic foldback that ADAA removes is the spikiest content.
-    let diff_energy = |s: &[f32]| -> f32 {
-        s.windows(2).map(|w| (w[1] - w[0]).powi(2)).sum::<f32>() / s.len() as f32
-    };
+    let raw = render(&mk(false));
+    let aa = render(&mk(true));
+    let sine = render_node(
+        &Node::Sine {
+            freq: Value::Const(3000.0),
+        },
+        raw.len(),
+        44_100,
+        0,
+    );
+    let mut reference: Vec<f32> = sine
+        .iter()
+        .map(|x| drive_curve(6.0 * x, DriveShape::Fold))
+        .collect();
+    peak_limit(&mut [&mut reference]);
+    assert_eq!(raw, reference, "aa:false uses the pointwise curve");
+    assert_ne!(raw, aa);
+    let diff_energy =
+        |s: &[f32]| s.windows(2).map(|w| (w[1] - w[0]).powi(2)).sum::<f32>() / s.len() as f32;
     assert!(
-        diff_energy(&aa) < diff_energy(&legacy),
-        "ADAA should reduce HF energy: aa={} legacy={}",
-        diff_energy(&aa),
-        diff_energy(&legacy)
+        diff_energy(&aa) < diff_energy(&raw),
+        "ADAA reduces high-frequency foldback"
     );
 }
 
 #[cfg(feature = "analysis")]
 #[test]
 fn adaa_lowers_off_harmonic_energy_for_a_folded_tone() {
-    // A 2500 Hz sine folded hard: its true harmonics sit on the 2500 Hz
-    // grid, but the un-band-limited version folds high harmonics back to
-    // OFF-grid frequencies. ADAA suppresses that foldback, so the
-    // analyzer's `inharmonicity` meter reads lower — the feedback loop can
-    // SEE the fix. (The relationship is signal-dependent in general; this
-    // is a clear, reproducible case, not a universal law.)
-    let mk = |engine: u32| {
+    let mk = |aa: bool| {
         doc(&format!(
-            r#"{{ "name": "n", "duration": 0.3, "engine": {engine},
-                     "root": {{ "type": "chain", "stages": [
-                        {{ "type": "sine", "freq": 2500 }},
-                        {{ "type": "drive", "amount": 8, "shape": "fold" }}
-                     ] }} }}"#
+            r#"{{"name":"fold", "duration":0.3, "root":{{"type":"chain", "stages":[{{"type":"sine", "freq":2500}}, {{"type":"drive", "amount":8, "shape":"fold", "aa":{aa}}}]}}}}"#
         ))
     };
     let inharm = |d: &SoundDoc| crate::analysis::stats(&render(d), 44_100).inharmonicity;
-    let legacy = inharm(&mk(0));
-    let aa = inharm(&mk(1));
-    assert!(
-        aa < legacy - 0.1,
-        "ADAA should clearly lower off-harmonic energy: aa={aa} legacy={legacy}"
-    );
+    assert!(inharm(&mk(true)) < inharm(&mk(false)) - 0.1);
 }
 
 #[test]
 fn impact_is_a_short_unit_area_pulse() {
-    let d = doc(r#"{ "name": "n", "duration": 0.2, "engine": 1,
+    let d = doc(r#"{ "name": "n", "duration": 0.2, "engine": 5,
                  "root": { "type": "impact", "hardness": 0.5, "velocity": 1.0 } }"#);
     let s = render(&d);
     // The pulse is confined to the first ~10 ms; the rest is silence.
@@ -558,7 +516,7 @@ fn impact_is_a_short_unit_area_pulse() {
 
 #[test]
 fn modal_bank_rings_at_its_mode_and_decays() {
-    let d = doc(r#"{ "name": "n", "duration": 0.4, "engine": 1,
+    let d = doc(r#"{ "name": "n", "duration": 0.4, "engine": 5,
                  "root": { "type": "chain", "stages": [
                     { "type": "impact", "hardness": 0.8, "velocity": 1.0 },
                     { "type": "modal", "modes": [ { "freq": 1000, "decay": 0.3, "gain": 1.0 } ] }
@@ -596,10 +554,10 @@ fn rand_modulator_is_self_seeded_and_bounded() {
     };
     // Deterministic from its own fields only — no shared-stream coupling,
     // so a sibling edit elsewhere in the graph can never shift it.
-    let a = eval_value(&v(1), 4410, 44_100, 0);
-    assert_eq!(a, eval_value(&v(1), 4410, 44_100, 0));
+    let a = eval_value(&v(1), 4410, 44_100);
+    assert_eq!(a, eval_value(&v(1), 4410, 44_100));
     // A different seed decorrelates the walk.
-    assert_ne!(a, eval_value(&v(2), 4410, 44_100, 0));
+    assert_ne!(a, eval_value(&v(2), 4410, 44_100));
     // The walk stays inside [from, to].
     assert!(a.iter().all(|&x| (200.0..=800.0).contains(&x)));
 }
@@ -607,7 +565,7 @@ fn rand_modulator_is_self_seeded_and_bounded() {
 #[test]
 fn dust_is_sparse_and_deterministic() {
     let mk = || {
-        doc(r#"{ "name": "n", "duration": 1.0, "engine": 1, "seed": 4,
+        doc(r#"{ "name": "n", "duration": 1.0, "engine": 5, "seed": 4,
                      "root": { "type": "dust", "density": 20, "decay": 0.0 } }"#)
     };
     let a = render(&mk());
@@ -643,17 +601,14 @@ fn loop_body_is_region_minus_crossfade() {
     let sr = 1000u32;
     let samples = vec![0.5f32; 1000]; // 1 s
     // Region [0.2, 0.8) = 600 samples, crossfade 0.1 s = 100 ⇒ body 500.
-    let out = make_loop_buffer(&samples, sr, 0.2, Some(0.8), 0.1, 0);
+    let out = make_loop_buffer(&samples, sr, 0.2, Some(0.8), 0.1);
     assert_eq!(out.len(), 500);
     // Degenerate inputs fall back gracefully.
     assert_eq!(
-        make_loop_buffer(&samples, sr, 0.9, Some(0.1), 0.1, 0).len(),
+        make_loop_buffer(&samples, sr, 0.9, Some(0.1), 0.1).len(),
         1000
     );
-    assert_eq!(
-        make_loop_buffer(&samples, sr, 0.0, None, 0.0, 0).len(),
-        1000
-    );
+    assert_eq!(make_loop_buffer(&samples, sr, 0.0, None, 0.0).len(), 1000);
 }
 
 #[test]
@@ -676,66 +631,48 @@ fn normalize_hits_the_loudness_target() {
                  "root": { "type": "chain", "stages": [
                     { "type": "sine", "freq": 440 }, { "type": "gain", "amount": 0.05 } ] } }"#);
     let s = render(&d);
-    let lufs = loudness_lufs(&s);
+    let lufs = loudness_lufs_gated(&[&s], d.sample_rate);
     assert!((lufs + 20.0).abs() < 1.5, "got {lufs} LUFS");
     // True peak respects the −1 dBTP ceiling (small estimation slack).
-    assert!(crate::dsp::dbfs(true_peak(&s)) <= -0.9);
+    assert!(crate::dsp::dbfs(true_peak_oversampled(&s)) <= -0.9);
 }
 
 #[test]
-fn engine4_humanize_jitters_chord_notes_independently() {
-    // One note per doc, same slot, different pitch: under engine ≤ 3 the
-    // jitter seed is (step, len) only, so both land on the same offset;
-    // under engine 4 the pitch joins the seed and they separate.
-    let mk = |engine: u32, pitch: &str| {
+fn humanize_jitters_chord_notes_independently() {
+    let mk = |pitch: &str| {
         doc(&format!(
-            r#"{{ "name":"h", "duration":2.0, "engine":{engine},
-                    "root": {{ "type":"seq", "bpm":120, "wave":"sine", "humanize": 1.0,
-                    "env": {{ "a":0.001, "d":0.1, "s":0.5, "r":0.05 }},
-                    "notes": [ {{ "step":4, "len":4, "pitch":"{pitch}" }} ] }} }}"#
+            r#"{{"name":"h", "duration":2, "root":{{"type":"seq", "wave":"sine", "bpm":120, "humanize":1, "env":{{"a":0.001, "d":0.01, "s":1, "r":0.01}}, "notes":[{{"step":4, "len":1, "pitch":"{pitch}"}}]}}}}"#
         ))
     };
-    let onset = |d: &SoundDoc| render(d).iter().position(|x| x.abs() > 1e-5).unwrap();
-    let legacy = onset(&mk(3, "C4")) as i64 - onset(&mk(3, "E4")) as i64;
-    assert!(legacy.abs() < 8, "legacy shared-seed jitter is pinned");
-    // Everything is deterministic: this pair separates by 19 samples.
-    let v4 = onset(&mk(4, "C4")) as i64 - onset(&mk(4, "E4")) as i64;
+    let onset = |d: &SoundDoc| render(d).iter().position(|x| x.abs() > 0.01).unwrap() as i64;
     assert!(
-        v4.abs() > legacy.abs() + 8,
-        "engine 4 separates chord-note timing: {v4} vs legacy {legacy}"
+        (onset(&mk("C4")) - onset(&mk("E4"))).abs() > 8,
+        "chord pitches get independent timing"
+    );
+    assert_eq!(
+        render(&mk("C4")),
+        render(&mk("C4")),
+        "jitter stays deterministic"
     );
 }
 
 #[test]
-fn engine4_normalize_preserves_the_stereo_balance() {
-    // A quiet hard-left noise against a loud hard-right sine. Engine ≤ 3
-    // gain-matched each channel to the target independently, collapsing
-    // the authored imbalance; engine 4 applies one shared gain.
-    let mk = |engine: u32, normalize: &str| -> SoundDoc {
-        doc(&format!(
-            r#"{{ "name":"bal", "duration":1.0, "seed":9, "engine":{engine}, {normalize}
-                    "root": {{ "type":"tracks", "tracks": [
-                        {{ "id":"quiet", "node": {{ "type":"noise", "color":"white" }},
-                           "pan":-1.0, "gain":0.02 }},
-                        {{ "id":"loud", "node": {{ "type":"sine", "freq":110 }},
-                           "pan":1.0, "gain":0.8 }} ] }} }}"#
-        ))
-    };
-    let nz = r#""normalize": { "target_lufs": -14, "ceiling_dbtp": -1.0 },"#;
-    let balance = |d: &SoundDoc| -> f32 {
-        let tr = render_tracks(d).unwrap();
-        rms(&tr.right) / rms(&tr.left).max(1e-9)
-    };
-    let authored = balance(&mk(4, ""));
-    let v4 = balance(&mk(4, nz));
-    let v3 = balance(&mk(3, nz));
-    assert!(
-        (v4 / authored).log10().abs() < 0.1,
-        "engine 4 keeps the authored R/L balance: {authored:.1} → {v4:.1}"
+fn normalize_preserves_the_stereo_balance() {
+    let dry = doc(
+        r#"{"name":"balance", "duration":1, "root":{"type":"tracks", "tracks":[{"id":"lead", "node":{"type":"sine", "freq":440}, "gain":0.1, "pan":0.6}]}}"#,
     );
+    let mut normalized = dry.clone();
+    normalized.normalize = Some(crate::dsl::Normalize {
+        target_lufs: Some(-20.0),
+        ceiling_dbtp: -1.0,
+    });
+    let ratio = |d: &SoundDoc| {
+        let p = render_tracks(d).unwrap();
+        rms(&p.left) / rms(&p.right)
+    };
     assert!(
-        v3 < authored / 4.0,
-        "engine 3's per-channel stage collapses it: {authored:.1} → {v3:.1} (pinned legacy)"
+        (ratio(&dry) - ratio(&normalized)).abs() < 1e-4,
+        "joint gain preserves the authored balance"
     );
 }
 
@@ -824,45 +761,13 @@ fn piano_bass_rings_longer_than_treble() {
 }
 
 #[test]
-fn engine3_piano_is_a_distinct_richer_voice() {
-    let seq = |engine: u32, pitch: &str| {
-        doc(&format!(
-            r#"{{ "name": "n", "duration": 2.0, "engine": {engine}, "root": {{ "type": "seq",
-                     "bpm": 60, "steps_per_beat": 1, "wave": "piano",
-                     "env": {{ "a": 0.002, "s": 1.0, "r": 0.1 }},
-                     "notes": [ {{ "step": 0, "len": 2, "pitch": "{pitch}" }} ] }} }}"#
-        ))
-    };
-    let peak = |s: &[f32]| s.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
-    let legacy = render(&seq(2, "C4"));
-    let v3 = render(&seq(3, "C4"));
-    // The engine-3 model is a genuinely different (and non-clipping) waveform;
-    // the legacy engine-2 voice is untouched by the upgrade.
-    assert!(peak(&v3) > 0.05 && peak(&v3) < 1.1, "audible, not clipping");
-    assert_ne!(legacy, v3, "engine 3 upgrades the piano voice");
-    // The pitch-dependent ring survives: bass sustains, treble dies fast.
-    let tail = |s: &[f32]| {
-        let q = s.len() / 4;
-        rms(&s[2 * q..3 * q]) / rms(&s[..q]).max(1e-9)
-    };
-    let bass = render(&seq(3, "A1"));
-    let treble = render(&seq(3, "A5"));
-    assert!(
-        tail(&bass) > tail(&treble) * 1.5,
-        "engine-3 bass rings longer than treble: {} vs {}",
-        tail(&bass),
-        tail(&treble)
-    );
-}
-
-#[test]
-fn engine3_piano_tone_knobs_default_to_the_concert_grand() {
+fn piano_tone_knobs_default_to_the_concert_grand() {
     // Omitting the piano_* keys must render byte-identically to setting them
     // at their documented defaults — the byte-safe contract for the knobs.
-    let bare = r#"{ "name":"n", "duration":1.0, "engine":3, "root": { "type":"seq",
+    let bare = r#"{ "name":"n", "duration":1.0, "engine":5, "root": { "type":"seq",
             "bpm":60, "steps_per_beat":1, "wave":"piano", "env": { "a":0.002, "s":1.0, "r":0.1 },
             "notes": [ { "step":0, "len":1, "pitch":"C4" } ] } }"#;
-    let defaults = r#"{ "name":"n", "duration":1.0, "engine":3, "root": { "type":"seq",
+    let defaults = r#"{ "name":"n", "duration":1.0, "engine":5, "root": { "type":"seq",
             "bpm":60, "steps_per_beat":1, "wave":"piano", "env": { "a":0.002, "s":1.0, "r":0.1 },
             "piano_hammer":1.0, "piano_strike":0.125, "piano_inharm":1.0, "piano_detune":1.0, "piano_decay":1.0,
             "notes": [ { "step":0, "len":1, "pitch":"C4" } ] } }"#;
@@ -874,10 +779,10 @@ fn engine3_piano_tone_knobs_default_to_the_concert_grand() {
 }
 
 #[test]
-fn engine3_piano_variants_are_spectrally_distinct() {
+fn piano_variants_are_spectrally_distinct() {
     let piano = |extra: &str| {
         doc(&format!(
-            r#"{{ "name":"n", "duration":1.5, "engine":3, "root": {{ "type":"seq",
+            r#"{{ "name":"n", "duration":1.5, "engine":5, "root": {{ "type":"seq",
                     "bpm":60, "steps_per_beat":1, "wave":"piano", "env": {{ "a":0.002, "s":1.0, "r":0.1 }},
                     {extra}
                     "notes": [ {{ "step":0, "len":1, "pitch":"C4", "gain":0.9 }} ] }} }}"#
@@ -910,7 +815,7 @@ fn kit_styles_are_distinct_bounded_and_default_to_classic() {
             format!(r#""kit":"{style}", "#)
         };
         doc(&format!(
-            r#"{{ "name":"n", "duration":1.0, "engine":3, "root": {{ "type":"seq",
+            r#"{{ "name":"n", "duration":1.0, "engine":5, "root": {{ "type":"seq",
                     "bpm":120, "steps_per_beat":4, "wave":"kit", "env": {{ "a":0.001, "s":1.0, "r":0.05 }}, {key}
                     "notes": [ {{"step":0,"len":1,"pitch":"midi:36"}}, {{"step":2,"len":1,"pitch":"midi:38"}},
                                {{"step":4,"len":1,"pitch":"midi:42"}}, {{"step":6,"len":1,"pitch":"midi:49"}} ] }} }}"#
@@ -948,7 +853,7 @@ fn kit_styles_are_distinct_bounded_and_default_to_classic() {
 fn bass_tone_knobs_default_to_the_current_voice_and_variants_differ() {
     let bass = |extra: &str| {
         doc(&format!(
-            r#"{{ "name":"n", "duration":1.5, "engine":3, "root": {{ "type":"seq",
+            r#"{{ "name":"n", "duration":1.5, "engine":5, "root": {{ "type":"seq",
                     "bpm":90, "steps_per_beat":2, "wave":"bass", "env": {{ "a":0.005, "d":0.1, "s":0.9, "r":0.12 }},
                     {extra}
                     "notes": [ {{"step":0,"len":4,"pitch":"E1","gain":0.9}} ] }} }}"#
@@ -975,7 +880,7 @@ fn bass_tone_knobs_default_to_the_current_voice_and_variants_differ() {
 fn guitar_tone_stages_default_to_identity_and_variants_differ() {
     let pluck = |extra: &str| {
         doc(&format!(
-            r#"{{ "name":"n", "duration":1.2, "engine":3, "seed":3, "root": {{ "type":"seq",
+            r#"{{ "name":"n", "duration":1.2, "engine":5, "seed":3, "root": {{ "type":"seq",
                     "bpm":90, "steps_per_beat":2, "wave":"pluck", "pluck_decay":0.96, "env": {{ "a":0.001, "s":1.0, "r":0.2 }},
                     {extra}
                     "notes": [ {{"step":0,"len":4,"pitch":"E3","gain":0.9}} ] }} }}"#
@@ -1395,6 +1300,7 @@ fn loudness_gated_tolerates_mismatched_channel_lengths() {
     assert!(l.is_finite());
 }
 
+#[cfg(feature = "analysis")]
 #[test]
 fn wavetable_position_morphs_the_spectrum() {
     let at = |pos: &str| {
@@ -1848,7 +1754,7 @@ fn buses_and_sends_round_trip_through_serde() {
 #[test]
 fn stems_decompose_the_pre_master_mix() {
     let d = doc(
-        r#"{ "name":"t", "duration":0.5, "seed":2, "version":2, "engine":4,
+        r#"{ "name":"t", "duration":0.5, "seed":2, "version":2, "engine":5,
         "root":{ "type":"tracks",
           "buses":[ { "id":"verb", "gain":0.8, "effects":[ { "type":"reverb", "room":0.5, "mix":0.5 } ] } ],
           "tracks":[
@@ -1875,7 +1781,7 @@ fn stems_decompose_the_pre_master_mix() {
     // through the bus. Sum the stems and compare to the mix pre-master:
     // recomputing the mix without its master chain is the reference.
     let plain = doc(
-        r#"{ "name":"t", "duration":0.5, "seed":2, "version":2, "engine":4,
+        r#"{ "name":"t", "duration":0.5, "seed":2, "version":2, "engine":5,
         "root":{ "type":"tracks",
           "buses":[ { "id":"verb", "gain":0.8, "effects":[ { "type":"reverb", "room":0.5, "mix":0.5 } ] } ],
           "tracks":[

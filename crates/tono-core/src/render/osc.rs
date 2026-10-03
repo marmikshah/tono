@@ -15,16 +15,14 @@ pub(crate) const WT_LEN: usize = 2048;
 pub(crate) const WT_MAX_PARTIAL: u32 = 32;
 
 /// Build one single-cycle table frame from `(partial, amplitude)` pairs,
-/// peak-normalized. `engine` dispatches the additive sines — engine ≥ 5
-/// builds through the deterministic kernels (ADR 0001), below that ordinary
-/// f32 libm (deterministic per platform).
-fn additive_frame(partials: &[(u32, f32)], engine: u32) -> Vec<f32> {
+/// peak-normalized through the deterministic sine kernel.
+fn additive_frame(partials: &[(u32, f32)]) -> Vec<f32> {
     let mut frame = vec![0.0f32; WT_LEN];
     for (i, s) in frame.iter_mut().enumerate() {
         let phase = i as f32 / WT_LEN as f32;
         let mut acc = 0.0f32;
         for &(h, a) in partials {
-            acc += a * dsp::sin(TAU * h as f32 * phase, engine);
+            acc += a * dsp::sin(TAU * h as f32 * phase);
         }
         *s = acc;
     }
@@ -64,20 +62,18 @@ fn tri_partials(cap: u32) -> Vec<(u32, f32)> {
         .collect()
 }
 
-/// The sub-wave frames of a [`WavetableKind`], darkest first. Shared by the
-/// offline and streaming renderers so both index identical data. `engine`
-/// dispatches the frame synthesis (ADR 0001).
-pub(crate) fn wavetable_frames(kind: WavetableKind, engine: u32) -> Vec<Vec<f32>> {
+/// Build the shared, band-limited wavetable frames with deterministic math.
+pub(crate) fn wavetable_frames(kind: WavetableKind) -> Vec<Vec<f32>> {
     match kind {
         WavetableKind::Basic => vec![
-            additive_frame(&[(1, 1.0)], engine),
-            additive_frame(&tri_partials(16), engine),
-            additive_frame(&square_partials(32), engine),
-            additive_frame(&saw_partials(32), engine),
+            additive_frame(&[(1, 1.0)]),
+            additive_frame(&tri_partials(16)),
+            additive_frame(&square_partials(32)),
+            additive_frame(&saw_partials(32)),
         ],
         WavetableKind::Harmonics => [1, 2, 4, 8, 16, 32]
             .iter()
-            .map(|&cap| additive_frame(&saw_partials(cap), engine))
+            .map(|&cap| additive_frame(&saw_partials(cap)))
             .collect(),
         // Formant centres against a ~110 Hz reference: a 660/1100, e 550/1870,
         // i 330/2310, o 550/880, u 330/880 — snapped to integer partials so
@@ -90,7 +86,7 @@ pub(crate) fn wavetable_frames(kind: WavetableKind, engine: u32) -> Vec<Vec<f32>
             &[(1, 1.0), (3, 0.5), (8, 0.4)][..],
         ]
         .iter()
-        .map(|p| additive_frame(p, engine))
+        .map(|p| additive_frame(p))
         .collect(),
         WavetableKind::Metallic => [
             &[(1, 1.0), (5, 0.5), (10, 0.4)][..],
@@ -99,7 +95,7 @@ pub(crate) fn wavetable_frames(kind: WavetableKind, engine: u32) -> Vec<Vec<f32>
             &[(1, 1.0), (4, 0.5), (11, 0.45), (19, 0.35), (26, 0.3)][..],
         ]
         .iter()
-        .map(|p| additive_frame(p, engine))
+        .map(|p| additive_frame(p))
         .collect(),
     }
 }
@@ -130,19 +126,17 @@ pub(crate) fn wavetable_lookup(frames: &[Vec<f32>], position: f32, phase: f32) -
 /// Morphing wavetable oscillator: `position` sweeps the frame crossfade,
 /// `freq` drives the table phase — both evaluated per-sample like every
 /// other oscillator, so a modulated morph renders identically offline and
-/// streamed. `engine` dispatches the frame synthesis and modulator math
-/// (ADR 0001).
+/// streamed.
 pub(super) fn wavetable_signal(
     wave: WavetableKind,
     freq: &Value,
     position: &Value,
     n: usize,
     sr: u32,
-    engine: u32,
 ) -> Signal {
-    let frames = wavetable_frames(wave, engine);
-    let f = eval_value(freq, n, sr, engine);
-    let p = eval_value(position, n, sr, engine);
+    let frames = wavetable_frames(wave);
+    let f = eval_value(freq, n, sr);
+    let p = eval_value(position, n, sr);
     let srf = sr as f32;
     let mut phase = 0.0f32;
     let mut out = Vec::with_capacity(n);
@@ -158,18 +152,11 @@ pub(super) fn wavetable_signal(
 /// decay so overlapping grains sum. `density` events/sec each fire with random
 /// ± amplitude; `decay` sets the per-grain ring (0 = bare impulses). Draws from
 /// the render stream (like [`noise_signal`]).
-pub(super) fn dust_signal(
-    density: f32,
-    decay: f32,
-    n: usize,
-    sr: u32,
-    rng: &mut Rng,
-    engine: u32,
-) -> Signal {
+pub(super) fn dust_signal(density: f32, decay: f32, n: usize, sr: u32, rng: &mut Rng) -> Signal {
     let srf = sr as f32;
     let p = (density / srf).clamp(0.0, 1.0); // event probability per sample
     let g = if decay > 0.0 {
-        dsp::exp(-1.0 / (decay * srf), engine)
+        dsp::exp(-1.0 / (decay * srf))
     } else {
         0.0
     };
@@ -202,11 +189,9 @@ pub(crate) fn poly_blep(mut t: f32, dt: f32) -> f32 {
 }
 
 /// Unit-amplitude oscillator value in [-1, 1] for a phase in [0, 1).
-/// `engine` dispatches the sine through the deterministic kernels for
-/// engine ≥ 5 (ADR 0001); the polynomial shapes ignore it.
-pub(crate) fn osc(shape: Shape, phase: f32, engine: u32) -> f32 {
+pub(crate) fn osc(shape: Shape, phase: f32) -> f32 {
     match shape {
-        Shape::Sine => dsp::sin(TAU * phase, engine),
+        Shape::Sine => dsp::sin(TAU * phase),
         Shape::Square => {
             if phase < 0.5 {
                 1.0
@@ -232,13 +217,7 @@ pub(crate) fn osc(shape: Shape, phase: f32, engine: u32) -> f32 {
 /// so `velocity` sets the total impulse delivered and `hardness` only shapes
 /// its spectrum — a downstream [`Node::Modal`] bank then rings to a level set
 /// by its modes' `gain`, independent of the strike width.
-pub(super) fn impact_signal(
-    hardness: f32,
-    velocity: f32,
-    n: usize,
-    sr: u32,
-    engine: u32,
-) -> Signal {
+pub(super) fn impact_signal(hardness: f32, velocity: f32, n: usize, sr: u32) -> Signal {
     let h = hardness.clamp(0.0, 1.0);
     let v = velocity.clamp(0.0, 1.0);
     // Contact time: soft ≈ 8 ms, hard ≈ 0.3 ms.
@@ -249,22 +228,15 @@ pub(super) fn impact_signal(
     let mut out = vec![0.0f32; n];
     for (i, o) in out.iter_mut().enumerate().take(w.min(n)) {
         let phase = (i as f32 + 0.5) / w as f32;
-        *o = norm * 0.5 * (1.0 - dsp::cos(TAU * phase, engine));
+        *o = norm * 0.5 * (1.0 - dsp::cos(TAU * phase));
     }
     out
 }
 
 /// Drive a phase accumulator at a (possibly modulated) frequency and map each
-/// phase to a sample via `wave`. `engine` dispatches the modulator math
-/// (ADR 0001).
-pub(super) fn osc_signal(
-    freq: &Value,
-    n: usize,
-    sr: u32,
-    engine: u32,
-    wave: impl Fn(f32) -> f32,
-) -> Signal {
-    let f = eval_value(freq, n, sr, engine);
+/// phase to a sample via `wave`.
+pub(super) fn osc_signal(freq: &Value, n: usize, sr: u32, wave: impl Fn(f32) -> f32) -> Signal {
+    let f = eval_value(freq, n, sr);
     let srf = sr as f32;
     let mut phase = 0.0f32;
     let mut out = Vec::with_capacity(n);
@@ -278,9 +250,9 @@ pub(super) fn osc_signal(
 
 /// Band-limited square / pulse with a per-sample (modulatable) duty — PWM.
 /// PolyBLEP corrects both the rising (phase 0) and falling (phase = duty) edges.
-pub(super) fn square_signal(freq: &Value, duty: &Value, n: usize, sr: u32, engine: u32) -> Signal {
-    let f = eval_value(freq, n, sr, engine);
-    let d = eval_value(duty, n, sr, engine);
+pub(super) fn square_signal(freq: &Value, duty: &Value, n: usize, sr: u32) -> Signal {
+    let f = eval_value(freq, n, sr);
+    let d = eval_value(duty, n, sr);
     let srf = sr as f32;
     let mut phase = 0.0f32;
     let mut out = Vec::with_capacity(n);
@@ -298,8 +270,8 @@ pub(super) fn square_signal(freq: &Value, duty: &Value, n: usize, sr: u32, engin
 }
 
 /// Band-limited sawtooth (naive ramp minus a PolyBLEP at the wrap).
-pub(super) fn saw_signal(freq: &Value, n: usize, sr: u32, engine: u32) -> Signal {
-    let f = eval_value(freq, n, sr, engine);
+pub(super) fn saw_signal(freq: &Value, n: usize, sr: u32) -> Signal {
+    let f = eval_value(freq, n, sr);
     let srf = sr as f32;
     let mut phase = 0.0f32;
     let mut out = Vec::with_capacity(n);
@@ -314,8 +286,8 @@ pub(super) fn saw_signal(freq: &Value, n: usize, sr: u32, engine: u32) -> Signal
 
 /// Band-limited triangle: integrate a band-limited (PolyBLEP) square. A leaky
 /// integrator removes DC drift. Clean at high pitch, unlike a naive triangle.
-pub(super) fn tri_signal(freq: &Value, n: usize, sr: u32, engine: u32) -> Signal {
-    let f = eval_value(freq, n, sr, engine);
+pub(super) fn tri_signal(freq: &Value, n: usize, sr: u32) -> Signal {
+    let f = eval_value(freq, n, sr);
     let srf = sr as f32;
     let mut phase = 0.0f32;
     let mut tri = 0.0f32;
@@ -344,9 +316,8 @@ pub(super) fn super_signal(
     detune_cents: f32,
     n: usize,
     sr: u32,
-    engine: u32,
 ) -> Signal {
-    let f = eval_value(freq, n, sr, engine);
+    let f = eval_value(freq, n, sr);
     let srf = sr as f32;
     let v = voices.clamp(1, 16);
     let mut out = vec![0.0f32; n];
@@ -357,7 +328,7 @@ pub(super) fn super_signal(
         } else {
             -detune_cents + 2.0 * detune_cents * (k as f32 / (v as f32 - 1.0))
         };
-        let ratio = dsp::powf(2.0, cents / 1200.0, engine);
+        let ratio = dsp::powf(2.0, cents / 1200.0);
         let mut phase = k as f32 / v as f32; // decorrelate voice phases
         for (i, o) in out.iter_mut().enumerate() {
             let dt = (f[i].max(0.0) * ratio) / srf;
@@ -419,22 +390,15 @@ pub(super) fn noise_signal(color: NoiseColor, n: usize, rng: &mut Rng) -> Signal
 }
 
 /// Two-operator FM: carrier phase modulated by an operator at `freq * ratio`.
-pub(super) fn fm_signal(
-    freq: &Value,
-    ratio: f32,
-    index: &Value,
-    n: usize,
-    sr: u32,
-    engine: u32,
-) -> Signal {
-    let f = eval_value(freq, n, sr, engine);
-    let idx = eval_value(index, n, sr, engine);
+pub(super) fn fm_signal(freq: &Value, ratio: f32, index: &Value, n: usize, sr: u32) -> Signal {
+    let f = eval_value(freq, n, sr);
+    let idx = eval_value(index, n, sr);
     let srf = sr as f32;
     let (mut cph, mut mph) = (0.0f32, 0.0f32);
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
-        let m = idx[i] * dsp::sin(TAU * mph, engine);
-        out.push(dsp::sin(TAU * cph + m, engine));
+        let m = idx[i] * dsp::sin(TAU * mph);
+        out.push(dsp::sin(TAU * cph + m));
         let fi = f[i].max(0.0);
         cph += fi / srf;
         cph -= cph.floor();

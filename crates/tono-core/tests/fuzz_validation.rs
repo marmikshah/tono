@@ -701,12 +701,12 @@ fn doc_json(valid: bool) -> SJ {
         duration_json(valid),
         sample_rate_json(valid),
         proptest::option::of(proptest::sample::select(if valid {
-            vec![1u32, 2]
+            vec![tono_core::dsl::SCHEMA_VERSION]
         } else {
             vec![0, 1, 2, 3, 99]
         })),
         proptest::option::of(proptest::sample::select(if valid {
-            vec![0u32, 2, 3, 4]
+            vec![tono_core::dsl::ENGINE_VERSION]
         } else {
             vec![0, 1, 2, 3, 4, 5, 99]
         })),

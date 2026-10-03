@@ -3,7 +3,7 @@
 
 use super::SCRATCH_FRAMES;
 use super::source::AudioSource;
-use crate::dsl::{ENGINE_VERSION, Node};
+use crate::dsl::Node;
 use crate::streaming::EffectChain;
 
 /// Handle to a source added to a [`Mixer`].
@@ -289,7 +289,7 @@ impl Mixer {
             return Ok(None);
         }
         let sr = self.sample_rate;
-        let build = || EffectChain::try_new(effects, sr, ENGINE_VERSION);
+        let build = || EffectChain::try_new(effects, sr);
         let l = build().ok_or(MixerError::NotStreamable)?;
         let r = build().ok_or(MixerError::NotStreamable)?;
         Ok(Some((l, r)))

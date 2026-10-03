@@ -62,19 +62,15 @@ impl SoundDoc {
     }
 
     fn validate_inner(&self) -> Result<(), String> {
-        let v = self.effective_version();
-        if v == 0 || v > SCHEMA_VERSION {
+        let v = self.version;
+        if v != SCHEMA_VERSION {
             return Err(format!(
-                "version must be in [1, {SCHEMA_VERSION}], got {v} — a document from a newer \
-                 tono cannot render correctly here; upgrade tono"
+                "unsupported document version {v}; expected {SCHEMA_VERSION}"
             ));
         }
-        let e = self.effective_engine();
-        if e > ENGINE_VERSION {
-            return Err(format!(
-                "engine must be in [0, {ENGINE_VERSION}], got {e} — a document authored against \
-                 a newer DSP kernel cannot render correctly here; upgrade tono"
-            ));
+        let e = self.engine;
+        if e != ENGINE_VERSION {
+            return Err(format!("unsupported engine {e}; expected {ENGINE_VERSION}"));
         }
         // 600 s covers full songs; the cap exists only to bound render memory.
         if !(self.duration > 0.0 && self.duration <= 600.0) {
@@ -151,11 +147,7 @@ impl SoundDoc {
             if tracks.is_empty() {
                 return Err("tracks must be non-empty".into());
             }
-            // A mixer document builds its stereo image from per-layer pan; a
-            // doc-level Haas/Wide treatment would be silently dropped by the
-            // renderer. v1 documents keep the historical silent-ignore so old
-            // libraries still load.
-            if self.effective_version() >= 2 && !matches!(self.stereo, Stereo::Mono) {
+            if !matches!(self.stereo, Stereo::Mono) {
                 return Err(
                     "a tracks document builds its stereo image from per-layer pan — remove the \
                      doc-level stereo treatment (set stereo mode 'mono') and pan the layers \

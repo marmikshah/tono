@@ -32,7 +32,7 @@ fn main() -> anyhow::Result<()> {
     music.add_layer(LoopBuffer::from_doc(&section_doc(330.0, sr)), 0.6);
 
     let stinger: SoundDoc = serde_json::from_str(&format!(
-        r#"{{ "name":"boss", "duration":0.5, "sample_rate":{sr}, "engine":2,
+        r#"{{ "name":"boss", "duration":0.5, "sample_rate":{sr}, "engine":5,
              "root": {{ "type":"mul", "inputs": [
                {{ "type":"fm", "freq":110, "ratio":1.5, "index":8 }},
                {{ "type":"env", "a":0.001, "d":0.45, "s":0.0, "r":0.05 }} ] }} }}"#
@@ -60,7 +60,7 @@ fn main() -> anyhow::Result<()> {
 fn section_doc(root: f32, sr: u32) -> SoundDoc {
     let bar_secs = 4.0 * 60.0 / BPM;
     serde_json::from_str(&format!(
-        r#"{{ "name":"sec", "duration":{bar_secs}, "sample_rate":{sr}, "engine":2,
+        r#"{{ "name":"sec", "duration":{bar_secs}, "sample_rate":{sr}, "engine":5,
              "root": {{ "type":"seq", "bpm":{BPM}, "steps_per_beat":2, "wave":"square",
                 "env": {{ "a":0.002, "d":0.14, "s":0.0, "r":0.05 }},
                 "notes": [

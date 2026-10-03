@@ -6,7 +6,7 @@ use std::f32::consts::TAU;
 
 use super::source::{Src, try_src};
 use super::value::Val;
-use crate::dsl::{DriveShape, Node, Value, note_to_hz_e};
+use crate::dsl::{DriveShape, Node, Value, note_to_hz};
 use crate::dsp::{self, node_path};
 use crate::render::{FilterKind, biquad_coeffs, drive_antideriv, drive_curve};
 
@@ -29,7 +29,7 @@ pub(super) enum Proc {
         fc: f32,
         q: f32,
         sr: u32,
-        engine: u32,
+
         b0: f32,
         b1: f32,
         b2: f32,
@@ -133,12 +133,8 @@ pub(super) enum Proc {
 }
 
 impl Proc {
-    /// Process one sample. `pitch` is forwarded so pitch-tracking processors (the
-    /// ring-mod carrier, a `duck` sidechain source) bend with the note; every
-    /// other processor ignores it. Bit-identical to offline at `pitch == 1.0`.
-    /// `engine` is the document's kernel revision, dispatched into the
-    /// transcendentals (ADR 0001).
-    pub(super) fn step(&mut self, x0: f32, t: usize, pitch: f32, engine: u32) -> f32 {
+    /// Process one sample with persistent state and the shared deterministic math.
+    pub(super) fn step(&mut self, x0: f32, t: usize, pitch: f32) -> f32 {
         match self {
             Proc::Gain(a) => x0 * *a,
             Proc::Biquad {
@@ -221,17 +217,17 @@ impl Proc {
             } => {
                 let amt = amount.eval(t).max(0.0);
                 if !*adaa {
-                    drive_curve(amt * x0, *shape, engine)
+                    drive_curve(amt * x0, *shape)
                 } else {
                     const EPS: f32 = 1e-5;
                     const R: f32 = 0.9995;
                     let xn = amt * x0;
-                    let f = drive_antideriv(xn, *shape, engine);
+                    let f = drive_antideriv(xn, *shape);
                     let d = xn - *x_prev;
                     let y = if d.abs() > EPS {
                         (f - *f_prev) / d
                     } else {
-                        drive_curve(0.5 * (xn + *x_prev), *shape, engine)
+                        drive_curve(0.5 * (xn + *x_prev), *shape)
                     };
                     *x_prev = xn;
                     *f_prev = f;
@@ -242,7 +238,7 @@ impl Proc {
                 }
             }
             Proc::RingMod { phase, freq, srf } => {
-                let out = x0 * dsp::sin(TAU * *phase, engine);
+                let out = x0 * dsp::sin(TAU * *phase);
                 *phase += freq.eval(t).max(0.0) * pitch / *srf;
                 *phase -= phase.floor();
                 out
@@ -250,7 +246,7 @@ impl Proc {
             Proc::Tremolo { rate, depth, srf } => {
                 // Closed form of the absolute sample index — block-size
                 // independent by construction, the offline path's expression.
-                x0 * (1.0 - *depth * (0.5 + 0.5 * dsp::sin(TAU * *rate * t as f32 / *srf, engine)))
+                x0 * (1.0 - *depth * (0.5 + 0.5 * dsp::sin(TAU * *rate * t as f32 / *srf)))
             }
             Proc::Chorus {
                 buf,
@@ -263,7 +259,7 @@ impl Proc {
                 srf,
             } => {
                 buf[*w] = x0;
-                let lfo = dsp::sin(TAU * *rate * t as f32 / *srf, engine);
+                let lfo = dsp::sin(TAU * *rate * t as f32 / *srf);
                 let delay = *base + *swing * lfo;
                 let read = (*w as f32 - delay).rem_euclid(*max_delay as f32);
                 let i0 = read.floor() as usize % *max_delay;
@@ -285,7 +281,7 @@ impl Proc {
                 rate,
                 srf,
             } => {
-                let lfo = dsp::sin(TAU * *rate * t as f32 / *srf, engine);
+                let lfo = dsp::sin(TAU * *rate * t as f32 / *srf);
                 let delay = *base + *swing * lfo;
                 let read = (*w as f32 - delay).rem_euclid(*max_delay as f32);
                 let i0 = read.floor() as usize % *max_delay;
@@ -306,7 +302,7 @@ impl Proc {
                 mix,
                 srf,
             } => {
-                let lfo = 0.5 + 0.5 * dsp::sin(TAU * *rate * t as f32 / *srf, engine);
+                let lfo = 0.5 + 0.5 * dsp::sin(TAU * *rate * t as f32 / *srf);
                 let g = 0.15 + 0.7 * *depth * lfo;
                 let mut s = x0 + *last_wet * *fb;
                 for k in 0..4 {
@@ -329,13 +325,13 @@ impl Proc {
                 let rect = x0.abs();
                 let coeff = if rect > *env { *at } else { *rt };
                 *env = rect + coeff * (*env - rect);
-                let env_db = 20.0 * dsp::log10(env.max(1e-9), engine);
+                let env_db = 20.0 * dsp::log10(env.max(1e-9));
                 let gain_db = if env_db > *threshold {
                     -(env_db - *threshold) * (1.0 - 1.0 / *ratio)
                 } else {
                     0.0
                 };
-                let g = dsp::powf(10.0, gain_db / 20.0, engine);
+                let g = dsp::powf(10.0, gain_db / 20.0);
                 x0 * g * *makeup
             }
             Proc::Duck {
@@ -345,7 +341,7 @@ impl Proc {
                 rt,
                 amount,
             } => {
-                let trig = trigger.step(t, pitch, engine);
+                let trig = trigger.step(t, pitch);
                 let rect = trig.abs().min(1.0);
                 let coeff = if rect > *env { *at } else { *rt };
                 *env = rect + coeff * (*env - rect);
@@ -364,7 +360,7 @@ impl Proc {
             fc,
             q,
             sr,
-            engine,
+
             b0,
             b1,
             b2,
@@ -373,7 +369,7 @@ impl Proc {
             ..
         } = self
         {
-            let (nb0, nb1, nb2, na1, na2) = biquad_coeffs(*kind, *fc * scale, *q, *sr, *engine);
+            let (nb0, nb1, nb2, na1, na2) = biquad_coeffs(*kind, *fc * scale, *q, *sr);
             *b0 = nb0;
             *b1 = nb1;
             *b2 = nb2;
@@ -387,14 +383,14 @@ impl Proc {
 /// recompute the coefficients for a live cutoff sweep. The coefficients come
 /// from the offline renderer's own [`biquad_coeffs`] table — one table, both
 /// paths, byte-identical by construction.
-fn biquad(kind: FilterKind, fc: f32, q: f32, sr: u32, engine: u32) -> Proc {
-    let (b0, b1, b2, a1, a2) = biquad_coeffs(kind, fc, q, sr, engine);
+fn biquad(kind: FilterKind, fc: f32, q: f32, sr: u32) -> Proc {
+    let (b0, b1, b2, a1, a2) = biquad_coeffs(kind, fc, q, sr);
     Proc::Biquad {
         kind,
         fc,
         q,
         sr,
-        engine,
+
         b0,
         b1,
         b2,
@@ -429,38 +425,30 @@ pub(super) fn reverb_proc(room: f32, mix: f32, sr: u32, spread: usize) -> Proc {
     }
 }
 
-pub(super) fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Proc> {
+pub(super) fn try_proc(node: &Node, sr: u32, n: usize, path: u64) -> Option<Proc> {
     let srf = sr as f32;
     // Filters/EQ only stream with a constant cutoff.
     let cst = |val: &Value| match val {
         Value::Const(c) => Some(*c),
-        Value::Note(s) => Some(note_to_hz_e(s, engine).unwrap_or(440.0)),
+        Value::Note(s) => Some(note_to_hz(s).unwrap_or(440.0)),
         Value::Modulated(_) => None,
     };
-    let v = |val: &Value| Val::build(val, sr, n, engine);
+    let v = |val: &Value| Val::build(val, sr, n);
     Some(match node {
         Node::Gain { amount } => Proc::Gain(cst(amount)?),
-        Node::Lowpass { cutoff, q } => biquad(FilterKind::Low, cst(cutoff)?, *q, sr, engine),
-        Node::Highpass { cutoff, q } => biquad(FilterKind::High, cst(cutoff)?, *q, sr, engine),
-        Node::Bandpass { cutoff, q } => biquad(FilterKind::Band, cst(cutoff)?, *q, sr, engine),
-        Node::Notch { cutoff, q } => biquad(FilterKind::Notch, cst(cutoff)?, *q, sr, engine),
+        Node::Lowpass { cutoff, q } => biquad(FilterKind::Low, cst(cutoff)?, *q, sr),
+        Node::Highpass { cutoff, q } => biquad(FilterKind::High, cst(cutoff)?, *q, sr),
+        Node::Bandpass { cutoff, q } => biquad(FilterKind::Band, cst(cutoff)?, *q, sr),
+        Node::Notch { cutoff, q } => biquad(FilterKind::Notch, cst(cutoff)?, *q, sr),
         Node::Peak { cutoff, q, gain_db } => {
-            biquad(FilterKind::Peak(*gain_db), cst(cutoff)?, *q, sr, engine)
+            biquad(FilterKind::Peak(*gain_db), cst(cutoff)?, *q, sr)
         }
-        Node::Lowshelf { cutoff, gain_db } => biquad(
-            FilterKind::LowShelf(*gain_db),
-            cst(cutoff)?,
-            0.707,
-            sr,
-            engine,
-        ),
-        Node::Highshelf { cutoff, gain_db } => biquad(
-            FilterKind::HighShelf(*gain_db),
-            cst(cutoff)?,
-            0.707,
-            sr,
-            engine,
-        ),
+        Node::Lowshelf { cutoff, gain_db } => {
+            biquad(FilterKind::LowShelf(*gain_db), cst(cutoff)?, 0.707, sr)
+        }
+        Node::Highshelf { cutoff, gain_db } => {
+            biquad(FilterKind::HighShelf(*gain_db), cst(cutoff)?, 0.707, sr)
+        }
         Node::Bitcrush { bits } => {
             // Shared with the offline path: validate() bounds bits to 1..=16,
             // and the clamped shift can't overflow for unvalidated docs.
@@ -486,8 +474,7 @@ pub(super) fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -
             let modes = modes
                 .iter()
                 .map(|m| {
-                    let (a1, a2, b0) =
-                        crate::dsp::modal_coeffs(m.freq, m.decay, m.gain, sr, engine);
+                    let (a1, a2, b0) = crate::dsp::modal_coeffs(m.freq, m.decay, m.gain, sr);
                     ModalMode {
                         a1,
                         a2,
@@ -505,9 +492,9 @@ pub(super) fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -
         Node::Drive { amount, shape, aa } => Proc::Drive {
             amount: v(amount),
             shape: *shape,
-            adaa: engine >= 1 && aa.unwrap_or(true),
+            adaa: aa.unwrap_or(true),
             x_prev: 0.0,
-            f_prev: drive_antideriv(0.0, *shape, engine),
+            f_prev: drive_antideriv(0.0, *shape),
             dc_x: 0.0,
             dc_y: 0.0,
         },
@@ -580,11 +567,11 @@ pub(super) fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -
             makeup,
         } => Proc::Compress {
             env: 0.0,
-            at: dsp::exp(-1.0 / (attack.max(1e-4) * srf), engine),
-            rt: dsp::exp(-1.0 / (release.max(1e-4) * srf), engine),
+            at: dsp::exp(-1.0 / (attack.max(1e-4) * srf)),
+            rt: dsp::exp(-1.0 / (release.max(1e-4) * srf)),
             threshold: *threshold,
             ratio: ratio.max(1.0),
-            makeup: dsp::powf(10.0, makeup / 20.0, engine),
+            makeup: dsp::powf(10.0, makeup / 20.0),
         },
         Node::Duck {
             trigger,
@@ -592,10 +579,10 @@ pub(super) fn try_proc(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -
             attack,
             release,
         } => Proc::Duck {
-            trigger: Box::new(try_src(trigger, sr, n, engine, node_path(path, 0))?),
+            trigger: Box::new(try_src(trigger, sr, n, node_path(path, 0))?),
             env: 0.0,
-            at: dsp::exp(-1.0 / (attack.max(1e-4) * srf), engine),
-            rt: dsp::exp(-1.0 / (release.max(1e-4) * srf), engine),
+            at: dsp::exp(-1.0 / (attack.max(1e-4) * srf)),
+            rt: dsp::exp(-1.0 / (release.max(1e-4) * srf)),
             amount: *amount,
         },
         _ => return None,

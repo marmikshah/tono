@@ -240,7 +240,7 @@ fn dynamics_and_waveshaping() {
             { "type":"compress", "threshold":-18, "ratio":4, "attack":0.005, "release":0.08, "makeup":3 } ] } }"#,
     ));
     assert_byte_identical(&parse(
-        r#"{ "name":"dv", "duration":0.06, "engine":1, "root": { "type":"chain", "stages": [
+        r#"{ "name":"dv", "duration":0.06, "engine":5, "root": { "type":"chain", "stages": [
             { "type":"sine", "freq":200 },
             { "type":"drive", "amount":6, "shape":"tanh" } ] } }"#,
     ));
@@ -277,9 +277,9 @@ fn tremolo_streams_byte_identically() {
     assert_byte_identical(&d);
 }
 
-// ---- tracks root (schema-v2 mixer) ----
+// ---- tracks root (mixer) ----
 
-/// Assert a schema-v2 `tracks` doc streams byte-for-byte identical to the
+/// Assert a `tracks` doc streams byte-for-byte identical to the
 /// offline mixer — the stereo bus, peak-limit gain included — in one block
 /// and split across several block sizes. The gain is the runtime's
 /// StreamSource probe mechanism: one throwaway pass of the same graph
@@ -323,7 +323,7 @@ fn tracks_mix_streams_byte_identically() {
     // decorrelated pair) into a compressor. Hot faders, so the joint peak
     // limit bites and the probe gain is exercised too.
     assert_tracks_byte_identical(&parse(
-        r#"{ "name":"mix", "duration":1.0, "seed":11, "version":2, "engine":4,
+        r#"{ "name":"mix", "duration":1.0, "seed":11, "version":2, "engine":5,
             "root": { "type":"tracks",
               "buses": [ { "id":"verb", "gain":0.8, "effects": [
                   { "type":"reverb", "room":0.6, "mix":0.5 },
@@ -376,7 +376,7 @@ fn tracks_at_offsets_stream_byte_identically() {
     // render-then-shift exactly, at every block size.
     for at in [(0.0, 0.013, 0.11), (0.21, 0.0, 0.047), (0.5, 0.5, 0.0)] {
         let doc = parse(&format!(
-            r#"{{ "name":"offs", "duration":0.6, "seed":5, "version":2, "engine":3,
+            r#"{{ "name":"offs", "duration":0.6, "seed":5, "version":2, "engine":5,
                 "root": {{ "type":"tracks", "tracks": [
                     {{ "id":"hiss", "node": {{ "type":"noise", "color":"pink" }},
                       "gain":0.4, "at":{} }},
@@ -397,11 +397,11 @@ fn tracks_at_offsets_stream_byte_identically() {
 
 #[test]
 fn tracks_muted_and_muted_source_stream_byte_identically() {
-    // v2 muted tracks contribute exact zeros and draw nothing; a muted
+    // muted tracks contribute exact zeros and draw nothing; a muted
     // sidechain source leaves the follower's envelope fully open; a missing
     // source (unvalidated doc) means no ducking — all exactly as the offline.
     assert_tracks_byte_identical(&parse(
-        r#"{ "name":"mut", "duration":0.5, "seed":7, "version":2, "engine":3,
+        r#"{ "name":"mut", "duration":0.5, "seed":7, "version":2, "engine":5,
             "root": { "type":"tracks", "tracks": [
                 { "id":"kick", "node": { "type":"seq", "bpm":160, "steps_per_beat":4, "wave":"kit",
                     "env": { "a":0.001, "d":0.08, "s":0.0, "r":0.04 },
@@ -424,7 +424,7 @@ fn tracks_golden_shapes_stream_byte_identically() {
     // The three mixer shapes the golden suite pins offline: a sidechain, the
     // automation curves, and bus routing — the stream must match them too.
     assert_tracks_byte_identical(&parse(
-        r#"{ "name": "tracks-sidechain", "duration": 1.0, "seed": 6, "version": 2, "engine": 4,
+        r#"{ "name": "tracks-sidechain", "duration": 1.0, "seed": 6, "version": 2, "engine": 5,
             "root": { "type": "tracks", "tracks": [
                 { "id": "kick", "node": { "type": "seq", "bpm": 240, "wave": "kit", "kit": "808",
                     "env": { "a": 0.001, "d": 0.1, "s": 0.5, "r": 0.1 },
@@ -440,7 +440,7 @@ fn tracks_golden_shapes_stream_byte_identically() {
             ] } }"#,
     ));
     assert_tracks_byte_identical(&parse(
-        r#"{ "name": "tracks-automation-curves", "duration": 1.0, "seed": 9, "version": 2, "engine": 4,
+        r#"{ "name": "tracks-automation-curves", "duration": 1.0, "seed": 9, "version": 2, "engine": 5,
             "root": { "type": "tracks", "tracks": [
                 { "id": "pad", "node": { "type": "sawtooth", "freq": 220 }, "gain": 0.5,
                   "automation": [
@@ -452,7 +452,7 @@ fn tracks_golden_shapes_stream_byte_identically() {
             ] } }"#,
     ));
     assert_tracks_byte_identical(&parse(
-        r#"{ "name": "tracks-bus-mix", "duration": 1.0, "seed": 6, "version": 2, "engine": 4,
+        r#"{ "name": "tracks-bus-mix", "duration": 1.0, "seed": 6, "version": 2, "engine": 5,
             "root": { "type": "tracks",
                 "buses": [ { "id": "verb", "gain": 0.8, "effects": [
                     { "type": "reverb", "room": 0.5, "mix": 0.6 } ] } ],
@@ -473,7 +473,7 @@ fn tracks_master_chain_with_duck_and_delay_streams_byte_identically() {
     // bus/master stream path — a duck's trigger (structurally seeded there)
     // must fire identically on both channels and in the stream.
     assert_tracks_byte_identical(&parse(
-        r#"{ "name":"md", "duration":0.4, "seed":2, "version":2, "engine":3,
+        r#"{ "name":"md", "duration":0.4, "seed":2, "version":2, "engine":5,
             "root": { "type":"tracks",
               "tracks": [
                 { "id":"a", "node": { "type":"sawtooth", "freq":110 }, "gain":0.5, "pan":-0.5 },
@@ -499,7 +499,7 @@ fn tracks_mono_fill_is_the_mid() {
     // The mono view of a streamed mixer is its mid — what render_product
     // hands mono consumers.
     let doc = parse(
-        r#"{ "name":"mid", "duration":0.2, "seed":4, "version":2, "engine":3,
+        r#"{ "name":"mid", "duration":0.2, "seed":4, "version":2, "engine":5,
             "root": { "type":"tracks", "tracks": [
                 { "id":"l", "node": { "type":"sine", "freq":220 }, "pan":-0.7, "gain":0.5 },
                 { "id":"r", "node": { "type":"sine", "freq":330 }, "pan":0.7, "gain":0.5 } ] } }"#,
@@ -534,7 +534,7 @@ fn tracks_blockers_name_the_failing_part_with_context() {
     let cases: &[(&str, StreamBlocker)] = &[
         // An offline-only effect on one track names the track.
         (
-            r#"{ "name":"a", "duration":0.1, "version":2, "engine":2, "root": { "type":"tracks", "tracks": [
+            r#"{ "name":"a", "duration":0.1, "version":2, "engine":5, "root": { "type":"tracks", "tracks": [
                 { "id":"pad", "node": { "type":"chain", "stages": [
                     { "type":"sine", "freq":220 }, { "type":"convolve", "decay":0.8, "mix":0.5 } ] } },
                 { "id":"bass", "node": { "type":"sawtooth", "freq":55 } } ] } }"#,
@@ -545,7 +545,7 @@ fn tracks_blockers_name_the_failing_part_with_context() {
         ),
         // A sampler track names the track.
         (
-            r#"{ "name":"b", "duration":0.1, "version":2, "engine":2, "root": { "type":"tracks", "tracks": [
+            r#"{ "name":"b", "duration":0.1, "version":2, "engine":5, "root": { "type":"tracks", "tracks": [
                 { "id":"keys", "node": { "type":"seq", "wave":"sampler", "sf2":"x.sf2", "bpm":100,
                     "env": { "a":0.001, "s":1.0, "r":0.1 },
                     "notes": [ { "step":0, "len":4, "pitch":"C4" } ] } } ] } }"#,
@@ -553,7 +553,7 @@ fn tracks_blockers_name_the_failing_part_with_context() {
         ),
         // A modulated filter on one track names the track.
         (
-            r#"{ "name":"c", "duration":0.1, "version":2, "engine":2, "root": { "type":"tracks", "tracks": [
+            r#"{ "name":"c", "duration":0.1, "version":2, "engine":5, "root": { "type":"tracks", "tracks": [
                 { "id":"lead", "node": { "type":"chain", "stages": [
                     { "type":"sawtooth", "freq":110 },
                     { "type":"lowpass", "cutoff": { "lfo": { "rate":2, "depth":400, "center":800 } } } ] } } ] } }"#,
@@ -561,7 +561,7 @@ fn tracks_blockers_name_the_failing_part_with_context() {
         ),
         // A master-chain blocker names the master chain.
         (
-            r#"{ "name":"d", "duration":0.1, "version":2, "engine":2, "root": { "type":"tracks",
+            r#"{ "name":"d", "duration":0.1, "version":2, "engine":5, "root": { "type":"tracks",
                 "tracks": [ { "id":"a", "node": { "type":"sine", "freq":220 } } ],
                 "master": [ { "type":"granular", "grain_ms":60, "density":30 } ] } }"#,
             part(
@@ -571,7 +571,7 @@ fn tracks_blockers_name_the_failing_part_with_context() {
         ),
         // A bus-insert blocker names the bus.
         (
-            r#"{ "name":"e", "duration":0.1, "version":2, "engine":2, "root": { "type":"tracks",
+            r#"{ "name":"e", "duration":0.1, "version":2, "engine":5, "root": { "type":"tracks",
                 "buses": [ { "id":"verb", "effects": [ { "type":"convolve" } ] } ],
                 "tracks": [ { "id":"a", "node": { "type":"sine", "freq":220 }, "bus":"verb" } ] } }"#,
             part(
@@ -579,15 +579,9 @@ fn tracks_blockers_name_the_failing_part_with_context() {
                 StreamBlocker::OfflineEffect { name: "convolve" },
             ),
         ),
-        // A v1 tracks root keeps the Player fallback (shared-stream threading).
-        (
-            r#"{ "name":"f", "duration":0.1, "root": { "type":"tracks", "tracks": [
-                { "node": { "type":"sine", "freq":440 } } ] } }"#,
-            StreamBlocker::TracksRoot,
-        ),
         // An id-less track is named by its backfilled layer id.
         (
-            r#"{ "name":"g", "duration":0.1, "version":2, "engine":2, "root": { "type":"tracks", "tracks": [
+            r#"{ "name":"g", "duration":0.1, "version":2, "engine":5, "root": { "type":"tracks", "tracks": [
                 { "node": { "type":"sine", "freq":440 } },
                 { "node": { "type":"chain", "stages": [
                     { "type":"sine", "freq":220 }, { "type":"granular" } ] } } ] } }"#,
@@ -614,22 +608,22 @@ fn tracks_blockers_name_the_failing_part_with_context() {
 #[test]
 fn tracks_doc_level_blockers_still_fire() {
     // normalize / loop / stereo treatments stay whole-buffer blockers even
-    // though the v2 mixer itself streams.
+    // though the mixer itself streams.
     let cases: &[(&str, StreamBlocker)] = &[
         (
-            r#"{ "name":"n", "duration":0.1, "version":2, "engine":2,
+            r#"{ "name":"n", "duration":0.1, "version":2, "engine":5,
                 "normalize": { "target_lufs": -14 },
                 "root": { "type":"tracks", "tracks": [ { "node": { "type":"sine", "freq":440 } } ] } }"#,
             StreamBlocker::Normalize,
         ),
         (
-            r#"{ "name":"l", "duration":0.5, "version":2, "engine":2,
+            r#"{ "name":"l", "duration":0.5, "version":2, "engine":5,
                 "playback": { "mode":"loop", "start_secs":0.1, "crossfade_secs":0.05 },
                 "root": { "type":"tracks", "tracks": [ { "node": { "type":"sine", "freq":220 } } ] } }"#,
             StreamBlocker::LoopPlayback,
         ),
         (
-            r#"{ "name":"s", "duration":0.1, "version":2, "engine":2,
+            r#"{ "name":"s", "duration":0.1, "version":2, "engine":5,
                 "stereo": { "mode":"haas", "ms":12 },
                 "root": { "type":"tracks", "tracks": [ { "node": { "type":"sine", "freq":220 } } ] } }"#,
             StreamBlocker::StereoTreatment,
@@ -719,7 +713,7 @@ fn fuzz_streamed_matches_offline_byte_for_byte() {
         let root = gen_src(&mut rng, 3);
         let dur = rf(&mut rng, 0.02, 0.08);
         let doc_json =
-            json!({ "name":"fuzz", "duration": dur, "seed": seed, "engine": 1, "root": root });
+            json!({ "name":"fuzz", "duration": dur, "seed": seed, "engine": 5, "root": root });
         let Ok(doc) = serde_json::from_value::<SoundDoc>(doc_json) else {
             continue;
         };
@@ -736,16 +730,16 @@ fn fuzz_streamed_matches_offline_byte_for_byte() {
 }
 
 #[test]
-fn engine2_rng_leaves_stream_byte_identically() {
+fn rng_leaves_stream_byte_identically() {
     for doc in [
-        r#"{ "name":"nz", "duration":0.05, "seed":7, "engine":2, "root": { "type":"noise", "color":"pink" } }"#,
-        r#"{ "name":"dz", "duration":0.08, "seed":9, "engine":2, "root": { "type":"dust", "density":800, "decay":0.02 } }"#,
-        r#"{ "name":"wn", "duration":0.06, "seed":3, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "name":"nz", "duration":0.05, "seed":7, "engine":5, "root": { "type":"noise", "color":"pink" } }"#,
+        r#"{ "name":"dz", "duration":0.08, "seed":9, "engine":5, "root": { "type":"dust", "density":800, "decay":0.02 } }"#,
+        r#"{ "name":"wn", "duration":0.06, "seed":3, "engine":5, "root": { "type":"chain", "stages": [
             { "type":"noise", "color":"white" }, { "type":"lowpass", "cutoff":1200, "q":0.7 } ] } }"#,
         // Two noise siblings under a mix — proves order-independence (the whole
         // point of structural seeding): offline draws them contiguously, the
         // streamer per-sample-interleaved, yet the bytes match.
-        r#"{ "name":"mn", "duration":0.05, "seed":5, "engine":2, "root": { "type":"mix", "inputs": [
+        r#"{ "name":"mn", "duration":0.05, "seed":5, "engine":5, "root": { "type":"mix", "inputs": [
             { "type":"noise", "color":"brown" }, { "type":"noise", "color":"white" } ] } }"#,
     ] {
         assert_byte_identical(&parse(doc));
@@ -753,10 +747,10 @@ fn engine2_rng_leaves_stream_byte_identically() {
 }
 
 #[test]
-fn engine2_seq_streams_byte_identically() {
+fn seq_voices_stream_byte_identically() {
     // A melodic square seq (no RNG voice).
     assert_byte_identical(&parse(
-        r#"{ "name":"sq", "duration":0.4, "seed":11, "engine":2, "root": { "type":"seq",
+        r#"{ "name":"sq", "duration":0.4, "seed":11, "engine":5, "root": { "type":"seq",
             "bpm":120, "steps_per_beat":4, "wave":"square",
             "env": { "a":0.005, "d":0.05, "s":0.4, "r":0.08 },
             "notes": [ { "step":0, "len":2, "pitch":"C4" }, { "step":2, "len":2, "pitch":"E4" },
@@ -765,7 +759,7 @@ fn engine2_seq_streams_byte_identically() {
     // A kit (noise-based drums) seq into reverb — the RNG-heavy path, streamed
     // through a stateful effect.
     assert_byte_identical(&parse(
-        r#"{ "name":"dr", "duration":0.5, "seed":3, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "name":"dr", "duration":0.5, "seed":3, "engine":5, "root": { "type":"chain", "stages": [
             { "type":"seq", "bpm":140, "steps_per_beat":4, "wave":"kit",
               "env": { "a":0.001, "d":0.1, "s":0.0, "r":0.05 },
               "notes": [ { "step":0, "len":1, "pitch":"midi:36" }, { "step":2, "len":1, "pitch":"midi:38" },
@@ -775,11 +769,11 @@ fn engine2_seq_streams_byte_identically() {
 }
 
 #[test]
-fn engine3_piano_streams_byte_identically() {
+fn piano_streams_byte_identically() {
     // The engine-3 inharmonic piano (RNG only for the hammer thump) must
     // pre-render and stream bit-for-bit, across the register.
     assert_byte_identical(&parse(
-        r#"{ "name":"pno", "duration":1.2, "seed":8, "engine":3, "root": { "type":"seq",
+        r#"{ "name":"pno", "duration":1.2, "seed":8, "engine":5, "root": { "type":"seq",
             "bpm":90, "steps_per_beat":4, "wave":"piano",
             "env": { "a":0.002, "s":1.0, "r":0.2 },
             "notes": [ { "step":0, "len":4, "pitch":"A1" }, { "step":2, "len":4, "pitch":"C4" },
@@ -788,11 +782,11 @@ fn engine3_piano_streams_byte_identically() {
 }
 
 #[test]
-fn engine3_piano_variant_streams_byte_identically() {
+fn piano_variant_streams_byte_identically() {
     // A honky-tonk variant (wide detune, inharmonic, hard hammer) must still
     // pre-render and stream bit-for-bit.
     assert_byte_identical(&parse(
-        r#"{ "name":"honk", "duration":1.0, "seed":4, "engine":3, "root": { "type":"seq",
+        r#"{ "name":"honk", "duration":1.0, "seed":4, "engine":5, "root": { "type":"seq",
             "bpm":90, "steps_per_beat":4, "wave":"piano",
             "piano_detune":12.0, "piano_inharm":1.7, "piano_hammer":1.5, "piano_strike":0.11, "piano_decay":0.65,
             "env": { "a":0.002, "s":1.0, "r":0.2 },
@@ -806,7 +800,7 @@ fn kit_styles_stream_byte_identically() {
     // pre-rendered stream matches the offline bounce bit-for-bit.
     for style in ["acoustic", "electronic", "808"] {
         assert_byte_identical(&parse(&format!(
-            r#"{{ "name":"k", "duration":0.8, "seed":6, "engine":3, "root": {{ "type":"seq",
+            r#"{{ "name":"k", "duration":0.8, "seed":6, "engine":5, "root": {{ "type":"seq",
                 "bpm":120, "steps_per_beat":4, "wave":"kit", "kit":"{style}", "env": {{ "a":0.001, "s":1.0, "r":0.05 }},
                 "notes": [ {{"step":0,"len":1,"pitch":"midi:36"}}, {{"step":2,"len":1,"pitch":"midi:38"}},
                            {{"step":3,"len":1,"pitch":"midi:42"}}, {{"step":4,"len":1,"pitch":"midi:49"}},
@@ -820,7 +814,7 @@ fn bass_variant_streams_byte_identically() {
     // The bass voice draws no RNG, so every variant pre-renders and streams
     // bit-for-bit.
     assert_byte_identical(&parse(
-        r#"{ "name":"b", "duration":1.0, "seed":2, "engine":3, "root": { "type":"seq",
+        r#"{ "name":"b", "duration":1.0, "seed":2, "engine":5, "root": { "type":"seq",
             "bpm":100, "steps_per_beat":4, "wave":"bass",
             "bass_cutoff":600.0, "bass_env":1500.0, "bass_drive":0.35, "bass_sub_ratio":0.5, "bass_body_decay":6.0,
             "env": { "a":0.003, "d":0.06, "s":0.8, "r":0.08 },
@@ -834,7 +828,7 @@ fn guitar_variant_streams_byte_identically() {
     // none, so the draw order is unchanged and the nylon variant streams
     // bit-for-bit.
     assert_byte_identical(&parse(
-        r#"{ "name":"g", "duration":1.0, "seed":5, "engine":3, "root": { "type":"seq",
+        r#"{ "name":"g", "duration":1.0, "seed":5, "engine":5, "root": { "type":"seq",
             "bpm":100, "steps_per_beat":4, "wave":"pluck", "pluck_decay":0.9,
             "pluck_body":0.55, "pluck_pick":0.05, "pluck_tone":-0.35,
             "env": { "a":0.001, "s":1.0, "r":0.2 },
@@ -848,7 +842,7 @@ fn new_melodic_waves_stream_byte_identically() {
     // sample, in order) pre-renders and streams bit-for-bit.
     for wave in ["brass", "flute", "mallet", "bell"] {
         assert_byte_identical(&parse(&format!(
-            r#"{{ "name":"w", "duration":0.2, "seed":5, "engine":2, "root": {{ "type":"seq",
+            r#"{{ "name":"w", "duration":0.2, "seed":5, "engine":5, "root": {{ "type":"seq",
                 "bpm":120, "steps_per_beat":4, "wave":"{wave}",
                 "env": {{ "a":0.005, "d":0.05, "s":0.6, "r":0.05 }},
                 "notes": [ {{ "step":0, "len":2, "pitch":"C4" }},
@@ -860,7 +854,7 @@ fn new_melodic_waves_stream_byte_identically() {
 // ---- engine 5: the deterministic transcendentals (ADR 0001) ----
 
 #[test]
-fn engine5_seq_streams_byte_identically() {
+fn seq_streams_byte_identically() {
     // The libm-heavy voices — the FM strike, the inharmonic piano's partials
     // (powf/exp/sin per partial), the 808 kit — must stream through the det
     // kernels byte-identically to the offline render at every block size.
@@ -892,7 +886,7 @@ fn engine5_seq_streams_byte_identically() {
 }
 
 #[test]
-fn engine5_effects_stream_byte_identically() {
+fn effects_stream_byte_identically() {
     // Waveshaping (ADAA tanh), dynamics (log10/powf per sample), the
     // modulated-delay LFOs, and a biquad — the libm-heavy processors, plus a
     // slide-exp modulator (det powf) on the source frequency.
@@ -918,7 +912,7 @@ fn engine5_effects_stream_byte_identically() {
 }
 
 #[test]
-fn engine5_tracks_stream_byte_identically() {
+fn tracks_stream_byte_identically() {
     // The whole console at engine 5: exp automation lanes (det powf on the
     // lane cursor), a sidechain (det exp on the follower), a bus with a
     // reverb, and a master compressor — plus the equal-power pan law.
@@ -947,7 +941,7 @@ fn engine5_tracks_stream_byte_identically() {
 }
 
 #[test]
-fn engine5_render_is_bit_deterministic_in_process() {
+fn render_is_bit_deterministic_in_process() {
     // Twice in one process, identical bits. The cross-platform half of the
     // promise holds by construction: every transcendental in this render goes
     // through crate::det (the f32 wrappers and the f64 gated-loudness path),
@@ -968,40 +962,6 @@ fn engine5_render_is_bit_deterministic_in_process() {
     let a = crate::render::render_product(&doc);
     let b = crate::render::render_product(&doc);
     assert_eq!(bits(&a.mono), bits(&b.mono));
-}
-
-#[test]
-fn engine1_noise_falls_back_but_engine2_streams() {
-    // engine < 2 keeps the shared stream ⇒ not streamable (buffer fallback).
-    assert!(
-        StreamGraph::try_from_doc(&parse(
-            r#"{ "name":"n1", "duration":0.05, "engine":1, "root": { "type":"noise", "color":"white" } }"#
-        ))
-        .is_none()
-    );
-    assert!(
-        StreamGraph::try_from_doc(&parse(
-            r#"{ "name":"n2", "duration":0.05, "engine":2, "root": { "type":"noise", "color":"white" } }"#
-        ))
-        .is_some()
-    );
-}
-
-#[test]
-fn non_streamable_graphs_are_rejected() {
-    assert!(
-        StreamGraph::try_from_doc(&parse(
-            r#"{ "name":"n", "duration":0.05, "root": { "type":"noise", "color":"white" } }"#
-        ))
-        .is_none()
-    );
-    assert!(
-        StreamGraph::try_from_doc(&parse(
-            r#"{ "name":"t", "duration":0.05, "root": { "type":"tracks", "tracks": [
-                { "node": { "type":"sine", "freq":440 } } ] } }"#
-        ))
-        .is_none()
-    );
 }
 
 #[test]
@@ -1060,17 +1020,7 @@ fn blockers_names_every_reason_with_a_fix() {
             StreamBlocker::StereoTreatment,
         ),
         (
-            r#"{ "name":"t", "duration":0.1, "bpm":120, "root": { "type":"tracks", "tracks": [
-                { "node": { "type":"sine", "freq":440 } } ] } }"#,
-            StreamBlocker::TracksRoot,
-        ),
-        (
-            r#"{ "name":"r", "duration":0.1, "engine":1,
-                "root": { "type":"noise", "color":"white" } }"#,
-            StreamBlocker::LegacyRng { engine: 1 },
-        ),
-        (
-            r#"{ "name":"sf", "duration":0.1, "engine":2, "root": { "type":"seq",
+            r#"{ "name":"sf", "duration":0.1, "engine":5, "root": { "type":"seq",
                 "wave":"sampler", "sf2":"x.sf2", "bpm":100, "steps":4,
                 "env": { "a":0.001, "s":1.0, "r":0.1 },
                 "notes": [ { "step":0, "len":4, "pitch":"C4" } ] } }"#,
@@ -1111,15 +1061,15 @@ fn blockers_agrees_with_try_from_doc() {
     // report no blockers, blocked docs report at least one.
     let streamable = [
         r#"{ "name":"a", "duration":0.1, "root": { "type":"sine", "freq":440 } }"#,
-        r#"{ "name":"b", "duration":0.1, "engine":2, "seed":3, "root": { "type":"chain", "stages": [
+        r#"{ "name":"b", "duration":0.1, "engine":5, "seed":3, "root": { "type":"chain", "stages": [
             { "type":"noise", "color":"pink" },
             { "type":"lowpass", "cutoff":1200, "q":0.8 },
             { "type":"reverb", "room":0.4, "mix":0.3 } ] } }"#,
         r#"{ "name":"c", "duration":0.1, "root": { "type":"mul", "inputs": [
             { "type":"fm", "freq":440, "ratio":2.0, "index": { "slide": { "from":4, "to":1, "secs":0.08 } } },
             { "type":"env", "a":0.001, "d":0.09, "s":0.0, "r":0.03 } ] } }"#,
-        // A schema-v2 mixer with automation, a sidechain, and a bus streams.
-        r#"{ "name":"tv", "duration":0.2, "version":2, "engine":2, "seed":3,
+        // A mixer with automation, a sidechain, and a bus streams.
+        r#"{ "name":"tv", "duration":0.2, "version":2, "engine":5, "seed":3,
             "root": { "type":"tracks",
               "buses": [ { "id":"verb", "gain":0.8, "effects": [ { "type":"reverb", "room":0.4, "mix":0.3 } ] } ],
               "tracks": [
@@ -1142,18 +1092,14 @@ fn blockers_agrees_with_try_from_doc() {
         assert!(StreamGraph::try_from_doc(&doc).is_some(), "{json}");
     }
     let blocked = [
-        r#"{ "name":"d", "duration":0.1, "bpm":120, "root": { "type":"tracks", "tracks": [
-            { "node": { "type":"sine", "freq":440 } } ] } }"#,
-        r#"{ "name":"e", "duration":0.1, "engine":1,
-            "root": { "type":"dust", "density":40, "decay":0.02 } }"#,
         r#"{ "name":"f", "duration":0.1, "root": { "type":"chain", "stages": [
             { "type":"impact" },
             { "type":"convolve" } ] } }"#,
         r#"{ "name":"g", "duration":0.1, "root": { "type":"chain", "stages": [
             { "type":"sine", "freq":220 },
             { "type":"granular" } ] } }"#,
-        // A v2 mixer with an unstreamable part reports the part and rejects.
-        r#"{ "name":"h", "duration":0.1, "version":2, "engine":2, "root": { "type":"tracks", "tracks": [
+        // A mixer with an unstreamable part reports the part and rejects.
+        r#"{ "name":"h", "duration":0.1, "version":2, "engine":5, "root": { "type":"tracks", "tracks": [
             { "id":"pad", "node": { "type":"chain", "stages": [
                 { "type":"sine", "freq":220 }, { "type":"convolve" } ] } } ] } }"#,
     ];
@@ -1168,7 +1114,7 @@ fn blockers_agrees_with_try_from_doc() {
 fn multiple_blockers_all_report_once() {
     // A doc tripping several rules reports each once, doc-level first.
     let doc = parse(
-        r#"{ "name":"x", "duration":0.1, "engine":1,
+        r#"{ "name":"x", "duration":0.1, "engine":5,
             "normalize": { "target_lufs": -14 },
             "stereo": { "mode":"wide" },
             "root": { "type":"mix", "inputs": [
@@ -1178,76 +1124,6 @@ fn multiple_blockers_all_report_once() {
     let got = StreamGraph::blockers(&doc);
     assert_eq!(
         got,
-        vec![
-            StreamBlocker::Normalize,
-            StreamBlocker::StereoTreatment,
-            StreamBlocker::LegacyRng { engine: 1 },
-        ]
+        vec![StreamBlocker::Normalize, StreamBlocker::StereoTreatment,]
     );
-}
-
-#[test]
-fn engine5_tracks_engine4_output_within_float_noise() {
-    // Engine 5 is a DETERMINISM revision, not a quality revision: the det
-    // kernels are ~1 ulp accurate against libm, so the same document at
-    // engine 4 (platform libm) and engine 5 (det kernels) must render within
-    // float rounding of each other — a wrapper miswired to the wrong kernel
-    // (or a botched FFT) would blow far past these bounds.
-    //
-    // Two profiles: the fm-fx chain carries an ADAA drive, whose divided
-    // difference (F(x1) − F(x0)) / (x1 − x0) legitimately amplifies ulp-level
-    // input noise by up to ~1/eps on samples near the epsilon fallback, so
-    // its MAX bound is loose and the tight check is on the rms; the convolve
-    // chain has no such amplifier and stays tight end to end.
-    for (name, root, max_bound, rms_bound) in [
-        (
-            "fm-fx",
-            r#"{ "type":"chain", "stages": [
-                { "type":"mul", "inputs": [
-                    { "type":"fm", "freq":"A4", "ratio":3.5,
-                      "index": { "slide": { "from":5, "to":0.5, "secs":0.3 } } },
-                    { "type":"env", "a":0.003, "d":0.08, "s":0.3, "r":0.06 } ] },
-                { "type":"drive", "amount":3, "shape":"tanh" },
-                { "type":"chorus", "rate":1.5, "depth":0.5, "mix":0.35 },
-                { "type":"compress", "threshold":-15, "ratio":3,
-                  "attack":0.004, "release":0.06, "makeup":2 } ] }"#,
-            1e-2,
-            1e-4,
-        ),
-        (
-            "convolve",
-            r#"{ "type":"chain", "stages": [
-                { "type":"mul", "inputs": [
-                    { "type":"noise", "color":"white" },
-                    { "type":"env", "a":0.001, "d":0.03, "s":0.0, "r":0.01 } ] },
-                { "type":"convolve", "decay":0.2, "predelay":0.008, "damp":0.5, "mix":0.5 } ] }"#,
-            1e-4,
-            1e-6,
-        ),
-    ] {
-        let render = |engine: u32| {
-            let d = parse(&format!(
-                r#"{{ "name":"cmp", "duration":0.4, "seed":7, "version":2, "engine":{engine},
-                    "root": {root} }}"#
-            ));
-            crate::render::render(&d)
-        };
-        let (a, b) = (render(4), render(5));
-        let max = a
-            .iter()
-            .zip(&b)
-            .map(|(x, y)| (x - y).abs())
-            .fold(0.0f32, f32::max);
-        let rms = (a
-            .iter()
-            .zip(&b)
-            .map(|(x, y)| (x - y) * (x - y))
-            .sum::<f32>()
-            / a.len() as f32)
-            .sqrt();
-        assert!(
-            max < max_bound && rms < rms_bound,
-            "{name}: engine 4 vs 5 diverged (max {max:.2e}, rms {rms:.2e}) — a wrapper is miswired"
-        );
-    }
 }

@@ -75,7 +75,7 @@ fn main() -> anyhow::Result<()> {
         ],
     );
     let stinger: SoundDoc = serde_json::from_str(
-        r#"{ "name":"hit", "duration":0.4, "engine":2, "root": { "type":"mul", "inputs": [
+        r#"{ "name":"hit", "duration":0.4, "engine":5, "root": { "type":"mul", "inputs": [
             { "type":"fm", "freq":660, "ratio":2.5, "index":6 },
             { "type":"env", "a":0.001, "d":0.35, "s":0.0, "r":0.05 } ] } }"#,
     )?;
