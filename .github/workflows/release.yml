@@ -7,41 +7,24 @@ on:
 permissions:
   contents: read
 
-# Creates the tagged GitHub Release and its binary artifacts. Publishing the
-# Rust crates to crates.io is publish.yml's job (it owns the registry token);
-# this workflow only ever touches GitHub.
 jobs:
-  # The GitHub Release needs only the workflow token, so it is independent of
-  # the crates.io gating — a tag always gets its release page. Idempotent: a
-  # re-run of an already-released tag skips instead of erroring.
   github-release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v5
-      - name: Create the GitHub Release from the CHANGELOG
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python scripts/release.py check-version "$GITHUB_REF_NAME"
+      - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "release $GITHUB_REF_NAME already exists — skipping"
-            exit 0
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
           fi
-          V="${GITHUB_REF_NAME#v}"
-          # The tag's section: from its "## X.Y.Z" header to the next "## ".
-          awk "/^## $V /{flag=1; next} /^## /{flag=0} flag" CHANGELOG.md > /tmp/notes.md
-          if [ ! -s /tmp/notes.md ]; then
-            echo "no CHANGELOG section for $V — releasing with an empty body"
-          fi
-          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" \
-            --notes-file /tmp/notes.md --verify-tag
-
-  # Prebuilt CLI binaries with reproducible checksums (issue #52, beta.1):
-  # per-tag matrix builds of the `tono` CLI for the three desktop targets,
-  # each archived with a sha256 sidecar and uploaded to the GitHub Release.
-  # Windows cpal-less build: the default features (no `play`) keep the CLI
-  # dependency-light everywhere.
   binaries:
     needs: github-release
     runs-on: ${{ matrix.os }}
@@ -56,30 +39,20 @@ jobs:
           - { os: windows-latest, target: x86_64-pc-windows-msvc, name: windows-x86_64 }
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@1.88.0
         with:
           targets: ${{ matrix.target }}
+      - shell: bash
+        run: python scripts/release.py check-version "$GITHUB_REF_NAME"
       - name: Build the CLI
         run: cargo build --locked --release -p tono --bin tono --target ${{ matrix.target }}
-      - name: Package with checksum (unix)
-        if: matrix.os != 'windows-latest'
-        run: |
-          mkdir dist
-          cp "target/${{ matrix.target }}/release/tono" "dist/tono-${{ matrix.name }}"
-          cd dist && sha256sum "tono-${{ matrix.name }}" > "tono-${{ matrix.name }}.sha256"
-      - name: Package with checksum (windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          mkdir dist
-          cp "target/${{ matrix.target }}/release/tono.exe" "dist/tono-${{ matrix.name }}.exe"
-          cd dist; (Get-FileHash "tono-${{ matrix.name }}.exe" -Algorithm SHA256).Hash.ToLower() |
-            Out-File -NoNewline "tono-${{ matrix.name }}.sha256" -Encoding ascii
-        shell: pwsh
+      - name: Package with checksum
+        run: python scripts/release.py package-cli ${{ matrix.target }} ${{ matrix.name }}
       - name: Upload to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        # Pin bash on all three runners: the Windows default (pwsh) expands
-        # neither "$GITHUB_REF_NAME" (env access needs $env:) nor the dist/*
-        # glob, and the upload fails with "release not found".
         shell: bash
         run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber

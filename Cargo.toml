@@ -1,6 +1,6 @@
 [workspace]
 # A virtual manifest can't infer the resolver from a root package's edition, so
-# pin it: edition 2024 members imply resolver "3" (what the old root package set).
+# pin it: edition 2024 members imply resolver "3".
 resolver = "3"
 members = [
     "crates/tono-cli",
@@ -9,14 +9,12 @@ members = [
     "crates/tono-play",
     "crates/tono-py",
 ]
-# tono-desktop (native GUI + real-time audio + MIDI), tono-play (cpal speaker for
-# the programmatic playground) and tono-py (the PyO3 Python extension) carry
-# heavy / platform deps, so they stay OUT of the default native build/test/clippy
-# and CI. Build them explicitly with the direct Cargo/Maturin commands in RULE.md.
+# Core and CLI need no native GUI/audio packages. CI also checks the desktop,
+# speaker adapter and Python extension with their platform dependencies.
 default-members = ["crates/tono-cli", "crates/tono-core"]
 
 [workspace.package]
-version = "1.10.1"
+version = "1.11.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -26,7 +24,7 @@ description = "A deterministic sound engine — synthesis, instruments, songs, a
 [workspace.dependencies]
 # The version must match workspace.package.version above: cargo strips `path` at
 # publish time and pins the crates.io dependency to this version. Bump both together.
-tono-core = { path = "crates/tono-core", version = "1.10.1" }
+tono-core = { path = "crates/tono-core", version = "1.11.0" }
 anyhow = "1.0.102"
 base64 = "0.22.1"
 cpal = "0.15.3"

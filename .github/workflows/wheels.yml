@@ -1,94 +1,48 @@
 name: Wheels
 
-# abi3 wheel builds, MANUAL ONLY for now (budget): the 3-platform matrix —
-# especially 10x-cost macOS — is expensive in GitHub Actions minutes, so
-# prebuilt wheels are not generated or released at this time; build from
-# source (`maturin develop` / `pip install .` in crates/tono-py) per the
-# crate README. If users ask for prebuilt wheels, re-enable by reverting
-# the trigger to tags. `workflow_dispatch` keeps the pipeline exercisable
-# (and its clean-venv smoke) on demand, at explicit cost.
-#
-# The pipeline itself is unchanged and validated: matrix builds + a
-# clean-venv smoke per platform + sha256 sidecars + release upload on tags.
-
+# Manual wheel artifacts complement source installation without tag builds.
 on:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   wheels:
-    name: Wheels (${{ matrix.platform.os }})
-    runs-on: ${{ matrix.platform.os }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - os: ubuntu-latest
-            # A container build (yum-based AlmaLinux 8) so the wheel is glibc-2.28
-            # compliant instead of linking the host's newer libs.
-            manylinux: "2_28"
-            args: --release
-          - os: macos-latest
-            manylinux: auto
-            # Apple Silicon only: universal2 compiled arm64 + Intel in one job.
-            args: --release --target aarch64-apple-darwin
-          - os: windows-latest
-            manylinux: auto
-            args: --release
+        include:
+          - { os: ubuntu-latest, manylinux: "2_28", args: "--release" }
+          - { os: macos-latest, manylinux: auto, args: "--release --target aarch64-apple-darwin" }
+          - { os: windows-latest, manylinux: auto, args: "--release" }
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python scripts/release.py check-version
       - uses: PyO3/maturin-action@v1
         with:
           command: build
-          # `manylinux` as an action input runs the Linux build INSIDE the
-          # container (ignored on macOS/Windows); passing it in `args` instead
-          # builds on the host and fails the compliance audit.
-          manylinux: ${{ matrix.platform.manylinux }}
-          # abi3-py39: one wheel per platform covers every CPython 3.9+.
-          args: ${{ matrix.platform.args }} --out dist -m crates/tono-py/Cargo.toml
-          # cpal needs ALSA dev headers to build. yum inside the manylinux
-          # container (root), apt on a Debian host (needs sudo).
+          manylinux: ${{ matrix.manylinux }}
+          args: ${{ matrix.args }} --locked --out dist -m crates/tono-py/Cargo.toml
           before-script-linux: |
             if command -v yum >/dev/null; then yum install -y alsa-lib-devel; fi
             if command -v apt-get >/dev/null; then
-              (sudo apt-get update && sudo apt-get install -y libasound2-dev) \
-                || (apt-get update && apt-get install -y libasound2-dev)
+              sudo apt-get update
+              sudo apt-get install -y libasound2-dev
             fi
-      # Every wheel installs and runs on a clean environment — the release
-      # gate for packaging. Import + render a doc, no audio device needed
-      # (numpy is tono's one runtime dependency; install it first).
-      - name: Smoke the wheel on a clean venv
-        run: |
-          python3 -m venv /tmp/tono-wheel-smoke
-          /tmp/tono-wheel-smoke/bin/pip install --quiet numpy
-          /tmp/tono-wheel-smoke/bin/pip install --no-index --find-links dist --force-reinstall --no-deps tono
-          /tmp/tono-wheel-smoke/bin/python crates/tono-py/tests/test_typed.py
-  release-assets:
-    # Checksums for every artifact, and on tags the upload to the GitHub
-    # Release. The wheels carry version metadata by construction (abi3 +
-    # pyproject name/version); the .sha256 sidecars are the hashes (WS8).
-    name: Checksums + release upload
-    needs: wheels
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: wheels-*
-          path: dist
-          merge-multiple: true
-      - name: Checksum every wheel
-        run: |
-          cd dist && for f in *.whl; do sha256sum "$f" > "$f.sha256"; done && ls -la
+      - name: Test the wheel in a clean environment
+        run: python scripts/wheel_test.py dist
+      - name: Write artifact checksums
+        run: python scripts/release.py checksums dist
       - uses: actions/upload-artifact@v4
         with:
-          name: wheels-checksums
+          name: wheels-${{ matrix.os }}
           path: dist
-      - name: Upload to the GitHub Release (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          if-no-files-found: error

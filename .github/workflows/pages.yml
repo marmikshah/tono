@@ -1,43 +1,33 @@
 name: Pages
 
-# Builds the VitePress docs site (sources in docs/) and deploys it to GitHub
-# Pages on every master push that touches the docs or the site config.
-
 on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [master]
     paths:
       - "docs/**"
-      - "package.json"
-      - "package-lock.json"
-      - "scripts/site-audio.mjs"
-      - "crates/tono-cli/examples/site_samples.rs"
-      - "crates/tono-cli/Cargo.toml"
-      - "crates/tono-core/Cargo.toml"
-      - "crates/tono-core/src/**"
+      - "package*.json"
+      - "crates/tono-cli/**"
+      - "crates/tono-core/**"
       - "tsconfig.json"
-      - "Cargo.toml"
-      - "Cargo.lock"
+      - "Cargo.*"
       - "rust-toolchain.toml"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  build:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v6
@@ -49,8 +39,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: npm run docs:check
       - run: npm run docs:build
+      - run: npm audit --audit-level=moderate
       - uses: actions/upload-pages-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
           path: docs/.vitepress/dist
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v4

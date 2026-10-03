@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "tono",
-  "version": "0.1.0",
   "identifier": "dev.tono.desktop",
   "build": {
     "frontendDist": "ui"
@@ -10,7 +9,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "tono — pattern station",
+        "title": "tono \u2014 pattern station",
         "width": 1280,
         "height": 820,
         "minWidth": 900,

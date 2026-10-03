@@ -107,6 +107,14 @@ The SoundDoc format and the node vocabulary are documented in the SoundDoc refer
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args
+        .iter()
+        .skip(1)
+        .any(|arg| arg == "--help" || arg == "-h")
+    {
+        println!("{HELP}");
+        return Ok(());
+    }
     match args.get(1).map(String::as_str) {
         Some("templates") => generation::templates_cmd(&args[2..]),
         Some("generate") => generation::generate_cmd(&args[2..]),

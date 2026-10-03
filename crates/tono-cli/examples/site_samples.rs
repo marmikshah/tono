@@ -6,9 +6,16 @@ use serde_json::json;
 use tono_core::generate::{SfxSpec, SfxTemplate, generate_sfx};
 
 fn main() -> anyhow::Result<()> {
-    let out = PathBuf::from(std::env::args().nth(1).ok_or_else(|| {
-        anyhow::anyhow!("usage: cargo run -p tono --example site_samples -- OUTPUT_DIRECTORY")
-    })?);
+    const USAGE: &str = "Generate the site's WAVs, editable JSON and waveform manifest.\n\nUsage: cargo run --locked --release -p tono --example site_samples -- OUTPUT_DIRECTORY";
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    let out = match args.as_slice() {
+        [help] if help == "--help" || help == "-h" => {
+            println!("{USAGE}");
+            return Ok(());
+        }
+        [directory] => PathBuf::from(directory),
+        _ => anyhow::bail!(USAGE),
+    };
     fs::create_dir_all(&out)?;
     let mut samples = Vec::new();
     for template in SfxTemplate::ALL {
