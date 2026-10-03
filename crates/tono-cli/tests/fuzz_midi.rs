@@ -136,3 +136,18 @@ proptest! {
         assert_import_contract(&bytes, spb)?;
     }
 }
+
+#[test]
+fn unsupported_timecode_headers_never_panic() {
+    for division in [0x80, 0xE7, 0xE8, 0xE2] {
+        let mut bytes = base_midi().to_vec();
+        bytes[12] = division;
+        assert_import_contract(&bytes, 4).unwrap();
+        let mut riff = b"RIFF".to_vec();
+        riff.extend_from_slice(&(12 + bytes.len() as u32).to_le_bytes());
+        riff.extend_from_slice(b"RMIDdata");
+        riff.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        riff.extend_from_slice(&bytes);
+        assert_import_contract(&riff, 4).unwrap();
+    }
+}
