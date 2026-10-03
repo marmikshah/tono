@@ -508,6 +508,20 @@ def test_pattern_ops() -> None:
     # Ops never mutate their input.
     assert _compiled_notes(riff) == [(0, "C2", 4, 1.0), (8, "G2", 2, 0.8)]
 
+    # Successive writes keep their cursor; transformed notes survive new writes.
+    melody = tono.Pattern()
+    melody.notes(["C4", "E4"], durations=0.5)
+    melody.notes(["G4"], durations=0.5)
+    transformed = melody.transpose(1)
+    transformed.notes(["A4"], durations=1)
+    transformed.notes(["B4"], durations=1)
+    transformed.note("D5", at=3, duration=0.25)
+    assert _compiled_notes(transformed) == [
+        (0, "C#4", 2, 1.0), (0, "A4", 4, 1.0),
+        (2, "F4", 2, 1.0), (4, "G#4", 2, 1.0),
+        (4, "B4", 4, 1.0), (12, "D5", 1, 1.0),
+    ]
+
     # reverse mirrors note intervals: [0,4) → [12,16); [8,10) → [6,8).
     assert _compiled_notes(riff.reverse()) == [(6, "G2", 2, 0.8), (12, "C2", 4, 1.0)]
 

@@ -38,6 +38,12 @@ impl Phrase {
         self.notes
     }
 
+    /// Take the written notes while keeping the cursor and velocity for the
+    /// next write. Bindings append these notes to their authoritative pattern.
+    pub fn take_notes(&mut self) -> Vec<SeqNote> {
+        std::mem::take(&mut self.notes)
+    }
+
     fn step_of(&self, beat: f32) -> u32 {
         (beat.max(0.0) * self.steps_per_beat as f32).round() as u32
     }
