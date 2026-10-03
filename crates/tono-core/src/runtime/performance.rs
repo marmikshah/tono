@@ -470,9 +470,9 @@ impl Performance {
     /// clean — a rejected target changes nothing (the last valid program
     /// keeps running).
     pub fn swap_to(&mut self, program: Arc<Program>, at: At) -> Result<u64, PerformanceError> {
-        if program.program_version > crate::program::PROGRAM_VERSION {
+        if program.program_version != crate::program::PROGRAM_VERSION {
             return Err(PerformanceError::BadProgram(format!(
-                "program version {} is newer than supported ({})",
+                "unsupported program version {}; expected {}",
                 program.program_version,
                 crate::program::PROGRAM_VERSION
             )));
