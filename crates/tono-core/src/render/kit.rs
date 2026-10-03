@@ -16,7 +16,7 @@ pub(super) fn cowbell_sample(f: f32, t: f32) -> f32 {
 }
 
 /// One General-MIDI-mapped drum hit — the note's onset pitch picks the voice,
-/// `style` the kit. `Classic` is the original kit, byte-frozen; the other
+/// `style` the kit. `Classic` is the default synthesized kit; the other
 /// styles are alternate synthesized voicings.
 pub(super) fn kit_drum(f: &[f32], sr: u32, rng: &mut Rng, style: KitStyle) -> Signal {
     match style {

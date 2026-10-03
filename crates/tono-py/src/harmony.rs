@@ -3,7 +3,6 @@
 //! spelling grammar, no guessing — a misspelled name is a ValueError naming
 //! the valid forms). Pitches compare equal enharmonically (by MIDI number).
 //!
-//! This API is **stable** — frozen at 1.10.0-rc.1 (docs/api-tiers.md).
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;

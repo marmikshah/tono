@@ -1,4 +1,4 @@
-//! Property-based fuzzing of the MIDI importers (issue #52, workstream 9) —
+//! Property-based fuzzing of the MIDI importers —
 //! the contract pinned here:
 //!
 //!   1. `midi::import_midi` / `midi::import_midi_song` NEVER panic — on

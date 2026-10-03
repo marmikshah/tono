@@ -2,14 +2,14 @@
 
 The deterministic tono engine plus its live runtime, from Python: typed songs, numpy renders, and a speaker-owning engine — the `tono` module from [crates/tono-py](https://github.com/marmikshah/tono/tree/master/crates/tono-py).
 
-## Install (build from source only)
+## Install
 
-Never published to PyPI (the name is taken), and **no prebuilt wheels for
-now** — build-from-source only until users ask for wheels. Requires stable
-Rust and CPython 3.9+ (abi3: one wheel per platform covers every 3.9+).
+Build from a repository checkout in a virtual environment. Requires the
+workspace's Rust toolchain and CPython 3.9+. The manual Wheels workflow
+produces abi3 artifacts for Linux x86_64.
 
 ```sh
-pip install maturin
+python -m pip install maturin numpy
 maturin develop -m crates/tono-py/Cargo.toml              # the `tono` module in your env
 python3 crates/tono-py/tests/smoke.py                     # the determinism smoke test
 maturin build --release -m crates/tono-py/Cargo.toml      # abi3 wheel → target/wheels/

@@ -51,8 +51,7 @@ pub struct Track {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidechain: Option<Sidechain>,
     /// The mix bus this track's main output routes to (e.g. `"drums"`,
-    /// `"reverb"`). None ⇒ the master bus, the only behavior documents had
-    /// before this field existed, so they render byte-identically.
+    /// `"reverb"`). None routes directly to the master bus.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bus: Option<String>,
     /// Post-fader sends: copies of this track's positioned stereo signal
@@ -142,8 +141,7 @@ pub enum AutoTarget {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum AutoCurve {
-    /// Straight-line segments (default — the only behavior documents had
-    /// before this field existed, so they render byte-identically).
+    /// Straight-line segments (default).
     #[default]
     Linear,
     /// Hold the previous breakpoint's value until the next one lands (a

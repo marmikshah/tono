@@ -851,7 +851,7 @@ fn new_melodic_waves_stream_byte_identically() {
     }
 }
 
-// ---- engine 5: the deterministic transcendentals (ADR 0001) ----
+// ---- engine 5: the deterministic transcendentals ----
 
 #[test]
 fn seq_streams_byte_identically() {

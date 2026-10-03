@@ -1,11 +1,10 @@
-//! Property-based fuzzing of the Program bundle loader (issue #52, workstream
-//! 9) — the contract pinned here:
+//! Property-based fuzzing of the Program bundle loader.
 //!
 //!   1. `Program::from_json` NEVER panics — on arbitrary bytes, arbitrary
 //!      Unicode strings, or structured near-valid mutations of a real bundle
 //!      (field values scrambled, keys duplicated, the text truncated). The
 //!      outcome is always `Ok` or a typed `ProgramError`
-//!      (`Json` / `TooNew` / `HashMismatch`).
+//!      (`Json` / `UnsupportedVersion` / `HashMismatch` / `InvalidDocument`).
 //!   2. When a mutated bundle still loads, it round-trips: `to_json()` is a
 //!      fixpoint and re-loads to the same content hash. A hand-edited bundle
 //!      whose edits dodge the doc (the hash covers only the resolved

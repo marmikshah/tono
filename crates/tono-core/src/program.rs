@@ -34,7 +34,7 @@ pub struct Program {
     /// The musical metadata a transport (or a host deciding how far ahead to
     /// schedule) needs — preserved at compile time, not reconstructed.
     pub meta: ProgramMeta,
-    /// Bounded resource estimates the runtime preallocates from (ADR 0005).
+    /// Bounded resource estimates the runtime preallocates from.
     pub estimates: ResourceEstimates,
 }
 
@@ -89,7 +89,7 @@ pub struct TrackMeta {
 
 /// Bounded estimates of what a Program costs to render or run. Upper bounds
 /// are stated where an exact figure isn't cheap; the runtime preallocates
-/// from these (ADR 0005).
+/// from these.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceEstimates {
@@ -162,7 +162,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     h
 }
 
-/// The canonical form of a resolved document (ADR 0003): UTF-8 JSON, object
+/// The canonical form of a resolved document: UTF-8 JSON, object
 /// keys sorted (the serde_json default map), no insignificant whitespace,
 /// floats in shortest-round-trip form. Two equivalent songs — authored in
 /// Rust or Python — serialize to the same bytes.

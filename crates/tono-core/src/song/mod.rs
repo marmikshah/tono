@@ -154,7 +154,7 @@ pub use crate::units::MeterPoint;
 
 /// A named range of bars — a verse, a chorus, a build. Sections are musical
 /// metadata: they render nothing themselves, but they are compiled into the
-/// Program so the runtime can quantize transitions to them (ADR 0003/0005).
+/// Program so the runtime can quantize transitions to them.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Section {
     /// The section name (`"verse"`, `"chorus"`).
@@ -196,9 +196,8 @@ pub struct Song {
     /// Humanize, 0..1 (deterministic timing/velocity jitter), applied to every track.
     #[serde(default)]
     pub humanize: f32,
-    /// Tempo changes at exact beat positions (ADR 0002). Empty = the constant
-    /// `bpm` — the only behavior pre-existing songs had, so they compile
-    /// byte-identically. The first point must sit at beat 0.
+    /// Tempo changes at exact beat positions. Empty = the constant
+    /// `bpm`. The first point must sit at beat 0.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tempo_map: Vec<crate::dsl::TempoPoint>,
     /// Time-signature changes by bar. Empty = `beats_per_bar`/4 throughout.
@@ -404,8 +403,6 @@ impl Song {
     /// becomes the rendered layer id. Notes come from the patterns arranged
     /// onto the track.
     ///
-    /// This API is **stable** — frozen at 1.10.0-rc.1
-    /// (docs/api-tiers.md).
     pub fn add_voice(&mut self, name: impl Into<String>, voice: &Voice) -> &mut Self {
         let name = self.unique_name(&slugify(&name.into()));
         self.tracks.push(SongTrack {

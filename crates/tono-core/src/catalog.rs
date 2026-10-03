@@ -56,7 +56,7 @@ pub struct VoiceParams {
     pub pluck_pick: Option<f32>,
     /// Guitar string brightness/damping, −1..1 (`Guitar`).
     pub pluck_tone: Option<f32>,
-    /// Piano hammer hardness — spectral brightness (the `Piano` voice, engine ≥ 3).
+    /// Piano hammer hardness — spectral brightness (`Piano`).
     pub piano_hammer: Option<f32>,
     /// Piano hammer strike position — the spectral comb notch (`Piano`).
     pub piano_strike: Option<f32>,
@@ -749,10 +749,9 @@ impl Drums {
         drum_kit("drums", KitStyle::Acoustic)
     }
 
-    /// The original synthesized GM kit (byte-frozen).
+    /// The classic synthesized GM kit.
     pub fn classic() -> Voice {
-        // Built directly (not via drum_kit): the classic kit ships NO kit key,
-        // keeping old documents byte-frozen.
+        // The default kit style is Classic, so no explicit knob is needed.
         voice("classic drums", SeqWave::Kit, drum_env())
     }
 

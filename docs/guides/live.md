@@ -50,9 +50,7 @@ piano, notes sent live from code:
 `cargo run -p tono-play --example live_band`
 ([source](https://github.com/marmikshah/tono/blob/master/crates/tono-play/examples/live_band.rs)).
 
-API detail lives on [docs.rs](https://docs.rs/tono-core); the
-[architecture guide](https://marmikshah.github.io/tono/architecture.html)
-explains how the pieces compose.
+API detail lives on [docs.rs](https://docs.rs/tono-core).
 
 ## Drive the Performance
 
@@ -148,10 +146,10 @@ fn on_collision(patch: &Patch, force: f32, object_size: f32) -> Vec<f32> {
   a tool can design the sound in the studio, read off the paths, and emit
   the patch.
 - Worked example:
-  [`docs/examples/parametric-impact.patch.json`](https://github.com/marmikshah/tono/blob/master/docs/examples/parametric-impact.patch.json).
+  [`crates/tono-core/tests/fixtures/parametric-impact.patch.json`](https://github.com/marmikshah/tono/blob/master/crates/tono-core/tests/fixtures/parametric-impact.patch.json).
 
 ## Ship it anywhere
 
-`tono-core` is pure (no I/O, no transport — apart from the opt-in `sampler`
-feature, which reads `.sf2` files by path) and compiles to native and game
-targets — so one patch plays identically in the studio and the shipped game.
+`tono-core` handles synthesis, compilation and transport without owning an
+audio device. Its optional `sampler` feature reads `.sf2` files by path. It
+compiles to native and game targets — so one patch plays identically in the studio and the shipped game.

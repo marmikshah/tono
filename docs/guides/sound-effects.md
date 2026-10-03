@@ -116,7 +116,7 @@ tono fit REF.wav doc.json        # close the gap automatically
 
 - **PWM lead:** `square` with a modulated `duty` — `{ "lfo": { "shape": "sine", "rate": 5, "depth": 0.3, "center": 0.5 } }`.
 - **FM bell / e-piano:** `{ "type": "fm", "freq": 440, "ratio": 3.5, "index": { "slide": { "from": 6, "to": 0, "secs": 0.4 } } }` — higher `ratio`/`index` = more metallic; sliding `index` down gives a struck attack.
-- **Warmth / distortion:** `chain` into `drive{amount,shape}` — `tanh` warm, `hard` aggressive, `fold` metallic. Pairs well before a `lowpass`. On `engine: 1` documents the shaper is anti-aliased (ADAA) so hard/fold stay clean instead of spraying inharmonic foldback; set `"aa": false` on the node to hear the raw aliasing curve.
+- **Warmth / distortion:** `chain` into `drive{amount,shape}` — `tanh` warm, `hard` aggressive, `fold` metallic. Pairs well before a `lowpass`. The shaper is anti-aliased (ADAA) so hard/fold stay clean instead of spraying inharmonic foldback; set `"aa": false` on the node to hear the raw aliasing curve.
 - **Struck bodies (bell / glass / metal / coin / UI ping):** the **exciter → resonator** pair — an `impact` into a `modal` bank. `chain[ {type:impact, hardness:0.85}, {type:modal, modes:[{freq,decay,gain}, …]} ]`. Each mode is a damped sine; near-harmonic ratios + a long fundamental = bell, off-harmonic ratios = metal, all-short decays = a glass/UI tick. The hammer's `hardness` sets how far up the bank it reaches; `velocity` its energy. Oscillators can't voice these cleanly — modes can.
 - **Fat lead / pad (supersaw):** `{ "type": "super", "wave": "sawtooth", "freq": 220, "voices": 7, "detune_cents": 20 }` — more `voices` / `detune_cents` = wider and thicker. Great through a `lowpass` filter envelope, or as a `mix` layer under a melody.
 - **Morphing sweep (wavetable):** `{ "type": "wavetable", "wave": "basic", "freq": 110, "position": { "lfo": { "shape": "sine", "rate": 0.5, "depth": 0.5, "center": 0.5 } } }` — `position` (0..1) crossfades across a built-in table set: `basic` (sine → triangle → square → saw), `harmonics` (a saw growing its partial count — a pure brightness ramp), `formant` (vowel-ish stacks a → e → i → o → u — sweep slowly for vocal morphs), `metallic` (sparse clang stacks). Modulating `position` is the signature move: a slow LFO is an evolving pad, an `env` is a struck brightness decay. Tables are generated at build time (zero assets), band-limited to 32 partials — keep bright positions under ~600 Hz at 44.1 kHz to avoid foldover.
@@ -210,7 +210,7 @@ pump, without nesting a `duck` node:
 - `source` is the driving track's `id`; `amount` (0..1, default 0.8) is the depth, `attack`/`release` (defaults 0.005 / 0.25 s) the ballistics — the same envelope follower the `duck` node uses, so the pump character matches.
 - The source renders untouched; only the follower dips, and it ducks when the source actually lands on the bus (the source's `at` offset is honored).
 - Several tracks may follow one source, but a source must be a plain track (no follower-of-follower chains — duck directly to the source's source).
-- A sidechained mix **streams natively**: the duck envelope advances per sample, so a schema-v2 `tracks` root — sidechains, buses, and all — streams byte-identically to the offline bounce (v1 documents keep the buffer-backed `Player` fallback).
+- A sidechained mix **streams natively**: the duck envelope advances per sample, so a schema-v2 `tracks` root — sidechains, buses, and all — streams byte-identically to the offline bounce.
 
 ## Ship level-matched output
 

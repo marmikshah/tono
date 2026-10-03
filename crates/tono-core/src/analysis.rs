@@ -32,7 +32,7 @@ pub struct Analysis {
     /// NOT sit on the harmonic grid of the detected fundamental. Low for a
     /// clean pitched tone; high for noise, deliberately inharmonic bodies
     /// (bells, metal), AND for aliasing/foldback — so it is the meter that
-    /// shows an anti-aliasing fix working (e.g. engine-1 `drive` vs the raw
+    /// shows an anti-aliasing fix working (e.g. `drive` with ADAA vs the raw
     /// curve). Interpret with the sound's intent: high on a "pure tone" means
     /// alias dirt; high on a bell is just the bell.
     #[serde(default)]

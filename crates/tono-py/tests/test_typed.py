@@ -4,7 +4,7 @@ The headline check is the cross-language contract: the reference song built
 here compiles to the same canonical Program hash as the identical Rust song in
 crates/tono-core/tests/equivalence.rs — Rust owns semantics, so equivalent
 songs must hash equal from either language. The rest covers render shapes and
-determinism, bundle round-trips, the alpha.2 composition surface (tempo/meter
+determinism, bundle round-trips, composition (tempo/meter
 maps, pickup, sections/markers, buses, automation, pattern ops, harmony), and
 the structured error paths.
 
@@ -55,7 +55,7 @@ def test_equivalence_hash_matches_rust() -> None:
     assert [t["wave"] for t in program.tracks] == ["bass", "kit"]
     assert [t["notes"] for t in program.tracks] == [16, 16]
     assert program.estimates["events"] == 32
-    assert program.is_streamable is True  # v2 tracks roots stream byte-identically (alpha.2)
+    assert program.is_streamable is True  # tracks roots stream byte-identically
     assert program.warnings == [], program.warnings
 
 
@@ -151,9 +151,9 @@ def test_voice_builders_chain_and_pattern_repr() -> None:
     assert repr(pattern) == "Pattern(bars=2, notes=3)"
 
 
-def test_packaging_and_legacy_surface() -> None:
+def test_packaging_and_native_surface() -> None:
     assert (Path(tono.__file__).parent / "py.typed").exists(), "PEP 561 marker ships"
-    assert callable(tono.render), "the legacy JSON render still works"
+    assert callable(tono.render), "SoundDoc rendering is exported"
     import importlib
 
     importlib.import_module("tono.instruments")  # importable as a submodule too
@@ -190,7 +190,7 @@ def test_stems_render() -> None:
         pass
 
 
-# --- alpha.2: temporal maps, structure, buses, automation, ops, harmony ---
+# Temporal maps, structure, buses, automation, pattern operations and harmony
 
 
 def _doc_track(program: "tono.Program", index: int = 0) -> dict:
@@ -635,7 +635,7 @@ def test_harmony() -> None:
         assert "aug" in str(exc), str(exc)
 
 
-# --- alpha.3: the performance runtime (all headless — CI has no device) ---
+# Headless performance runtime
 
 # Frame math at 44_100 Hz, 120 BPM, 4/4: one beat = 0.5 s = 22_050 frames,
 # one bar = 88_200 frames; beat 4 = bar 1 = 88_200, bar 2 = 176_400.
@@ -1006,7 +1006,7 @@ if __name__ == "__main__":
     test_bundle_round_trips()
     test_error_paths()
     test_voice_builders_chain_and_pattern_repr()
-    test_packaging_and_legacy_surface()
+    test_packaging_and_native_surface()
     test_stems_render()
     test_tempo_map()
     test_meter_map_places_bars_on_the_grid()

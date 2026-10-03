@@ -49,7 +49,6 @@
 //! assert_eq!(name, "D2");
 //! ```
 //!
-//! This API is **stable** — frozen at 1.10.0-rc.1 (docs/api-tiers.md).
 
 use super::Pattern;
 use crate::dsl::{SeqNote, Value};

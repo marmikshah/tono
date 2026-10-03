@@ -7,7 +7,7 @@ steps. All you need is a Rust toolchain ([rustup.rs](https://rustup.rs)).
 
 ```sh
 cargo install tono
-tono --version   # tono 1.10.0
+tono --version
 ```
 
 ## 2. Render your first sound

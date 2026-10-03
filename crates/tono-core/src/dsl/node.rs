@@ -268,11 +268,10 @@ pub enum Node {
         /// Tempo in beats per minute.
         bpm: f32,
         /// Tempo changes on the beat grid at exact rational positions,
-        /// applied segment-wise (ADR 0002): a note's start and end convert to
+        /// applied segment-wise: a note's start and end convert to
         /// seconds through the segments in f64 and land on frames with halves
-        /// rounded away from zero. Empty = the constant-tempo `bpm` behavior
-        /// — the only behavior documents had before this field existed, so
-        /// they render byte-identically. The first point must sit at beat 0.
+        /// rounded away from zero. An empty map uses constant `bpm`.
+        /// The first point must sit at beat 0.
         /// Not supported on the `sampler` wave (validation rejects it).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tempo_map: Vec<TempoPoint>,
@@ -290,7 +289,7 @@ pub enum Node {
         /// Plucked-string knobs (`wave: "pluck"`), flattened onto the node.
         #[serde(flatten)]
         pluck: PluckKnobs,
-        /// Piano tone knobs (`wave: "piano"`, engine ≥ 3), flattened onto the node.
+        /// Piano tone knobs (`wave: "piano"`), flattened onto the node.
         #[serde(flatten)]
         piano: PianoKnobs,
         /// Drum-kit voicing when `wave` is `kit`. Omitted ⇒ `classic` (the
@@ -496,9 +495,8 @@ pub enum Node {
     /// bank is N parallel resonators — cheap, stable, deterministic. Use it as
     /// a chain stage after an excitation: `chain[ impact, modal ]`. The
     /// excitation's brightness lights the modes; the modes' frequencies and
-    /// decays define the timbre. Author modes explicitly — the cookbook's
-    /// struck-bodies guidance (harmonic vs off-harmonic ratios, short vs long
-    /// decays) is the map from material to mode list.
+    /// decays define the timbre. Harmonic ratios and long decays produce
+    /// bells; off-harmonic ratios and short decays produce struck materials.
     Modal {
         /// The resonant partials (1..=64). Each is a damped sine.
         modes: Vec<Mode>,
@@ -517,10 +515,8 @@ pub enum Node {
         shape: DriveShape,
         /// Antiderivative anti-aliasing. The waveshaper's harmonics fold back
         /// as inharmonic alias dirt at the base rate; ADAA suppresses that for
-        /// a clean, hi-fi distortion. Honoured only when the document's
-        /// `engine` is ≥ 1 (so legacy documents stay bit-exact); within an
-        /// engine-1 document it is on by default — set `false` to hear the raw
-        /// aliasing curve. Omitted ⇒ follow the engine.
+        /// clean distortion. Enabled by default; set `false` to hear the raw
+        /// aliasing curve.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         aa: Option<bool>,
     },
@@ -994,7 +990,7 @@ pub struct PluckKnobs {
     pub pluck_tone: f32,
 }
 
-/// Piano tone knobs of a `seq` node (`wave: "piano"`, engine ≥ 3), flattened
+/// Piano tone knobs of a `seq` node (`wave: "piano"`), flattened
 /// onto the node in JSON. Every default reproduces the concert-grand kernel
 /// bit-for-bit, so a doc that omits them renders byte-identically.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]

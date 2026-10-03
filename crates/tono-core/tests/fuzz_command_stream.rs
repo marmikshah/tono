@@ -1,5 +1,4 @@
-//! Property-based fuzzing of the Performance command stream (issue #52,
-//! workstream 9) — the contract pinned here:
+//! Property-based fuzzing of the Performance command stream.
 //!
 //!   1. `fill` never panics and every output sample is finite, under
 //!      arbitrary legal command scripts (Play / Pause / Stop / SeekBar /

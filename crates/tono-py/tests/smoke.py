@@ -14,11 +14,11 @@ import numpy as np
 
 import tono
 
-EXAMPLES = Path(__file__).resolve().parents[3] / "docs" / "examples"
+FIXTURES = Path(__file__).resolve().parents[2] / "tono-core" / "tests" / "fixtures"
 
 
 def test_render_is_deterministic() -> None:
-    doc = (EXAMPLES / "blip.json").read_text()
+    doc = (FIXTURES / "blip.json").read_text()
     a = tono.render(doc)
     b = tono.render(doc)
     assert a.dtype == np.float32
@@ -27,7 +27,7 @@ def test_render_is_deterministic() -> None:
 
 
 def test_patch_params_vary_the_render() -> None:
-    patch = tono.Patch((EXAMPLES / "parametric-impact.patch.json").read_text())
+    patch = tono.Patch((FIXTURES / "parametric-impact.patch.json").read_text())
     assert set(patch.defaults()) == {"hardness", "size"}
     soft = patch.render(hardness=0.2, size=0.3)
     hard = patch.render(hardness=0.9, size=0.3)

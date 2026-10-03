@@ -1,8 +1,7 @@
 """The catalog instrument constructors — each returns a `tono.Voice`.
 
 Variant names mirror the `tono catalog` CLI slugs; an unknown variant raises
-`ValueError` listing the valid ones. Experimental through the 1.10.0 alphas
-(docs/api-tiers.md).
+`ValueError` listing the valid ones.
 """
 
 from tono import Voice
