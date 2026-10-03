@@ -517,15 +517,12 @@ instrument_fn!(
 #[pyclass(module = "tono")]
 struct Pattern {
     /// The core pattern (name/bars/notes): the value the ops consume and the
-    /// arrangement registers. `notes` is the source of truth — writes through
-    /// `phrase` are materialized into it after every call.
+    /// arrangement registers. Owns the pattern's notes.
     inner: CorePattern,
     /// The write cursor: `note`/`notes`/`hit`/`chord` place through it (its
     /// snapping IS the Rust `Phrase` semantics the equivalence hash pins).
+    /// Written notes are immediately moved into `inner`.
     phrase: Phrase,
-    /// How many of `inner.notes`' tail came from `phrase` — the rest is the
-    /// seed an op produced, which later writes must never drop.
-    phrase_notes: usize,
 }
 
 impl Pattern {
@@ -535,16 +532,7 @@ impl Pattern {
         Pattern {
             inner,
             phrase: Phrase::new(STEPS_PER_BEAT),
-            phrase_notes: 0,
         }
-    }
-
-    /// Re-sync `inner.notes` as `seed notes ++ phrase notes` after a write.
-    fn materialize(&mut self) {
-        let keep = self.inner.notes.len() - self.phrase_notes;
-        self.inner.notes.truncate(keep);
-        self.inner.notes.extend(self.phrase.clone().into_notes());
-        self.phrase_notes = self.inner.notes.len() - keep;
     }
 }
 
@@ -561,7 +549,6 @@ impl Pattern {
                 notes: Vec::new(),
             },
             phrase: Phrase::new(STEPS_PER_BEAT),
-            phrase_notes: 0,
         }
     }
 
@@ -612,7 +599,7 @@ impl Pattern {
     #[pyo3(signature = (pitch, at=0.0, duration=1.0, gain=1.0))]
     fn note(&mut self, pitch: &str, at: f32, duration: f32, gain: f32) {
         self.phrase.at(at).vel(gain).note(pitch, duration);
-        self.materialize();
+        self.inner.notes.extend(self.phrase.take_notes());
     }
 
     /// Place `pitches` one after another from the pattern's start (the cursor
@@ -649,7 +636,7 @@ impl Pattern {
         for (pitch, dur) in pitches.iter().zip(durs) {
             self.phrase.play(pitch, dur);
         }
-        self.materialize();
+        self.inner.notes.extend(self.phrase.take_notes());
         Ok(())
     }
 
@@ -677,7 +664,7 @@ impl Pattern {
         for b in beats {
             self.phrase.at(b).hit(gm);
         }
-        self.materialize();
+        self.inner.notes.extend(self.phrase.take_notes());
         Ok(())
     }
 
@@ -687,7 +674,7 @@ impl Pattern {
     fn chord(&mut self, pitches: Vec<String>, at: f32, duration: f32, gain: f32) {
         let refs: Vec<&str> = pitches.iter().map(String::as_str).collect();
         self.phrase.at(at).vel(gain).chord(&refs, duration);
-        self.materialize();
+        self.inner.notes.extend(self.phrase.take_notes());
     }
 
     /// This pattern repeated `times` times end-to-end (`bars × times`), as a
