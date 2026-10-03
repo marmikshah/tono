@@ -1,6 +1,6 @@
 [package]
 name = "tono-play"
-description = "Programmatic playground for tono — play any AudioSource / SoundDoc / Instrument through the speakers from a few lines of Rust."
+description = "Native audio output adapters for tono, with runnable Rust examples."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,4 +12,6 @@ publish = false
 tono-core = { workspace = true }
 anyhow = { workspace = true }
 cpal = { workspace = true }
+
+[dev-dependencies]
 serde_json = { workspace = true }

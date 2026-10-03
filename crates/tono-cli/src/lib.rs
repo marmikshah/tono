@@ -1,20 +1,10 @@
-//! tono — a deterministic sound engine.
+//! File and command-line adapters for tono's audio engine.
 //!
-//! The pure, headless engine — the `SoundDoc` graph DSL, DSP, the deterministic
-//! renderer, the byte-identical streaming renderer, analysis/critique, the
-//! instrument / song / drum-kit / adaptive-music layers — lives in the
-//! [`tono_core`] crate; every one of its modules is re-exported here.
-//!
-//! This crate is the thin **shell** around it: audio-file encoders, the analysis
-//! image writer, MIDI export, and the `tono` command-line tool that renders a
-//! `SoundDoc` to audio + feedback images (see `src/main.rs`).
+//! This crate supplies audio-file encoding, analysis images, MIDI import and
+//! export, compilation inspection, matching and fitting. Graphs, DSP, songs,
+//! instruments and the live runtime belong to [`tono_core`].
 
 #![warn(missing_docs)]
-
-pub use tono_core::{
-    adaptive, analysis, catalog, diag, drumkit, dsl, dsp, edit, generate, instrument, patch,
-    player, prelude, presets, program, render, runtime, song, streaming, units, vary,
-};
 
 pub mod audio;
 pub mod audition;
