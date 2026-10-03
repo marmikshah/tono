@@ -5,7 +5,7 @@ use crate::patch::Patch;
 fn saw_patch() -> Patch {
     // A sustaining subtractive voice with a `pitch` param on the oscillator.
     serde_json::from_str(
-        r#"{ "doc": { "name":"lead", "duration":1.0, "engine":2, "root": { "type":"chain", "stages": [
+        r#"{ "doc": { "name":"lead", "duration":1.0, "engine":5, "root": { "type":"chain", "stages": [
                 { "type":"sawtooth", "freq":220 },
                 { "type":"lowpass", "cutoff":1800, "q":0.8 } ] } },
              "params": [ { "name":"pitch", "paths":["root.stages[0].freq"], "min":20, "max":8000, "default":220 } ] }"#,
@@ -73,7 +73,7 @@ fn note_off_releases_then_culls() {
 fn transpose_makes_any_sound_playable() {
     // A bare saw with no pitch param — playable via transposition.
     let patch: Patch = serde_json::from_str(
-        r#"{ "doc": { "name":"buzz", "duration":1.0, "engine":2, "root": { "type":"sawtooth", "freq":220 } } }"#,
+        r#"{ "doc": { "name":"buzz", "duration":1.0, "engine":5, "root": { "type":"sawtooth", "freq":220 } } }"#,
     )
     .unwrap();
     let design = InstrumentDesign::new(patch); // no "pitch" param ⇒ Transpose

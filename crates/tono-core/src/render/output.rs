@@ -3,29 +3,18 @@
 
 use super::Signal;
 use crate::dsl::{Normalize, Stereo};
-use crate::dsp::{
-    db_to_lin, db_to_lin_e, loudness_lufs, loudness_lufs_gated_e, peak_limit, true_peak,
-    true_peak_oversampled,
-};
+use crate::dsp::{db_to_lin, loudness_lufs_gated, peak_limit, true_peak_oversampled};
 use std::f32::consts::FRAC_PI_2;
 
-/// Extract the loop region `[start_secs, end_secs)` and equal-power crossfade
-/// its last `crossfade_secs` onto its head, returning a buffer that repeats
-/// seamlessly. The output length is the region minus the crossfade.
-///
-/// Overlap-loop: with region `r` of length `L` and crossfade `x`, the body is
-/// `r[0..L-x]` with its first `x` samples replaced by a sin/cos blend of the
-/// head (`r[i]`, fading in) and the tail (`r[L-x+i]`, fading out). The wrap
-/// `out[last] → out[0]` then lands on adjacent original samples, so there is no
-/// discontinuity. `engine` dispatches the crossfade's sin/cos — engine ≥ 5
-/// blends through the deterministic kernels (ADR 0001).
+/// Extract `[start_secs, end_secs)` and blend its tail onto its head with an
+/// equal-power crossfade. Returns the region length minus the crossfade;
+/// a degenerate region returns the input unchanged.
 pub fn make_loop_buffer(
     samples: &[f32],
     sr: u32,
     start_secs: f32,
     end_secs: Option<f32>,
     crossfade_secs: f32,
-    engine: u32,
 ) -> Signal {
     let len = samples.len();
     let s = ((start_secs * sr as f32) as usize).min(len);
@@ -46,8 +35,8 @@ pub fn make_loop_buffer(
     let mut out = region[..out_len].to_vec();
     for (i, o) in out.iter_mut().take(x).enumerate() {
         let t = (i as f32 + 0.5) / x as f32;
-        let fade_in = crate::dsp::sin(FRAC_PI_2 * t, engine);
-        let fade_out = crate::dsp::cos(FRAC_PI_2 * t, engine);
+        let fade_in = crate::dsp::sin(FRAC_PI_2 * t);
+        let fade_out = crate::dsp::cos(FRAC_PI_2 * t);
         *o = region[i] * fade_in + region[out_len + i] * fade_out;
     }
     out
@@ -63,64 +52,25 @@ pub fn loop_seam_db(samples: &[f32]) -> f32 {
     20.0 * jump.max(1e-9).log10()
 }
 
-/// Opt-in output stage: gain-match to a LUFS target (if given), soft-limiting
-/// peaks into the `ceiling_dbtp` true-peak ceiling. Unlike a whole-buffer
-/// attenuation, the soft-knee limiter only compresses the peaks, so dense /
-/// peaky material (a BGM mix, layered impacts) actually REACHES the loudness
-/// target instead of being dragged back down. Two measure→gain→limit passes
-/// converge within ~1 dB. LEGACY (engine ≤ 3): pinned to platform libm
-/// forever — engine ≥ 4 documents route to [`normalize_output_v4`].
-pub(super) fn normalize_output(samples: &mut [f32], nz: &Normalize) {
+/// Normalize all channels with one shared gated-loudness gain, then limit
+/// against the oversampled true peak while preserving stereo balance.
+pub(super) fn normalize_output(channels: &mut [&mut [f32]], nz: &Normalize, sr: u32) {
     let ceil = db_to_lin(nz.ceiling_dbtp);
-    if let Some(target) = nz.target_lufs {
-        for _ in 0..2 {
-            let cur = loudness_lufs(samples);
-            if cur <= -120.0 {
-                break;
-            }
-            let g = db_to_lin(target - cur);
-            for x in samples.iter_mut() {
-                *x *= g;
-            }
-            // Engine ≤ 3 only (the caller gates), so the limiter stays on
-            // platform libm — bit-exact with every historical render.
-            soft_limit(samples, ceil, 0);
-        }
-    }
-    // Safety: catch inter-sample residue above the ceiling, then sample peak.
-    true_peak_limit(samples, nz.ceiling_dbtp);
-    peak_limit(&mut [samples]);
-}
-
-/// Engine ≥ 4 output stage over the whole program (1 = mono, 2 = stereo):
-/// loudness is measured jointly with gated BS.1770 at the actual sample rate
-/// and corrected with ONE shared gain (per-channel matching collapsed any
-/// asymmetric mix toward center), and the ceiling is enforced against a real
-/// oversampled true-peak estimate (the legacy linear estimate could never see
-/// an inter-sample over, so the documented dBTP ceiling was not honored).
-/// `engine` dispatches the measurement's transcendentals (ADR 0001).
-pub(super) fn normalize_output_v4(
-    channels: &mut [&mut [f32]],
-    nz: &Normalize,
-    sr: u32,
-    engine: u32,
-) {
-    let ceil = db_to_lin_e(nz.ceiling_dbtp, engine);
     if let Some(target) = nz.target_lufs {
         for _ in 0..2 {
             let cur = {
                 let views: Vec<&[f32]> = channels.iter().map(|c| &**c).collect();
-                loudness_lufs_gated_e(&views, sr, engine)
+                loudness_lufs_gated(&views, sr)
             };
             if cur <= -120.0 {
                 break;
             }
-            let g = db_to_lin_e(target - cur, engine);
+            let g = db_to_lin(target - cur);
             for c in channels.iter_mut() {
                 for x in c.iter_mut() {
                     *x *= g;
                 }
-                soft_limit(c, ceil, engine);
+                soft_limit(c, ceil);
             }
         }
     }
@@ -142,8 +92,7 @@ pub(super) fn normalize_output_v4(
 
 /// Soft-knee peak limiter: transparent below `0.7 × ceil`, smoothly (tanh)
 /// compressed above, never exceeding `ceil`. C1-continuous at the knee.
-/// `engine` dispatches the tanh (ADR 0001).
-fn soft_limit(samples: &mut [f32], ceil: f32, engine: u32) {
+fn soft_limit(samples: &mut [f32], ceil: f32) {
     const KNEE: f32 = 0.7;
     // A degenerate ceiling must not turn the mix into inf/NaN.
     let ceil = ceil.max(1e-9);
@@ -151,22 +100,8 @@ fn soft_limit(samples: &mut [f32], ceil: f32, engine: u32) {
         let v = *x / ceil;
         let a = v.abs();
         if a > KNEE {
-            let compressed =
-                KNEE + (1.0 - KNEE) * crate::dsp::tanh((a - KNEE) / (1.0 - KNEE), engine);
+            let compressed = KNEE + (1.0 - KNEE) * crate::dsp::tanh((a - KNEE) / (1.0 - KNEE));
             *x = v.signum() * compressed * ceil;
-        }
-    }
-}
-
-/// Scale so the estimated true peak sits at or below `ceiling_dbtp`. Pure
-/// attenuation (never boosts), so it composes after loudness matching.
-fn true_peak_limit(samples: &mut [f32], ceiling_dbtp: f32) {
-    let ceil = db_to_lin(ceiling_dbtp);
-    let tp = true_peak(samples);
-    if tp > ceil && tp > 0.0 {
-        let g = ceil / tp;
-        for x in samples.iter_mut() {
-            *x *= g;
         }
     }
 }

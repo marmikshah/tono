@@ -21,8 +21,8 @@ fn all_templates_render_cleanly_at_control_and_sample_rate_extremes() {
                     spec.variation = variation;
                     let doc = generate_sfx(&spec).unwrap();
                     doc.validate().unwrap();
-                    assert_eq!(doc.engine, Some(5), "version-1 recipe engine pin");
-                    assert_eq!(doc.version, Some(2), "version-1 recipe schema pin");
+                    assert_eq!(doc.engine, 5, "version-1 recipe engine pin");
+                    assert_eq!(doc.version, 2, "version-1 recipe schema pin");
                     let audio = render::render(&doc);
                     let peak = audio.iter().map(|x| x.abs()).fold(0.0f32, f32::max);
                     let rms = (audio.iter().map(|x| (*x as f64).powi(2)).sum::<f64>()

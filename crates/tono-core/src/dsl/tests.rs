@@ -8,7 +8,7 @@ fn roundtrip(json: &str) -> serde_json::Value {
 
 fn doc_with_root(root: &str) -> SoundDoc {
     serde_json::from_str(&format!(
-        r#"{{ "name": "t", "duration": 0.2, "engine": 1, "root": {root} }}"#
+        r#"{{ "name": "t", "duration": 0.2, "engine": 5, "root": {root} }}"#
     ))
     .expect("deserialize")
 }
@@ -20,16 +20,15 @@ fn doc_defaults_fill_in() {
             .unwrap();
     assert_eq!(doc.duration, 0.3);
     assert_eq!(doc.sample_rate, 44_100);
-    // Version-less documents keep the pre-versioning (v1) render semantics.
-    assert_eq!(doc.version, None);
-    assert_eq!(doc.effective_version(), 1);
+    assert_eq!(doc.version, SCHEMA_VERSION);
+    assert_eq!(doc.engine, ENGINE_VERSION);
     assert!(matches!(doc.stereo, Stereo::Mono));
     assert!(matches!(doc.playback, Playback::OneShot));
 }
 
 #[test]
 fn v2_tracks_reject_doc_level_stereo() {
-    let mut doc: SoundDoc = serde_json::from_str(
+    let doc: SoundDoc = serde_json::from_str(
         r#"{ "name": "band", "duration": 0.2, "version": 2,
                 "stereo": { "mode": "wide" },
                 "root": { "type": "tracks",
@@ -38,41 +37,40 @@ fn v2_tracks_reject_doc_level_stereo() {
     .unwrap();
     let err = doc.validate().unwrap_err();
     assert!(err.contains("per-layer pan"), "{err}");
-    // v1 documents keep the historical silent-ignore so old libraries load.
-    doc.version = None;
-    assert_eq!(doc.validate(), Ok(()));
 }
 
 #[test]
-fn future_schema_versions_are_rejected() {
-    let mut doc: SoundDoc =
-        serde_json::from_str(r#"{ "name": "beep", "root": { "type": "sine", "freq": 440 } }"#)
-            .unwrap();
+fn unsupported_schema_versions_are_rejected() {
+    let mut doc = SoundDoc::new(
+        "beep",
+        Node::Sine {
+            freq: Value::Const(440.0),
+        },
+    );
     assert_eq!(doc.validate(), Ok(()));
-    doc.version = Some(SCHEMA_VERSION);
-    assert_eq!(doc.validate(), Ok(()));
-    doc.version = Some(SCHEMA_VERSION + 1);
-    let err = doc.validate().unwrap_err();
-    assert!(err.contains("upgrade tono"), "unhelpful error: {err}");
-    doc.version = Some(0);
-    assert!(doc.validate().is_err());
+    for version in [0, 1, SCHEMA_VERSION + 1] {
+        doc.version = version;
+        assert!(
+            doc.validate()
+                .unwrap_err()
+                .contains("unsupported document version")
+        );
+    }
 }
 
 #[test]
-fn engine_defaults_to_zero_and_bounds_at_current_revision() {
-    let mut doc: SoundDoc =
-        serde_json::from_str(r#"{ "name": "beep", "root": { "type": "sine", "freq": 440 } }"#)
-            .unwrap();
-    // Omitted ⇒ engine 0 (the original kernels; existing docs stay bit-exact).
-    assert_eq!(doc.engine, None);
-    assert_eq!(doc.effective_engine(), 0);
+fn unsupported_engines_are_rejected() {
+    let mut doc = SoundDoc::new(
+        "beep",
+        Node::Sine {
+            freq: Value::Const(440.0),
+        },
+    );
     assert_eq!(doc.validate(), Ok(()));
-    doc.engine = Some(ENGINE_VERSION);
-    assert_eq!(doc.validate(), Ok(()));
-    // A document from a newer DSP kernel is rejected, not misrendered.
-    doc.engine = Some(ENGINE_VERSION + 1);
-    let err = doc.validate().unwrap_err();
-    assert!(err.contains("engine must be in"), "unhelpful error: {err}");
+    for engine in [0, 1, 2, 3, 4, ENGINE_VERSION + 1] {
+        doc.engine = engine;
+        assert!(doc.validate().unwrap_err().contains("unsupported engine"));
+    }
 }
 
 #[test]

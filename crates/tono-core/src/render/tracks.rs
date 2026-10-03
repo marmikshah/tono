@@ -1,21 +1,23 @@
 //! The `tracks` mixer render: per-track evaluation onto the stereo bus with
-//! equal-power panning, per-track RNG streams (schema v2), automation lanes,
+//! equal-power panning, per-track RNG streams, automation lanes,
 //! per-layer contribution stats, and the master chain.
 
 use super::effects::reverb;
-use super::output::{make_loop_buffer, normalize_output, normalize_output_v4};
+use super::output::{make_loop_buffer, normalize_output};
 #[cfg(feature = "sampler")]
 use super::seq::{SeqVoice, sampler_seq_stereo};
 use super::{Signal, apply_processor, render_node};
+#[cfg(feature = "sampler")]
+use crate::dsl::SeqWave;
 use crate::dsl::{
-    AutoCurve, AutoLane, AutoPoint, AutoTarget, Node, Playback, SeqWave, Sidechain, SoundDoc, Track,
+    AutoCurve, AutoLane, AutoPoint, AutoTarget, Node, Playback, Sidechain, SoundDoc, Track,
 };
-use crate::dsp::{Rng, layer_stream_key, peak_limit};
+use crate::dsp::{layer_stream_key, peak_limit};
 
 /// One track's raw render, kept whole until the mix pass so sidechain
 /// followers can read their source's signal regardless of declaration order.
 enum TrackRender {
-    /// Muted layers render nothing (a v1 document still advanced its stream).
+    /// Muted layers render nothing.
     Muted,
     /// A mono render plus its `at` offset in samples.
     Mono { off: usize, sig: Signal },
@@ -27,23 +29,15 @@ enum TrackRender {
     },
 }
 
-/// Equal-power channel gains for a `pan`/`gain` pair — one formula for the
-/// constant fast path and the per-sample automated path, so they can never
-/// drift (identical f32 op order, byte-identical output). Shared with the
-/// streaming mixer ([`crate::streaming`]) for the same reason. `engine`
-/// dispatches the pan-law sin/cos (ADR 0001).
-pub(crate) fn pan_gains(pan: f32, gain: f32, engine: u32) -> (f32, f32) {
+/// Shared equal-power pan gains for offline and streaming mixing.
+pub(crate) fn pan_gains(pan: f32, gain: f32) -> (f32, f32) {
     let theta = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
-    (
-        crate::dsp::cos(theta, engine) * gain,
-        crate::dsp::sin(theta, engine) * gain,
-    )
+    (crate::dsp::cos(theta) * gain, crate::dsp::sin(theta) * gain)
 }
 
-/// Derive a track's independent RNG stream from the document seed (schema
-/// v2). `stream` is the track's FNV stream key (or `MASTER_STREAM`), not a
-/// track index. SplitMix64 finalizer over a golden-gamma offset, so streams
-/// never correlate with each other or with the v1 threaded stream. Shared
+/// Derive a track's independent RNG stream from the document seed.
+/// `stream` is the track's FNV stream key (or `MASTER_STREAM`), not a track
+/// index. SplitMix64 finalizer over a golden-gamma offset. Shared
 /// with the streaming mixer, which seeds each track's graph identically.
 pub(crate) fn track_stream_seed(seed: u64, stream: u64) -> u64 {
     crate::dsp::splitmix_mix(
@@ -55,18 +49,6 @@ pub(crate) fn track_stream_seed(seed: u64, stream: u64) -> u64 {
 
 /// The master bus's stream key (validate rejects a layer id hashing to it).
 pub(crate) const MASTER_STREAM: u64 = u64::MAX;
-
-/// True when a track renders in native stereo (a sampler seq) — a cheap shape
-/// test; the actual rendering happens in [`track_native_stereo`].
-fn is_native_stereo(node: &Node) -> bool {
-    matches!(
-        node,
-        Node::Seq {
-            wave: SeqWave::Sampler,
-            ..
-        }
-    )
-}
 
 /// Post-fader, pre-master snapshot of one layer's contribution to the stereo
 /// bus — the balance numbers an author mixes by. "Pre-master" matters: a master
@@ -148,10 +130,9 @@ impl LaneCursor {
     /// Interpolation over the sorted breakpoints per the lane's curve,
     /// holding flat past either end. Strict `>` in the advance keeps the
     /// exact segment the from-zero scan would pick — a sample landing on a
-    /// breakpoint interpolates in the earlier segment, so the floats (and
-    /// the rendered bytes) are unchanged. `engine` dispatches the exp curve's
-    /// powf (ADR 0001).
-    pub(crate) fn at(&mut self, i: usize, sr: u32, engine: u32) -> f32 {
+    /// breakpoint interpolates in the earlier segment, preserving the
+    /// rendered bytes.
+    pub(crate) fn at(&mut self, i: usize, sr: u32) -> f32 {
         let t = i as f32 / sr as f32;
         // An unvalidated doc with sample_rate 0 makes frame 0 NaN (0.0/0.0),
         // which every comparison below rejects — hold the first point
@@ -187,7 +168,7 @@ impl LaneCursor {
             // segment degrades to linear (deterministic).
             AutoCurve::Exp => {
                 if w0.v > 0.0 && w1.v > 0.0 {
-                    w0.v * crate::dsp::powf(w1.v / w0.v, u, engine)
+                    w0.v * crate::dsp::powf(w1.v / w0.v, u)
                 } else {
                     w0.v + (w1.v - w0.v) * u
                 }
@@ -204,10 +185,9 @@ fn lane_for(
     n: usize,
     sr: u32,
     default: f32,
-    engine: u32,
 ) -> Option<Vec<f32>> {
     let mut cursor = LaneCursor::build(automation, target, default)?;
-    Some((0..n).map(|i| cursor.at(i, sr, engine)).collect())
+    Some((0..n).map(|i| cursor.at(i, sr)).collect())
 }
 
 /// The gain-reduction envelope for one follower track: the `duck` node's
@@ -223,7 +203,6 @@ fn duck_envelope(
     sc: &Sidechain,
     n: usize,
     sr: u32,
-    engine: u32,
 ) -> Vec<f32> {
     let mut sig = vec![0.0f32; n];
     let gain_lane = lane_for(
@@ -232,7 +211,6 @@ fn duck_envelope(
         n,
         sr,
         source_track.gain,
-        engine,
     );
     let g = |pos: usize| gain_lane.as_ref().map_or(source_track.gain, |a| a[pos]);
     match source {
@@ -251,8 +229,8 @@ fn duck_envelope(
         }
     }
     let srf = sr as f32;
-    let at = crate::dsp::exp(-1.0 / (sc.attack.max(1e-4) * srf), engine);
-    let rt = crate::dsp::exp(-1.0 / (sc.release.max(1e-4) * srf), engine);
+    let at = crate::dsp::exp(-1.0 / (sc.attack.max(1e-4) * srf));
+    let rt = crate::dsp::exp(-1.0 / (sc.release.max(1e-4) * srf));
     let mut env = 0.0f32;
     sig.into_iter()
         .map(|t| {
@@ -264,16 +242,9 @@ fn duck_envelope(
         .collect()
 }
 
-/// Render a `tracks` document to a finished stereo pair: each track is
-/// rendered mono and equal-power panned onto the bus (sampler tracks keep
-/// their native stereo), the master chain runs per channel (the reverb with
-/// decorrelated tails), then loop/normalize apply jointly.
-///
-/// RNG model: schema v2 documents give every track (and the master bus) its
-/// own deterministic stream, so editing, muting, or removing one track never
-/// changes the noise content of its siblings. v1 documents keep the original
-/// single stream threaded through the track list in order — their audio stays
-/// byte-identical across upgrades.
+/// Render the stereo mixing console, applying tracks, buses and master inserts.
+/// Each named track owns an independent deterministic RNG stream; editing or
+/// muting one track preserves its siblings. Loop and normalization apply jointly.
 pub fn render_tracks(doc: &SoundDoc) -> Option<TracksRender> {
     render_tracks_impl(doc, false).map(|(r, _)| r)
 }
@@ -326,45 +297,20 @@ fn render_tracks_impl(
     // validate() caps duration at 600 s; the clamp guards direct render calls
     // on unvalidated docs from an unbounded allocation (1e12 s ⇒ OOM abort).
     let n = ((doc.duration.clamp(0.0, 600.0) * sr as f32).ceil() as usize).max(1);
-    let per_track_streams = doc.effective_version() >= 2;
-    let engine = doc.effective_engine();
-    let mut rng = Rng::new(doc.seed);
     let (mut left, mut right) = (vec![0.0f32; n], vec![0.0f32; n]);
-    // Pass 1 — render every track's raw node output in declaration order. All
-    // RNG consumption lives here (v1's shared stream threads through the track
-    // list exactly as it always has; v2 uses id-keyed streams), so the mix
-    // pass below touches no randomness and sidechain followers can read their
-    // source's signal regardless of declaration order.
     let mut layer_ids = Vec::with_capacity(tracks.len());
     let mut rendered = Vec::with_capacity(tracks.len());
     for (ti, t) in tracks.iter().enumerate() {
         let layer_id = t.id.clone().unwrap_or_else(|| format!("layer_{ti}"));
-        // v2 streams are keyed by the stable layer id. The fallback hashes the
+        // Streams are keyed by the stable layer id. The fallback hashes the
         // exact id `ensure_track_ids` will backfill, so a document's noise is
         // identical before and after the backfill pass.
         let stream = layer_stream_key(&layer_id);
         layer_ids.push(layer_id);
         if t.mute {
-            // Muted layers stay off the bus. v1's single stream must still
-            // advance exactly as if the track had rendered, or muting one
-            // layer would change every later layer's noise. (Cheap shape test:
-            // native-stereo sampler tracks never touch the shared stream.)
-            if !per_track_streams && !is_native_stereo(&t.node) {
-                let _ = render_node(
-                    &t.node,
-                    n,
-                    sr,
-                    &mut rng,
-                    engine,
-                    track_stream_seed(doc.seed, stream),
-                );
-            }
             rendered.push(TrackRender::Muted);
             continue;
         }
-        // The layer lands `at` seconds into the song: render full-length, then
-        // shift right and truncate (never shortening the render keeps RNG
-        // consumption — and therefore v1 sibling content — offset-invariant).
         let off = ((t.at.max(0.0) * sr as f32).round() as usize).min(n);
         if let Some((l, r)) = track_native_stereo(&t.node, n, sr) {
             rendered.push(TrackRender::Stereo {
@@ -374,20 +320,10 @@ fn render_tracks_impl(
             });
         } else {
             let base = track_stream_seed(doc.seed, stream);
-            let mono = if per_track_streams {
-                let mut trng = Rng::new(base);
-                render_node(&t.node, n, sr, &mut trng, engine, base)
-            } else {
-                render_node(&t.node, n, sr, &mut rng, engine, base)
-            };
+            let mono = { render_node(&t.node, n, sr, base) };
             rendered.push(TrackRender::Mono { off, sig: mono });
         }
     }
-    // Pass 2 — mix: pan/gain (static or automated), the sidechain duck, and
-    // the per-layer contribution stats. Each track's contribution is built in
-    // a scratch stereo buffer, then routed: to the master bus by default, to
-    // its named `bus` when routed, plus a copy per `send`. A document without
-    // buses routes everything to master — the exact legacy mix.
     let mut layers = Vec::with_capacity(tracks.len());
     let mut energies = Vec::with_capacity(tracks.len());
     let mut stems = want_stems.then(Vec::new);
@@ -423,16 +359,16 @@ fn render_tracks_impl(
         // fast path, byte-identical); with automation it varies per bus sample.
         // The closure returns the same constant value when unautomated, so the
         // arithmetic on existing documents is unchanged.
-        let (glc, grc) = pan_gains(t.pan.clamp(-1.0, 1.0), t.gain, engine);
-        let gain_lane = lane_for(&t.automation, AutoTarget::Gain, n, sr, t.gain, engine);
-        let pan_lane = lane_for(&t.automation, AutoTarget::Pan, n, sr, t.pan, engine);
+        let (glc, grc) = pan_gains(t.pan.clamp(-1.0, 1.0), t.gain);
+        let gain_lane = lane_for(&t.automation, AutoTarget::Gain, n, sr, t.gain);
+        let pan_lane = lane_for(&t.automation, AutoTarget::Pan, n, sr, t.pan);
         let gl_gr = |pos: usize| -> (f32, f32) {
             match (&gain_lane, &pan_lane) {
                 (None, None) => (glc, grc),
                 (g, p) => {
                     let gain = g.as_ref().map_or(t.gain, |a| a[pos]);
                     let pan = p.as_ref().map_or(t.pan, |a| a[pos]).clamp(-1.0, 1.0);
-                    pan_gains(pan, gain, engine)
+                    pan_gains(pan, gain)
                 }
             }
         };
@@ -445,7 +381,7 @@ fn render_tracks_impl(
                 .iter()
                 .enumerate()
                 .find(|(_, s)| s.id.as_deref() == Some(sc.source.as_str()))?;
-            Some(duck_envelope(&rendered[si], source, sc, n, sr, engine))
+            Some(duck_envelope(&rendered[si], source, sc, n, sr))
         });
         // Contribution stats accumulate over what actually lands (post
         // fader/pan/offset/duck, pre bus/master). Per-channel energy keeps
@@ -532,8 +468,8 @@ fn render_tracks_impl(
         let rms = ((tsum / (2 * n) as f64) as f32).sqrt();
         layers.push(LayerStats {
             id: layer_id,
-            peak_dbfs: crate::dsp::dbfs_e(tpeak, engine),
-            rms_dbfs: crate::dsp::dbfs_e(rms, engine),
+            peak_dbfs: crate::dsp::dbfs(tpeak),
+            rms_dbfs: crate::dsp::dbfs(rms),
             energy_pct: 0.0, // filled below once the total is known
             mute: false,
         });
@@ -545,23 +481,16 @@ fn render_tracks_impl(
             l.energy_pct = ((e / total) * 100.0) as f32;
         }
     }
-    // Buses: inserts run per bus with its own keyed stream (the same
-    // per-channel treatment as the master chain — a reverb gets the
-    // decorrelated tails), then the return fader, then onto the master bus.
-    // Bus streams are always id-keyed: no historical document has buses, so
-    // there is no shared-stream behavior to preserve.
     for (bi, b) in buses.iter().enumerate() {
         let (mut bl, mut br) = std::mem::take(&mut bus_bufs[bi]);
         let bpath = track_stream_seed(doc.seed, layer_stream_key(&format!("bus:{}", b.id)));
-        let mut brng = Rng::new(bpath);
         for fx in &b.effects {
             if let Node::Reverb { room, mix } = fx {
                 bl = reverb(&bl, *room, *mix, sr, 0);
                 br = reverb(&br, *room, *mix, sr, 23);
             } else {
-                let mut rl = brng.clone();
-                bl = apply_processor(fx, &bl, sr, &mut rl, engine, bpath);
-                br = apply_processor(fx, &br, sr, &mut brng, engine, bpath);
+                bl = apply_processor(fx, &bl, sr, bpath);
+                br = apply_processor(fx, &br, sr, bpath);
             }
         }
         let gain = if b.gain.is_finite() { b.gain } else { 1.0 };
@@ -579,11 +508,8 @@ fn render_tracks_impl(
             right[i] += br[i] * gain;
         }
     }
-    if per_track_streams {
-        rng = Rng::new(track_stream_seed(doc.seed, MASTER_STREAM));
-    }
     // Master bus: run each processor on both channels with identical state
-    // seeds (the rng is cloned so e.g. a duck trigger fires identically), and
+    // seeds (so e.g. a duck trigger fires identically), and
     // give the reverb the classic Freeverb stereo spread for a wide tail.
     for m in master {
         if let Node::Reverb { room, mix } = m {
@@ -591,9 +517,9 @@ fn render_tracks_impl(
             right = reverb(&right, *room, *mix, sr, 23);
         } else {
             let mpath = track_stream_seed(doc.seed, MASTER_STREAM);
-            let mut rl = rng.clone();
-            left = apply_processor(m, &left, sr, &mut rl, engine, mpath);
-            right = apply_processor(m, &right, sr, &mut rng, engine, mpath);
+
+            left = apply_processor(m, &left, sr, mpath);
+            right = apply_processor(m, &right, sr, mpath);
         }
     }
     if let Playback::Loop {
@@ -602,20 +528,11 @@ fn render_tracks_impl(
         crossfade_secs,
     } = doc.playback
     {
-        left = make_loop_buffer(&left, sr, start_secs, end_secs, crossfade_secs, engine);
-        right = make_loop_buffer(&right, sr, start_secs, end_secs, crossfade_secs, engine);
+        left = make_loop_buffer(&left, sr, start_secs, end_secs, crossfade_secs);
+        right = make_loop_buffer(&right, sr, start_secs, end_secs, crossfade_secs);
     }
     if let Some(nz) = &doc.normalize {
-        if engine >= 4 {
-            // One shared gain over the stereo program — the authored balance
-            // is sacred. Engine ≤ 3 docs keep the original per-channel stage
-            // bit-for-bit (it gain-matched L and R independently, collapsing
-            // any asymmetric mix toward center).
-            normalize_output_v4(&mut [&mut left, &mut right], nz, sr, engine);
-        } else {
-            normalize_output(&mut left, nz);
-            normalize_output(&mut right, nz);
-        }
+        normalize_output(&mut [&mut left, &mut right], nz, sr);
     }
     peak_limit(&mut [&mut left, &mut right]);
     Some((
@@ -631,8 +548,7 @@ fn render_tracks_impl(
 /// A track whose node is directly a sampler seq renders in native stereo.
 #[cfg(feature = "sampler")]
 pub(super) fn track_native_stereo(node: &Node, n: usize, sr: u32) -> Option<(Signal, Signal)> {
-    // Engine 0: unused by the sampler (external synth, engine-independent).
-    let (voice, bpm, steps_per_beat, notes) = SeqVoice::from_node(node, 0)?;
+    let (voice, bpm, steps_per_beat, notes) = SeqVoice::from_node(node)?;
     if voice.wave != SeqWave::Sampler {
         return None;
     }

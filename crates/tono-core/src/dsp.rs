@@ -1,18 +1,8 @@
-//! Small shared DSP core: the deterministic PRNG, dB conversions, and the
-//! output peak limit. One copy of each — these protect the project's
-//! determinism contract (same graph + seed ⇒ identical bytes), so they must
-//! never fork per module.
-//!
-//! Engine revision 5 (ADR 0001) routes every transcendental in the
-//! byte-pinned render paths ([`crate::render`], [`crate::streaming`]) through
-//! the engine-dispatching wrappers below, which select the deterministic
-//! `crate::det` kernels over platform libm. The measurement and authoring
-//! surface — [`crate::analysis`], `instrument/`, `adaptive/`, `vary.rs`,
-//! `song/pattern.rs`, `music.rs` — deliberately stays on platform libm: it
-//! is not part of the byte-identity promise.
+//! Shared deterministic DSP math, RNG, level measurement and output limiting.
+//! Renderers use the fixed kernels in `det` so the same graph, seed and sample
+//! rate produces identical samples across supported platforms.
 
-/// The SplitMix64 golden-gamma increment — the seed-spacing constant every
-/// deterministic stream derivation shares.
+/// SplitMix64's step constant, shared by deterministic stream derivation.
 pub(crate) const GOLDEN_GAMMA: u64 = 0x9E37_79B9_7F4A_7C15;
 
 /// FNV-1a offset basis and prime — the hashing primitives behind stable
@@ -63,7 +53,7 @@ impl Rng {
     }
 }
 
-/// FNV-1a over a layer id: the stable per-layer RNG stream key for schema-v2
+/// FNV-1a over a layer id: the stable per-layer RNG stream key for
 /// mixer documents. Lives here (not in the renderer) because `validate` also
 /// uses it to reject the rare id pair whose hashes collide — a collision would
 /// silently give two layers identical noise.
@@ -78,7 +68,7 @@ pub fn layer_stream_key(id: &str) -> u64 {
 
 /// Descend a structural node-path key by one child index (FNV-1a step). The path
 /// makes each RNG leaf's identity a deterministic function of its POSITION in the
-/// graph (not of evaluation order), so under `engine >= 2` a per-sample streaming
+/// graph (not of evaluation order), so a per-sample streaming
 /// render draws the same randomness as the offline whole-buffer render.
 pub(crate) fn node_path(parent: u64, child: usize) -> u64 {
     (parent ^ (child as u64).wrapping_add(1)).wrapping_mul(FNV_PRIME)
@@ -127,178 +117,86 @@ pub(crate) const CHORUS_SWING_SECS: f32 = 0.010;
 pub(crate) const FLANGER_BASE_SECS: f32 = 0.0025;
 pub(crate) const FLANGER_SWING_SECS: f32 = 0.002;
 
-/// Engine-dispatched sine: `crate::det::sinf` for engine ≥ 5, platform libm
-/// below (ADR 0001) — the one dispatch every render-path sine goes through.
+/// Deterministic sine.
 #[inline]
-pub fn sin(x: f32, engine: u32) -> f32 {
-    if engine >= 5 {
-        crate::det::sinf(x)
-    } else {
-        x.sin()
-    }
+pub(crate) fn sin(x: f32) -> f32 {
+    crate::det::sinf(x)
 }
 
-/// Engine-dispatched cosine: `crate::det::cosf` for engine ≥ 5, platform
-/// libm below (ADR 0001).
+/// Deterministic cosine.
 #[inline]
-pub fn cos(x: f32, engine: u32) -> f32 {
-    if engine >= 5 {
-        crate::det::cosf(x)
-    } else {
-        x.cos()
-    }
+pub(crate) fn cos(x: f32) -> f32 {
+    crate::det::cosf(x)
 }
 
-/// Engine-dispatched `sin_cos` pair: the det kernels for engine ≥ 5, one
-/// platform `sin_cos` call below (ADR 0001) — kept as a pair so the legacy
-/// path is bit-exact with what historical renders computed.
+/// Deterministic sine/cosine pair.
 #[inline]
-pub fn sin_cos(x: f32, engine: u32) -> (f32, f32) {
-    if engine >= 5 {
-        (crate::det::sinf(x), crate::det::cosf(x))
-    } else {
-        x.sin_cos()
-    }
+pub(crate) fn sin_cos(x: f32) -> (f32, f32) {
+    (crate::det::sinf(x), crate::det::cosf(x))
 }
 
-/// Engine-dispatched exponential: `crate::det::expf` for engine ≥ 5,
-/// platform libm below (ADR 0001).
+/// Deterministic exponential.
 #[inline]
-pub fn exp(x: f32, engine: u32) -> f32 {
-    if engine >= 5 {
-        crate::det::expf(x)
-    } else {
-        x.exp()
-    }
+pub(crate) fn exp(x: f32) -> f32 {
+    crate::det::expf(x)
 }
 
-/// Engine-dispatched natural log: `crate::det::lnf` for engine ≥ 5,
-/// platform libm below (ADR 0001).
+/// Deterministic ln(1 + x).
 #[inline]
-pub fn ln(x: f32, engine: u32) -> f32 {
-    if engine >= 5 {
-        crate::det::lnf(x)
-    } else {
-        x.ln()
-    }
+pub(crate) fn ln_1p(x: f32) -> f32 {
+    crate::det::lnf(1.0 + x)
 }
 
-/// Engine-dispatched `ln_1p`: engine ≥ 5 evaluates `ln(1 + x)` through
-/// `crate::det::lnf`, below that platform `ln_1p` (ADR 0001).
+/// Deterministic power.
 #[inline]
-pub fn ln_1p(x: f32, engine: u32) -> f32 {
-    if engine >= 5 {
-        crate::det::lnf(1.0 + x)
-    } else {
-        x.ln_1p()
-    }
+pub(crate) fn powf(x: f32, y: f32) -> f32 {
+    crate::det::powff(x, y)
 }
 
-/// Engine-dispatched `x^y`: `crate::det::powff` for engine ≥ 5, platform
-/// libm below (ADR 0001).
+/// Deterministic hyperbolic tangent.
 #[inline]
-pub fn powf(x: f32, y: f32, engine: u32) -> f32 {
-    if engine >= 5 {
-        crate::det::powff(x, y)
-    } else {
-        x.powf(y)
-    }
+pub(crate) fn tanh(x: f32) -> f32 {
+    crate::det::tanhf(x)
 }
 
-/// Engine-dispatched hyperbolic tangent: `crate::det::tanhf` for engine ≥
-/// 5, platform libm below (ADR 0001).
+/// Deterministic base-10 log.
 #[inline]
-pub fn tanh(x: f32, engine: u32) -> f32 {
-    if engine >= 5 {
-        crate::det::tanhf(x)
-    } else {
-        x.tanh()
-    }
+pub(crate) fn log10(x: f32) -> f32 {
+    crate::det::log10f(x)
 }
 
-/// Engine-dispatched base-10 log: `crate::det::log10f` for engine ≥ 5,
-/// platform libm below (ADR 0001).
+/// Deterministic base-2 log.
 #[inline]
-pub fn log10(x: f32, engine: u32) -> f32 {
-    if engine >= 5 {
-        crate::det::log10f(x)
-    } else {
-        x.log10()
-    }
+pub(crate) fn log2(x: f32) -> f32 {
+    crate::det::lnf(x) / crate::det::lnf(2.0)
 }
 
-/// Engine-dispatched base-2 log: engine ≥ 5 evaluates `ln(x)/ln(2)` through
-/// `crate::det::lnf`, below that platform `log2` (ADR 0001).
+/// Deterministic f64 tangent.
 #[inline]
-pub fn log2(x: f32, engine: u32) -> f32 {
-    if engine >= 5 {
-        crate::det::lnf(x) / crate::det::lnf(2.0)
-    } else {
-        x.log2()
-    }
+pub(crate) fn tan_f64(x: f64) -> f64 {
+    crate::det::sin(x) / crate::det::cos(x)
 }
 
-/// Engine-dispatched f64 tangent: engine ≥ 5 evaluates `sin/cos` through the
-/// `crate::det` kernels, below that platform `tan` (ADR 0001). Feeds the
-/// K-weighting coefficient derivation.
+/// Deterministic f64 power.
 #[inline]
-pub fn tan_f64(x: f64, engine: u32) -> f64 {
-    if engine >= 5 {
-        crate::det::sin(x) / crate::det::cos(x)
-    } else {
-        x.tan()
-    }
+pub(crate) fn powf_f64(x: f64, y: f64) -> f64 {
+    crate::det::powf(x, y)
 }
 
-/// Engine-dispatched f64 `x^y`: `crate::det::powf` for engine ≥ 5, platform
-/// libm below (ADR 0001).
+/// Deterministic f64 base-10 log.
 #[inline]
-pub fn powf_f64(x: f64, y: f64, engine: u32) -> f64 {
-    if engine >= 5 {
-        crate::det::powf(x, y)
-    } else {
-        x.powf(y)
-    }
+pub(crate) fn log10_f64(x: f64) -> f64 {
+    crate::det::log10(x)
 }
 
-/// Engine-dispatched f64 base-10 log: `crate::det::log10` for engine ≥ 5,
-/// platform libm below (ADR 0001).
-#[inline]
-pub fn log10_f64(x: f64, engine: u32) -> f64 {
-    if engine >= 5 {
-        crate::det::log10(x)
-    } else {
-        x.log10()
-    }
-}
-
-/// Linear amplitude → dBFS (floored at −180 dB so silence stays finite).
-///
-/// Engine-0 (platform-libm) semantics — the historical public behavior, kept
-/// for the measurement/authoring surface. The render paths call [`dbfs_e`]
-/// with the document's engine (ADR 0001).
+/// Linear amplitude to dBFS, floored at −180 dB for silence.
 pub fn dbfs(x: f32) -> f32 {
-    dbfs_e(x, 0)
+    20.0 * log10(x.max(1e-9))
 }
 
-/// [`dbfs`] at a given engine revision: engine ≥ 5 evaluates through the
-/// deterministic `crate::det` kernels (cross-platform identical).
-pub fn dbfs_e(x: f32, engine: u32) -> f32 {
-    20.0 * log10(x.max(1e-9), engine)
-}
-
-/// dB → linear gain.
-///
-/// Engine-0 (platform-libm) semantics, like [`dbfs`]. The render paths call
-/// [`db_to_lin_e`] with the document's engine (ADR 0001).
+/// Decibels to linear amplitude.
 pub fn db_to_lin(db: f32) -> f32 {
-    db_to_lin_e(db, 0)
-}
-
-/// [`db_to_lin`] at a given engine revision: engine ≥ 5 evaluates through
-/// the deterministic `crate::det` kernels (cross-platform identical).
-pub fn db_to_lin_e(db: f32, engine: u32) -> f32 {
-    powf(10.0, db / 20.0, engine)
+    powf(10.0, db / 20.0)
 }
 
 /// Output sample-peak ceiling (≈ −0.1 dBFS).
@@ -328,28 +226,6 @@ pub fn peak_limit(channels: &mut [&mut [f32]]) {
             }
         }
     }
-}
-
-/// LEGACY (engine ≤ 3) inter-sample peak estimate by 4× *linear* interpolation.
-/// Linear interpolation is bounded by the adjacent samples, so this can never
-/// exceed the sample peak — it under-reads true peaks by up to ~3 dB. Kept
-/// bit-exact because the engine ≤ 3 normalize output stage limited against it;
-/// everything else should use [`true_peak_oversampled`].
-pub fn true_peak(samples: &[f32]) -> f32 {
-    if samples.len() < 2 {
-        return samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
-    }
-    let mut peak = 0.0f32;
-    for w in samples.windows(2) {
-        for k in 0..4 {
-            let t = k as f32 / 4.0;
-            let v = (w[0] * (1.0 - t) + w[1] * t).abs();
-            if v > peak {
-                peak = v;
-            }
-        }
-    }
-    peak
 }
 
 // The three intermediate phases of a 4× polyphase windowed-sinc interpolator
@@ -425,43 +301,18 @@ pub fn true_peak_oversampled(samples: &[f32]) -> f32 {
     peak
 }
 
-/// LEGACY (engine ≤ 3) K-weighted integrated loudness: ungated, mono, and
-/// pinned to the standard 48 kHz coefficient table at every sample rate. Kept
-/// bit-exact because the engine ≤ 3 normalize output stage gain-matched
-/// against it; everything else should use [`loudness_lufs_gated`]. Returns
-/// −120 for silence.
-pub fn loudness_lufs(samples: &[f32]) -> f32 {
-    if samples.is_empty() {
-        return -120.0;
-    }
-    // Stage 1: high-shelf. Stage 2: high-pass.
-    let shelf = biquad_df1(
-        samples,
-        [1.535_124_9, -2.691_696_2, 1.198_392_8],
-        [-1.690_659_3, 0.732_480_8],
-    );
-    let weighted = biquad_df1(&shelf, [1.0, -2.0, 1.0], [-1.990_047_5, 0.990_072_3]);
-    let ms = weighted.iter().map(|x| x * x).sum::<f32>() / weighted.len() as f32;
-    -0.691 + 10.0 * ms.max(1e-12).log10()
-}
-
-/// The BS.1770 K-weighting biquad coefficients for `sr`, derived from the
-/// analog prototype (a +4 dB spherical-head high shelf at ~1.68 kHz and the
-/// RLB rumble high-pass at ~38 Hz) via the bilinear transform. At 48 kHz this
-/// reproduces the standard's coefficient table. `engine` dispatches the f64
-/// transcendentals (tan, powf) — engine ≥ 5 derives through `crate::det`,
-/// so the coefficients are cross-platform identical (ADR 0001).
+/// BS.1770 K-weighting coefficients at `sr`, derived with deterministic math.
 /// Returns `(shelf_b, shelf_a, highpass_b, highpass_a)`.
-fn k_weighting_coeffs(sr: u32, engine: u32) -> ([f32; 3], [f32; 2], [f32; 3], [f32; 2]) {
+fn k_weighting_coeffs(sr: u32) -> ([f32; 3], [f32; 2], [f32; 3], [f32; 2]) {
     let fs = sr as f64;
     let (f0, gain_db, q) = (
         1_681.974_450_955_533,
         3.999_843_853_973_347,
         0.707_175_236_955_419_6,
     );
-    let k = tan_f64(std::f64::consts::PI * f0 / fs, engine);
-    let vh = powf_f64(10.0, gain_db / 20.0, engine);
-    let vb = powf_f64(vh, 0.499_666_774_154_541_6, engine);
+    let k = tan_f64(std::f64::consts::PI * f0 / fs);
+    let vh = powf_f64(10.0, gain_db / 20.0);
+    let vb = powf_f64(vh, 0.499_666_774_154_541_6);
     let d = 1.0 + k / q + k * k;
     let shelf_b = [
         ((vh + vb * k / q + k * k) / d) as f32,
@@ -473,7 +324,7 @@ fn k_weighting_coeffs(sr: u32, engine: u32) -> ([f32; 3], [f32; 2], [f32; 3], [f
         ((1.0 - k / q + k * k) / d) as f32,
     ];
     let (f0, q) = (38.135_470_876_024_44, 0.500_327_037_323_877_3);
-    let k = tan_f64(std::f64::consts::PI * f0 / fs, engine);
+    let k = tan_f64(std::f64::consts::PI * f0 / fs);
     let d = 1.0 + k / q + k * k;
     let hp_b = [1.0, -2.0, 1.0];
     let hp_a = [
@@ -484,35 +335,21 @@ fn k_weighting_coeffs(sr: u32, engine: u32) -> ([f32; 3], [f32; 2], [f32; 3], [f
 }
 
 /// K-weight one channel at its actual sample rate.
-fn k_weight(samples: &[f32], sr: u32, engine: u32) -> Vec<f32> {
-    let (sb, sa, hb, ha) = k_weighting_coeffs(sr, engine);
+fn k_weight(samples: &[f32], sr: u32) -> Vec<f32> {
+    let (sb, sa, hb, ha) = k_weighting_coeffs(sr);
     biquad_df1(&biquad_df1(samples, sb, sa), hb, ha)
 }
 
-/// ITU-R BS.1770-4 gated integrated loudness over one or more channels (pass
-/// `[mono]` or `[left, right]`): K-weighting at the actual sample rate,
-/// 400 ms blocks at 75% overlap, the −70 LUFS absolute gate, then the −10 LU
-/// relative gate; channel energies sum per the spec. Accumulates in f64, so
-/// long renders don't stall an f32 accumulator. Returns −120 for silence.
-///
-/// Engine-0 (platform-libm) semantics — the historical public behavior, kept
-/// for the analysis surface. The render output stage calls
-/// [`loudness_lufs_gated_e`] with the document's engine (ADR 0001).
+/// Gated BS.1770 loudness at the actual sample rate over all channels.
+/// Uses deterministic coefficients and returns −120 for silence.
 pub fn loudness_lufs_gated(channels: &[&[f32]], sr: u32) -> f32 {
-    loudness_lufs_gated_e(channels, sr, 0)
-}
-
-/// [`loudness_lufs_gated`] at a given engine revision: engine ≥ 5 derives the
-/// K-weighting coefficients and the log10s through the deterministic
-/// `crate::det` kernels, so the reading is cross-platform identical.
-pub fn loudness_lufs_gated_e(channels: &[&[f32]], sr: u32, engine: u32) -> f32 {
     // Gate over the shortest channel so mismatched lengths can't panic the
     // block slicing (in-repo callers pass equal lengths; the fn is pub).
     let n = channels.iter().map(|c| c.len()).min().unwrap_or(0);
     if n == 0 {
         return -120.0;
     }
-    let weighted: Vec<Vec<f32>> = channels.iter().map(|c| k_weight(c, sr, engine)).collect();
+    let weighted: Vec<Vec<f32>> = channels.iter().map(|c| k_weight(c, sr)).collect();
     let sum_ms = |range: std::ops::Range<usize>| -> f64 {
         weighted
             .iter()
@@ -525,7 +362,7 @@ pub fn loudness_lufs_gated_e(channels: &[&[f32]], sr: u32, engine: u32) -> f32 {
             })
             .sum()
     };
-    let lufs = |ms: f64| -0.691 + 10.0 * log10_f64(ms.max(1e-12), engine);
+    let lufs = |ms: f64| -0.691 + 10.0 * log10_f64(ms.max(1e-12));
     let block = (sr as usize * 2) / 5; // 400 ms
     if n < block || block == 0 {
         // Too short to gate: integrate over the whole signal.
@@ -568,20 +405,8 @@ fn biquad_df1(input: &[f32], b: [f32; 3], a: [f32; 2]) -> Vec<f32> {
 }
 
 /// MIDI note number (fractional) for a frequency in Hz — A4 = 440 = 69.
-/// The inverse of the wire encoding: seq pitches travel as Hz, and the drum
-/// kit / exporters recover the MIDI number from the onset frequency.
-///
-/// Engine-0 (platform-libm) semantics — the historical public behavior. The
-/// render paths call [`hz_to_midi_e`] with the document's engine (ADR 0001).
 pub fn hz_to_midi(hz: f32) -> f32 {
-    hz_to_midi_e(hz, 0)
-}
-
-/// [`hz_to_midi`] at a given engine revision: engine ≥ 5 evaluates the log2
-/// through the deterministic `crate::det` kernels (cross-platform
-/// identical).
-pub fn hz_to_midi_e(hz: f32, engine: u32) -> f32 {
-    69.0 + 12.0 * log2(hz / 440.0, engine)
+    69.0 + 12.0 * log2(hz / 440.0)
 }
 
 /// −ln(1000): decay-rate constant so an exponential ring reaches −60 dB
@@ -589,27 +414,16 @@ pub fn hz_to_midi_e(hz: f32, engine: u32) -> f32 {
 /// (offline + streaming twins) and the pluck body bank.
 pub(crate) const NEG_LN_1000: f32 = -6.907_755;
 
-/// The LTI coefficients `(a1, a2, b0)` of one modal resonator (a two-pole
-/// damped sine): the pole radius places the ring at exactly −60 dB after
-/// `decay` seconds, and `b0` normalises the impulse-response peak to `gain`,
-/// so a mode's loudness is its gain regardless of ring time. One definition
-/// for the offline and streaming modal banks. `engine` dispatches the
-/// transcendentals — engine ≥ 5 derives through `crate::det` (ADR 0001).
-pub(crate) fn modal_coeffs(
-    freq: f32,
-    decay: f32,
-    gain: f32,
-    sr: u32,
-    engine: u32,
-) -> (f32, f32, f32) {
+/// Shared deterministic coefficients for offline and streaming modal banks.
+pub(crate) fn modal_coeffs(freq: f32, decay: f32, gain: f32, sr: u32) -> (f32, f32, f32) {
     let srf = sr as f32;
     let nyq = srf * 0.5;
     let f0 = freq.clamp(1.0, (nyq - 1.0).max(1.0));
     let decay = decay.max(1e-3);
     let w0 = std::f32::consts::TAU * f0 / srf;
-    let (sin0, cos0) = (sin(w0, engine), cos(w0, engine));
+    let (sin0, cos0) = (sin(w0), cos(w0));
     // r so the ring reaches −60 dB (×0.001) after `decay` seconds.
-    let r = exp(NEG_LN_1000 / (decay * srf), engine);
+    let r = exp(NEG_LN_1000 / (decay * srf));
     (2.0 * r * cos0, -r * r, gain * sin0)
 }
 
@@ -686,7 +500,7 @@ mod tests {
 
     #[test]
     fn k_weighting_at_48k_matches_the_standard_table() {
-        let (sb, sa, hb, ha) = k_weighting_coeffs(48_000, 0);
+        let (sb, sa, hb, ha) = k_weighting_coeffs(48_000);
         let expect = |got: f32, want: f32| {
             assert!((got - want).abs() < 1e-4, "got {got}, want {want}");
         };
@@ -703,14 +517,12 @@ mod tests {
     #[test]
     fn oversampled_true_peak_sees_between_the_samples() {
         // A sine at fs/4 with phase π/4 samples at ±0.7071 while its real
-        // peak is 1.0 — the classic inter-sample-over test. The legacy linear
-        // estimate is mathematically bounded by the sample peak.
+        // peak is 1.0 — the classic inter-sample-over test.
         let x: Vec<f32> = (0..1024)
             .map(|i| (std::f32::consts::FRAC_PI_2 * i as f32 + std::f32::consts::FRAC_PI_4).sin())
             .collect();
         let sample_peak = x.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
         assert!((sample_peak - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-3);
-        assert!(true_peak(&x) <= sample_peak + 1e-6, "legacy: bounded");
         let tp = true_peak_oversampled(&x);
         assert!(
             (0.98..=1.05).contains(&tp),
@@ -735,10 +547,6 @@ mod tests {
         assert!(
             (gated - solo).abs() < 0.35,
             "gated {gated} vs solo {solo}: silence must not drag the reading"
-        );
-        assert!(
-            loudness_lufs(&padded) < solo - 4.0,
-            "the ungated legacy reading is dragged down by the padding"
         );
         // Stereo: the same program in both channels reads +3 LU (energy sum).
         let stereo = loudness_lufs_gated(&[&tone, &tone], sr);

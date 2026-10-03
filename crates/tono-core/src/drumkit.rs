@@ -50,7 +50,7 @@ struct DrumVoice {
 /// of trailing silence. Empty if the pitch maps to no drum.
 fn render_drum(midi: u8, sample_rate: u32) -> Vec<f32> {
     let doc = serde_json::json!({
-        "name": "drum", "duration": 1.5, "sample_rate": sample_rate, "engine": 2,
+        "name": "drum", "duration": 1.5, "sample_rate": sample_rate, "engine": 5,
         "root": { "type": "seq", "bpm": 120, "steps_per_beat": 4, "wave": "kit",
             "env": { "a": 0.001, "d": 0.4, "s": 0.0, "r": 0.15 },
             "notes": [ { "step": 0, "len": 2, "pitch": format!("midi:{midi}"), "gain": 1.0 } ] }

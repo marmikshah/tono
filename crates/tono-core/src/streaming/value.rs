@@ -1,7 +1,7 @@
 //! Per-sample [`Value`] evaluation — the closed-form modulators plus Rand's
 //! stateful walk, byte-identical to the offline `eval_value`.
 
-use crate::dsl::{Curve, Modulator, Shape, Value, note_to_hz_e};
+use crate::dsl::{Curve, Modulator, Shape, Value, note_to_hz};
 use crate::dsp::{self, Rng, adsr_env};
 use crate::render::{osc, rand_seed};
 
@@ -10,8 +10,7 @@ use crate::render::{osc, rand_seed};
 /// thin loop over this one definition, so the offline and streaming paths
 /// can't diverge. Const/Note are constant; the modulators are the closed
 /// forms. `Rand` is stateful (carries its self-seeded walk) so it must be
-/// stepped once per sample in order. The document's `engine` rides in the two
-/// variants with transcendentals and dispatches them (ADR 0001).
+/// stepped once per sample in order.
 pub(crate) enum Val {
     Const(f32),
     Slide {
@@ -20,7 +19,6 @@ pub(crate) enum Val {
         secs: f32,
         curve: Curve,
         srf: f32,
-        engine: u32,
     },
     Lfo {
         shape: Shape,
@@ -28,7 +26,6 @@ pub(crate) enum Val {
         depth: f32,
         center: f32,
         srf: f32,
-        engine: u32,
     },
     Arp {
         steps: Vec<f32>,
@@ -58,11 +55,11 @@ pub(crate) enum Val {
 }
 
 impl Val {
-    pub(crate) fn build(v: &Value, sr: u32, n: usize, engine: u32) -> Self {
+    pub(crate) fn build(v: &Value, sr: u32, n: usize) -> Self {
         let srf = sr as f32;
         match v {
             Value::Const(c) => Val::Const(*c),
-            Value::Note(name) => Val::Const(note_to_hz_e(name, engine).unwrap_or(440.0)),
+            Value::Note(name) => Val::Const(note_to_hz(name).unwrap_or(440.0)),
             Value::Modulated(m) => match m {
                 Modulator::Slide {
                     from,
@@ -78,7 +75,6 @@ impl Val {
                     secs: secs.max(1e-6),
                     curve: *curve,
                     srf,
-                    engine,
                 },
                 Modulator::Lfo {
                     shape,
@@ -91,7 +87,6 @@ impl Val {
                     depth: *depth,
                     center: *center,
                     srf,
-                    engine,
                 },
                 // Empty steps would divide by zero in eval; an unvalidated doc
                 // must not panic (the offline path yields 0.0 the same way).
@@ -149,15 +144,12 @@ impl Val {
                 secs,
                 curve,
                 srf,
-                engine,
             } => {
                 let tt = t as f32 / *srf;
                 let p = (tt / *secs).clamp(0.0, 1.0);
                 match curve {
                     Curve::Lin => *from + (*to - *from) * p,
-                    Curve::Exp if *from > 0.0 && *to > 0.0 => {
-                        *from * dsp::powf(*to / *from, p, *engine)
-                    }
+                    Curve::Exp if *from > 0.0 && *to > 0.0 => *from * dsp::powf(*to / *from, p),
                     Curve::Exp => {
                         let e = p * p;
                         *from + (*to - *from) * e
@@ -170,10 +162,9 @@ impl Val {
                 depth,
                 center,
                 srf,
-                engine,
             } => {
                 let phase = (t as f32 / *srf * *rate).fract();
-                *center + *depth * osc(*shape, phase, *engine)
+                *center + *depth * osc(*shape, phase)
             }
             Val::Arp { steps, rate, srf } => {
                 let tt = t as f32 / *srf;

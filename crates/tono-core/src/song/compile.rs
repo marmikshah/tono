@@ -5,7 +5,7 @@
 
 use super::{Song, SongError, SongTrack};
 use crate::diag::{CompileError, Diagnostic};
-use crate::dsl::{ENGINE_VERSION, Node, SeqNote, SoundDoc, Track};
+use crate::dsl::{Node, SeqNote, SoundDoc, Track};
 use crate::ids::TrackId;
 use crate::program::{PROGRAM_VERSION, Program, ProgramMeta, TrackMeta, blocker_warnings};
 use crate::units::Beat;
@@ -168,8 +168,6 @@ impl Song {
             doc_tracks.push(self.compile_track(t, &mut end_step, any_solo)?);
         }
 
-        // With a tempo map, seconds come from the segment walk; without one,
-        // the legacy constant-tempo formula (byte-identical history).
         let duration = if self.tempo_map.is_empty() {
             end_step as f32 * sec_per_step + 2.0 // tail for release/reverb
         } else {
@@ -181,19 +179,13 @@ impl Song {
             master: self.master.clone(),
             buses: self.buses.clone(),
         };
-        // The song's pinned engine/version win over the current ones, so a
-        // saved project replays byte-identically across kernel upgrades.
-        // Older saves without the pins keep their historical behavior: the
-        // current engine, v1 schema semantics.
-        let mut json = serde_json::json!({
+        let json = serde_json::json!({
             "name": self.name,
             "duration": duration,
-            "engine": self.engine.unwrap_or(ENGINE_VERSION),
+            "engine": self.engine,
+            "version": self.version,
             "root": serde_json::to_value(&root).map_err(|e| SongError::Compile(e.to_string()))?,
         });
-        if let Some(v) = self.version {
-            json["version"] = serde_json::json!(v);
-        }
         let doc: crate::dsl::SoundDoc = serde_json::from_value(json)
             .map_err(|e| SongError::Compile(format!("song doc build: {e}")))?;
         Ok(doc)
@@ -221,8 +213,6 @@ impl Song {
                 .iter()
                 .find(|p| p.name == pl.pattern)
                 .expect("pattern existence checked above");
-            // Plain meter keeps the legacy integer stride (byte-identical);
-            // maps place bars through the exact beat walk.
             let offset = if self.plain_meter() {
                 pl.bar.saturating_mul(steps_per_bar)
             } else {
@@ -426,8 +416,8 @@ impl Song {
         let estimates = super::estimate::program_estimates(&doc);
         let mut program = Program {
             program_version: PROGRAM_VERSION,
-            schema_version: doc.effective_version(),
-            engine_version: doc.effective_engine(),
+            schema_version: doc.version,
+            engine_version: doc.engine,
             hash: 0,
             target: opts.target,
             doc,
@@ -603,7 +593,7 @@ mod tests {
 
     #[test]
     fn a_streamable_tracks_root_compiles_without_warnings() {
-        // A plain compiled song is a schema-v2 mixer whose parts all stream
+        // A plain compiled song is a mixer whose parts all stream
         // (built-in seq waves, no master chain): no TracksRoot warning, and
         // is_streamable follows.
         let program = demo_song().compile(&CompileOptions::default()).unwrap();
@@ -786,7 +776,7 @@ mod tests {
     fn tempo_map_places_notes_on_exact_frames() {
         // One note at beat 0 and one at beat 8 (step 32): with 120 → 240 at
         // beat 4, the second starts at exactly 3.0 s = frame 144 000 at 48 kHz.
-        let json = r#"{ "name": "mapped", "duration": 4.0, "version": 2, "engine": 4,
+        let json = r#"{ "name": "mapped", "duration": 4.0, "version": 2, "engine": 5,
             "sample_rate": 48000,
             "root": { "type": "seq", "bpm": 120, "wave": "sawtooth",
                 "tempo_map": [ { "at": { "num": 0, "den": 1 }, "bpm": 120 },
@@ -821,7 +811,7 @@ mod tests {
 
     #[test]
     fn a_tempo_mapped_seq_streams_byte_identically() {
-        let json = r#"{ "name": "mapped", "duration": 1.0, "version": 2, "engine": 4,
+        let json = r#"{ "name": "mapped", "duration": 1.0, "version": 2, "engine": 5,
             "root": { "type": "seq", "bpm": 120, "wave": "square",
                 "tempo_map": [ { "at": { "num": 0, "den": 1 }, "bpm": 120 },
                                { "at": { "num": 2, "den": 1 }, "bpm": 90 } ],

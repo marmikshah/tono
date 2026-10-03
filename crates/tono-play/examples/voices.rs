@@ -15,7 +15,7 @@ use tono_play::{Speaker, device_sample_rate};
 
 fn blip(freq: f32) -> SoundDoc {
     serde_json::from_str(&format!(
-        r#"{{ "name":"blip", "duration":0.25, "engine":2, "root": {{ "type":"mul", "inputs": [
+        r#"{{ "name":"blip", "duration":0.25, "engine":5, "root": {{ "type":"mul", "inputs": [
             {{ "type":"square", "freq":{freq} }},
             {{ "type":"env", "a":0.001, "d":0.18, "s":0.0, "r":0.05 }} ] }} }}"#
     ))
@@ -30,7 +30,7 @@ fn main() -> anyhow::Result<()> {
     let low = engine.load(&blip(880.0)); // zappy one-shots
     let pad = engine.load(&{
         let mut d: SoundDoc = serde_json::from_str(
-            r#"{ "name":"pad", "duration":1.0, "engine":2, "root": { "type":"mul", "inputs": [
+            r#"{ "name":"pad", "duration":1.0, "engine":5, "root": { "type":"mul", "inputs": [
                 { "type":"super", "freq":220, "voices":5, "detune_cents":15 },
                 { "type":"env", "a":0.2, "d":0.2, "s":0.8, "r":0.3 } ] } }"#,
         )

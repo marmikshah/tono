@@ -199,11 +199,8 @@ impl SfxSpec {
 pub fn generate_sfx(spec: &SfxSpec) -> anyhow::Result<SoundDoc> {
     spec.validate()?;
     let mut rng = Rng::new(spec.seed ^ 0xD1B5_4A32_D192_ED03);
-    let pitch = crate::dsp::powf(
-        2.0,
-        rng.bi() * spec.variation * 220.0 / 1200.0,
-        TEMPLATE_ENGINE,
-    ) * (0.8 + 0.4 * spec.brightness);
+    let pitch = crate::dsp::powf(2.0, rng.bi() * spec.variation * 220.0 / 1200.0)
+        * (0.8 + 0.4 * spec.brightness);
     let duration = spec.template.duration_secs() * (1.0 + rng.bi() * spec.variation * 0.2);
     // Keep all oscillator/filter values below Nyquist even at 8 kHz.
     let hz = |value: f32| (value * pitch).min(spec.sample_rate as f32 * 0.42);
@@ -348,8 +345,8 @@ pub fn generate_sfx(spec: &SfxSpec) -> anyhow::Result<SoundDoc> {
         0.56,
     );
     let mut doc = SoundDoc::new(spec.template.id(), root);
-    doc.engine = Some(TEMPLATE_ENGINE);
-    doc.version = Some(TEMPLATE_SCHEMA);
+    doc.engine = TEMPLATE_ENGINE;
+    doc.version = TEMPLATE_SCHEMA;
     doc.duration = duration;
     doc.sample_rate = spec.sample_rate;
     doc.seed = spec.seed;

@@ -76,19 +76,19 @@ pub(super) enum Src {
         srf: f32,
         rel_start: f32,
     },
-    /// `engine >= 2` only: a structurally-seeded noise leaf (own RNG).
+    /// a structurally-seeded noise leaf (own RNG).
     Noise {
         rng: Rng,
         kind: NoiseKind,
     },
-    /// `engine >= 2` only: a structurally-seeded dust leaf.
+    /// a structurally-seeded dust leaf.
     Dust {
         rng: Rng,
         p: f32,
         g: f32,
         y: f32,
     },
-    /// `engine >= 2`, non-sampler only: a seq pre-rendered (via the exact offline
+    /// a seq pre-rendered (via the exact offline
     /// synthesis, structurally seeded) and read back block-by-block.
     Seq {
         buf: Vec<f32>,
@@ -106,12 +106,10 @@ impl Src {
     /// `pitch` is a live multiplier applied to every oscillator frequency (1.0 =
     /// as authored) — it drives pitch bend and glide without rebuilding the graph.
     /// At `pitch == 1.0` the arithmetic is bit-identical to the offline render.
-    /// `engine` is the document's kernel revision, dispatched into the
-    /// transcendentals (ADR 0001).
-    pub(super) fn step(&mut self, t: usize, pitch: f32, engine: u32) -> f32 {
+    pub(super) fn step(&mut self, t: usize, pitch: f32) -> f32 {
         match self {
             Src::Sine { phase, freq, srf } => {
-                let v = osc(Shape::Sine, *phase, engine);
+                let v = osc(Shape::Sine, *phase);
                 *phase += freq.eval(t).max(0.0) * pitch / *srf;
                 *phase -= phase.floor();
                 v
@@ -162,8 +160,8 @@ impl Src {
                 ratio,
                 srf,
             } => {
-                let m = index.eval(t) * crate::dsp::sin(TAU * *mph, engine);
-                let y = crate::dsp::sin(TAU * *cph + m, engine);
+                let m = index.eval(t) * crate::dsp::sin(TAU * *mph);
+                let y = crate::dsp::sin(TAU * *cph + m);
                 let fi = freq.eval(t).max(0.0) * pitch;
                 *cph += fi / *srf;
                 *cph -= cph.floor();
@@ -213,7 +211,7 @@ impl Src {
             Src::Impact { w, norm } => {
                 if t < *w {
                     let phase = (t as f32 + 0.5) / *w as f32;
-                    *norm * 0.5 * (1.0 - crate::dsp::cos(TAU * phase, engine))
+                    *norm * 0.5 * (1.0 - crate::dsp::cos(TAU * phase))
                 } else {
                     0.0
                 }
@@ -255,21 +253,21 @@ impl Src {
             Src::Mix(cs) => {
                 let mut acc = 0.0f32;
                 for c in cs.iter_mut() {
-                    acc += c.step(t, pitch, engine);
+                    acc += c.step(t, pitch);
                 }
                 acc
             }
             Src::Mul(cs) => {
                 let mut acc = 1.0f32;
                 for c in cs.iter_mut() {
-                    acc *= c.step(t, pitch, engine);
+                    acc *= c.step(t, pitch);
                 }
                 acc
             }
             Src::Chain { src, procs } => {
-                let mut x = src.step(t, pitch, engine);
+                let mut x = src.step(t, pitch);
                 for p in procs.iter_mut() {
-                    x = p.step(x, t, pitch, engine);
+                    x = p.step(x, t, pitch);
                 }
                 x
             }
@@ -290,14 +288,11 @@ impl Src {
     }
 }
 
-pub(super) fn try_src(node: &Node, sr: u32, n: usize, engine: u32, path: u64) -> Option<Src> {
+pub(super) fn try_src(node: &Node, sr: u32, n: usize, path: u64) -> Option<Src> {
     let srf = sr as f32;
-    let v = |val: &Value| Val::build(val, sr, n, engine);
+    let v = |val: &Value| Val::build(val, sr, n);
     Some(match node {
-        // Engine >= 2: noise/dust own a structurally-seeded RNG (from `path`),
-        // exactly as the offline render_node does under engine >= 2, so the
-        // streamed randomness is byte-identical.
-        Node::Noise { color } if engine >= 2 => Src::Noise {
+        Node::Noise { color } => Src::Noise {
             rng: Rng::new(node_seed(path)),
             kind: match color {
                 NoiseColor::White => NoiseKind::White,
@@ -305,10 +300,10 @@ pub(super) fn try_src(node: &Node, sr: u32, n: usize, engine: u32, path: u64) ->
                 NoiseColor::Brown => NoiseKind::Brown { last: 0.0 },
             },
         },
-        Node::Dust { density, decay } if engine >= 2 => {
+        Node::Dust { density, decay } => {
             let p = (density / srf).clamp(0.0, 1.0);
             let g = if *decay > 0.0 {
-                crate::dsp::exp(-1.0 / (decay * srf), engine)
+                crate::dsp::exp(-1.0 / (decay * srf))
             } else {
                 0.0
             };
@@ -319,11 +314,8 @@ pub(super) fn try_src(node: &Node, sr: u32, n: usize, engine: u32, path: u64) ->
                 y: 0.0,
             }
         }
-        // Non-sampler seq (engine >= 2): pre-render with a structurally-seeded RNG
-        // (the exact offline synthesis) and read it back block-by-block. Sampler
-        // seq is external-synth-coupled and stays on the buffered fallback.
-        Node::Seq { wave, .. } if engine >= 2 && *wave != SeqWave::Sampler => Src::Seq {
-            buf: seq_to_signal(node, n, sr, &mut Rng::new(node_seed(path)), engine),
+        Node::Seq { wave, .. } if *wave != SeqWave::Sampler => Src::Seq {
+            buf: seq_to_signal(node, n, sr, &mut Rng::new(node_seed(path))),
         },
         Node::Sine { freq } => Src::Sine {
             phase: 0.0,
@@ -371,7 +363,7 @@ pub(super) fn try_src(node: &Node, sr: u32, n: usize, engine: u32, path: u64) ->
                 } else {
                     -detune_cents + 2.0 * detune_cents * (k as f32 / (count as f32 - 1.0))
                 };
-                ratios.push(crate::dsp::powf(2.0, cents / 1200.0, engine));
+                ratios.push(crate::dsp::powf(2.0, cents / 1200.0));
             }
             Src::Super {
                 wave: *wave,
@@ -387,7 +379,7 @@ pub(super) fn try_src(node: &Node, sr: u32, n: usize, engine: u32, path: u64) ->
             freq,
             position,
         } => Src::Wavetable {
-            frames: wavetable_frames(*wave, engine),
+            frames: wavetable_frames(*wave),
             phase: 0.0,
             freq: v(freq),
             position: v(position),
@@ -416,23 +408,23 @@ pub(super) fn try_src(node: &Node, sr: u32, n: usize, engine: u32, path: u64) ->
             inputs
                 .iter()
                 .enumerate()
-                .map(|(i, c)| try_src(c, sr, n, engine, node_path(path, i)))
+                .map(|(i, c)| try_src(c, sr, n, node_path(path, i)))
                 .collect::<Option<_>>()?,
         ),
         Node::Mul { inputs } => Src::Mul(
             inputs
                 .iter()
                 .enumerate()
-                .map(|(i, c)| try_src(c, sr, n, engine, node_path(path, i)))
+                .map(|(i, c)| try_src(c, sr, n, node_path(path, i)))
                 .collect::<Option<_>>()?,
         ),
         Node::Chain { stages } => {
             let (first, rest) = stages.split_first()?;
-            let src = Box::new(try_src(first, sr, n, engine, node_path(path, 0))?);
+            let src = Box::new(try_src(first, sr, n, node_path(path, 0))?);
             let procs = rest
                 .iter()
                 .enumerate()
-                .map(|(i, p)| try_proc(p, sr, n, engine, node_path(path, i + 1)))
+                .map(|(i, p)| try_proc(p, sr, n, node_path(path, i + 1)))
                 .collect::<Option<_>>()?;
             Src::Chain { src, procs }
         }

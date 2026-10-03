@@ -1,4 +1,4 @@
-//! The streaming mixer: a schema-v2 `tracks` root rendered block-by-block,
+//! The streaming mixer: a `tracks` root rendered block-by-block,
 //! byte-identical to the offline [`crate::render::render_tracks`].
 //!
 //! The offline mixer is a two-pass whole-buffer render (pass 1 renders every
@@ -10,12 +10,11 @@
 //! argument the rest of the streaming renderer rests on). Per bus position
 //! `p`, in the offline's exact order:
 //!
-//! 1. Each track's graph is stepped for its local sample `p - at` (schema v2
-//!    gives every track its own id-keyed RNG stream, so stepping the same
-//!    graph with the same seed reproduces the offline pass-1 render exactly).
+//! 1. Each track's graph is stepped for its local sample `p - at`. Each
+//!    track has an id-keyed RNG stream, so stepping the same
+//!    graph with the same seed reproduces the offline pass-1 render exactly.
 //!    A muted track contributes exact zeros and its graph is never built —
-//!    v2 streams are id-keyed, so there is no shared-stream RNG accounting
-//!    to reproduce (the offline pushes `TrackRender::Muted` and moves on).
+//!    the offline renderer also skips its graph.
 //! 2. Each sidechain follower's duck envelope advances one step, driven by
 //!    its source's positioned post-fader signal (the source's raw sample ×
 //!    its gain fader at `p`, pre-pan — the offline's `duck_envelope`).
@@ -39,7 +38,7 @@ use crate::render::{LaneCursor, MASTER_STREAM, pan_gains, track_stream_seed};
 
 /// One mixer channel's streaming state.
 struct TrackStream {
-    /// The track's graph. `None` when muted — a v2 muted track draws nothing
+    /// The track's graph. `None` when muted — a muted track draws nothing
     /// and contributes exact silence (the offline's `TrackRender::Muted`).
     src: Option<Src>,
     /// The `at` start offset, in samples.
@@ -84,17 +83,14 @@ struct DuckLink {
 
 /// A stereo insert chain (a bus's inserts or the master chain): every
 /// processor runs as a per-channel pair, and a reverb gets the 0/23
-/// decorrelated-tails spread — the offline bus/master treatment. Under
-/// `engine >= 2` no processor draws from the shared render stream (RNG
-/// leaves self-seed structurally), so two identically-built instances
-/// reproduce the offline's cloned-rng left/right passes bit-for-bit.
+/// decorrelated-tails spread — the offline bus/master treatment. RNG leaves
+/// self-seed structurally, so two identically-built instances reproduce
+/// the offline left/right passes bit-for-bit.
 struct StereoChain {
     fx: Vec<(Proc, Proc)>,
     /// Absolute position on the bus timeline (the closed-form processors —
     /// tremolo, chorus, … — key on it).
     pos: usize,
-    /// The document's kernel revision, forwarded into every `Proc::step`.
-    engine: u32,
 }
 
 impl StereoChain {
@@ -102,7 +98,7 @@ impl StereoChain {
     /// processor. `path` is the bus's (or master's) stream seed — the same
     /// path the offline hands every insert in the chain, so e.g. a `duck`'s
     /// trigger seeds identically.
-    fn build(nodes: &[Node], sr: u32, n: usize, engine: u32, path: u64) -> Option<Self> {
+    fn build(nodes: &[Node], sr: u32, n: usize, path: u64) -> Option<Self> {
         let fx = nodes
             .iter()
             .map(|node| {
@@ -112,25 +108,22 @@ impl StereoChain {
                         reverb_proc(*room, *mix, sr, 23),
                     ))
                 } else {
-                    Some((
-                        try_proc(node, sr, n, engine, path)?,
-                        try_proc(node, sr, n, engine, path)?,
-                    ))
+                    Some((try_proc(node, sr, n, path)?, try_proc(node, sr, n, path)?))
                 }
             })
             .collect::<Option<_>>()?;
-        Some(StereoChain { fx, pos: 0, engine })
+        Some(StereoChain { fx, pos: 0 })
     }
 
     /// Process one stereo sample.
     fn step(&mut self, l: f32, r: f32) -> (f32, f32) {
         let pos = self.pos;
         self.pos += 1;
-        let engine = self.engine;
+
         let (mut l, mut r) = (l, r);
         for (pl, pr) in self.fx.iter_mut() {
-            l = pl.step(l, pos, 1.0, engine);
-            r = pr.step(r, pos, 1.0, engine);
+            l = pl.step(l, pos, 1.0);
+            r = pr.step(r, pos, 1.0);
         }
         (l, r)
     }
@@ -161,14 +154,12 @@ pub(crate) struct StreamTracks {
     /// Per-bus current input sample (this position's routed + sent sum).
     bus_in: Vec<(f32, f32)>,
     sr: u32,
-    /// The document's kernel revision (ADR 0001), forwarded into the graphs.
-    engine: u32,
     /// The bus position (absolute sample index on the song timeline).
     pos: usize,
 }
 
 impl StreamTracks {
-    /// Build the mixer for a schema-v2 `tracks` document, or `None` if any
+    /// Build the mixer for a `tracks` document, or `None` if any
     /// part isn't streamable ([`StreamGraph::blockers`](super::StreamGraph::blockers)
     /// reports the same failures with their track/bus context, so the two
     /// stay in agreement).
@@ -181,15 +172,12 @@ impl StreamTracks {
         else {
             return None;
         };
-        // v1's shared-stream RNG threading can't be reproduced block-wise.
-        if doc.effective_version() < 2 {
-            return None;
-        }
+
         let sr = doc.sample_rate;
         // The duration clamp mirrors the offline render paths so an
         // unvalidated doc can't request an unbounded seq pre-render here.
         let n = ((doc.duration.clamp(0.0, 600.0) * sr as f32).ceil() as usize).max(1);
-        let engine = doc.effective_engine();
+
         let bus_index = |id: &str| buses.iter().position(|b| b.id == id);
         let mut out_tracks = Vec::with_capacity(tracks.len());
         let mut links = Vec::new();
@@ -203,7 +191,7 @@ impl StreamTracks {
             let src = if t.mute {
                 None
             } else {
-                Some(try_src(&t.node, sr, n, engine, base)?)
+                Some(try_src(&t.node, sr, n, base)?)
             };
             // The sidechain resolves against the DECLARED id only — a
             // backfilled `layer_<i>` id is not a match (the offline's exact
@@ -222,15 +210,15 @@ impl StreamTracks {
                     source_gain: source.gain,
                     gain_lane: LaneCursor::build(&source.automation, AutoTarget::Gain, source.gain),
                     env: 0.0,
-                    at: crate::dsp::exp(-1.0 / (sc.attack.max(1e-4) * srf), engine),
-                    rt: crate::dsp::exp(-1.0 / (sc.release.max(1e-4) * srf), engine),
+                    at: crate::dsp::exp(-1.0 / (sc.attack.max(1e-4) * srf)),
+                    rt: crate::dsp::exp(-1.0 / (sc.release.max(1e-4) * srf)),
                     amount: sc.amount,
                 });
             }
             out_tracks.push(TrackStream {
                 src,
                 off,
-                constant: pan_gains(t.pan.clamp(-1.0, 1.0), t.gain, engine),
+                constant: pan_gains(t.pan.clamp(-1.0, 1.0), t.gain),
                 gain: t.gain,
                 pan: t.pan,
                 gain_lane: LaneCursor::build(&t.automation, AutoTarget::Gain, t.gain),
@@ -248,18 +236,12 @@ impl StreamTracks {
             .map(|b| {
                 let bpath = track_stream_seed(doc.seed, layer_stream_key(&format!("bus:{}", b.id)));
                 Some(BusStream {
-                    chain: StereoChain::build(&b.effects, sr, n, engine, bpath)?,
+                    chain: StereoChain::build(&b.effects, sr, n, bpath)?,
                     gain: if b.gain.is_finite() { b.gain } else { 1.0 },
                 })
             })
             .collect::<Option<_>>()?;
-        let master = StereoChain::build(
-            master,
-            sr,
-            n,
-            engine,
-            track_stream_seed(doc.seed, MASTER_STREAM),
-        )?;
+        let master = StereoChain::build(master, sr, n, track_stream_seed(doc.seed, MASTER_STREAM))?;
         let n_tracks = out_tracks.len();
         let n_buses = buses.len();
         Some(StreamTracks {
@@ -271,7 +253,7 @@ impl StreamTracks {
             ducks: vec![1.0; n_tracks],
             bus_in: vec![(0.0, 0.0); n_buses],
             sr,
-            engine,
+
             pos: 0,
         })
     }
@@ -285,14 +267,14 @@ impl StreamTracks {
         let p = self.pos;
         self.pos += 1;
         let sr = self.sr;
-        let engine = self.engine;
+
         // 1. Track graphs. A track sounds at local sample p - off; before its
         //    `at` lands it contributes nothing and its graph is not stepped
         //    (the first stepped sample is its local 0, exactly the offline's
         //    render-then-shift).
         for (i, t) in self.tracks.iter_mut().enumerate() {
             self.xs[i] = match &mut t.src {
-                Some(src) if p >= t.off => src.step(p - t.off, pitch, engine),
+                Some(src) if p >= t.off => src.step(p - t.off, pitch),
                 _ => 0.0,
             };
         }
@@ -309,7 +291,7 @@ impl StreamTracks {
                 let g = link
                     .gain_lane
                     .as_mut()
-                    .map_or(link.source_gain, |c| c.at(p, sr, engine));
+                    .map_or(link.source_gain, |c| c.at(p, sr));
                 self.xs[link.source] * g
             } else {
                 0.0
@@ -334,12 +316,9 @@ impl StreamTracks {
             let (gl, gr) = match (&mut t.gain_lane, &mut t.pan_lane) {
                 (None, None) => t.constant,
                 (g, pn) => {
-                    let gain = g.as_mut().map_or(t.gain, |c| c.at(p, sr, engine));
-                    let pan = pn
-                        .as_mut()
-                        .map_or(t.pan, |c| c.at(p, sr, engine))
-                        .clamp(-1.0, 1.0);
-                    pan_gains(pan, gain, engine)
+                    let gain = g.as_mut().map_or(t.gain, |c| c.at(p, sr));
+                    let pan = pn.as_mut().map_or(t.pan, |c| c.at(p, sr)).clamp(-1.0, 1.0);
+                    pan_gains(pan, gain)
                 }
             };
             let d = self.ducks[i];

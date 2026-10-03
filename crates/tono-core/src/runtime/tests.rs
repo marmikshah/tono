@@ -374,7 +374,8 @@ fn stream_source_matches_the_bounce_including_its_peak_limit() {
 #[test]
 fn stream_source_rejects_non_streamable() {
     let d: SoundDoc = serde_json::from_str(
-        r#"{ "name":"n", "duration":0.05, "root": { "type":"noise", "color":"white" } }"#,
+        r#"{ "name":"n", "duration":0.05, "root": { "type":"chain", "stages":[
+          {"type":"noise", "color":"white"}, {"type":"convolve"}] } }"#,
     )
     .unwrap();
     assert!(StreamSource::from_doc(&d).is_none());
@@ -387,7 +388,7 @@ fn stream_source_matches_the_stereo_bounce_of_a_tracks_doc() {
     // gain bites — the stream must carry the identical gain and reproduce
     // both channels bit-for-bit (pan/sidechain/bus/master chain included).
     let d: SoundDoc = serde_json::from_str(
-        r#"{ "name":"loudmix", "duration":0.4, "seed":5, "version":2, "engine":4,
+        r#"{ "name":"loudmix", "duration":0.4, "seed":5, "version":2, "engine":5,
             "root": { "type":"tracks",
               "buses": [ { "id":"verb", "gain":0.9, "effects": [
                   { "type":"reverb", "room":0.5, "mix":0.4 } ] } ],
