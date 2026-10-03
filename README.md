@@ -3,7 +3,7 @@
 tono is a deterministic Rust audio engine for sound effects, instruments,
 songs and adaptive game music, with native playback and Python integrations.
 
-[Docs and demos](https://marmikshah.github.io/tono/) · [Rust API](https://docs.rs/tono-core) · [MIT](LICENSE)
+[Docs and demos](https://marmikshah.github.io/tono/) · [Architecture](docs/public/architecture.html) · [Changelog](CHANGELOG.md) · [Rust API](https://docs.rs/tono-core) · [MIT](LICENSE)
 
 Formats: SoundDoc/Song 2, DSP engine 5, Program 3; the desktop resets corrupt projects.
 
@@ -67,4 +67,4 @@ Before release run `cargo deny check advisories licenses` and
 Bump both versions in Cargo.toml; with Python 3.11+ run
 `python scripts/release.py check-version vX.Y.Z`, then tag the reviewed commit.
 Tags publish core then CLI and GitHub binaries. Wheels are a manual workflow;
-retained scripts explain their arguments with `--help`.
+See the [release workflow](docs/project/release-gates.md); scripts provide `--help`.
