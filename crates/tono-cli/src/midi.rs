@@ -245,7 +245,15 @@ struct ImportedTrack {
 /// `square`); velocities become note `gain`s.
 fn read_midi_tracks(src: &Path, steps_per_beat: u32) -> Result<(f32, Vec<ImportedTrack>)> {
     let bytes = std::fs::read(src)?;
-    let smf = Smf::parse(&bytes)?;
+    // Reject unsupported timing before midly decodes its signed frame byte.
+    if bytes.starts_with(b"MThd") && bytes.get(12).is_some_and(|division| division & 0x80 != 0) {
+        anyhow::bail!(
+            "SMPTE-timecode MIDI files are not supported — re-export with metrical (PPQ) timing"
+        );
+    }
+    // Contain malformed input rejected by the parser, including RIFF-wrapped MIDI.
+    let smf = std::panic::catch_unwind(|| Smf::parse(&bytes))
+        .map_err(|_| anyhow::anyhow!("invalid MIDI file"))??;
     let ppq = match smf.header.timing {
         Timing::Metrical(t) => u16::from(t) as u64,
         Timing::Timecode(..) => {
