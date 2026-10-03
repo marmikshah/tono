@@ -19,6 +19,16 @@ numeric analysis. `manifest.json` records its generation spec and filenames.
 
 ## Starters
 
+For a larger ready-to-use collection, open the [sound library](/sounds):
+64 authored designs across nine categories, each with Classic, Soft, Bright,
+Low, High and Long variations. Search by name or tag, preview in your browser,
+and download a stereo WAV or its editable JSON recipe. Ambience entries loop
+until paused; their WAV exports include a whole-buffer sampler loop.
+The site synthesizes these sounds locally with Tono's Rust engine compiled
+to WebAssembly. The recipes and generated audio are MIT licensed.
+
+The CLI starter generator below remains useful for seeded game-SFX batches.
+
 | Template | Character |
 |---|---|
 | `coin` | Bright rising pickup chime |
@@ -95,5 +105,24 @@ and returns an ordinary `SoundDoc`; the core performs no file or device I/O
 and works with default features disabled. Existing renderers and runtimes
 can consume the document.
 
-Desktop candidate audition, musical cues, and scene music templates are
-planned in [the game-audio proposal](https://github.com/marmikshah/tono/issues/63).
+The larger library is also available from Rust, with discovery metadata in
+`tono_core::library::RECIPES` and named voicings in `VARIANTS`:
+
+```rust
+use tono_core::library::{LibrarySpec, LibraryVariant, generate};
+
+let mut spec = LibrarySpec::new("metal-clang", LibraryVariant::Soft, 42);
+spec.pitch_semitones = -5.0;
+spec.duration_scale = 1.4;
+let doc = generate(&spec)?;
+let audio = tono_core::player::render_stereo(&doc);
+```
+
+Library specs include an explicit recipe revision, seed, sample rate, pitch,
+duration, brightness, punch and variation. Generated documents contain named
+layers and current schema/engine pins. Save the SoundDoc to preserve the sound
+across future recipe changes; it works with the existing CLI and runtime.
+
+The [background music library](/bgm) provides original scene music loops, and
+the [Sound Studio](/create) lets you build layered sounds in your browser.
+Desktop candidate audition is planned in [the game-audio proposal](https://github.com/marmikshah/tono/issues/63).

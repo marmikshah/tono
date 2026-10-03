@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import type { AudioPlayer } from "../composables/useAudio";
-import { sampleId, sampleUrl, type Sound } from "../data/catalog";
+import { sampleId, type Sound } from "../data/catalog";
 import Icon from "./Icon.vue";
 import Waveform from "./Waveform.vue";
 
@@ -11,6 +11,8 @@ const active = computed(
     () => props.player.state.activeId === sampleId(sample.value),
 );
 const playing = computed(() => active.value && props.player.state.playing);
+const loading = computed(() => props.player.state.loadingId === sampleId(sample.value));
+const downloading = computed(() => props.player.state.downloadId === sampleId(sample.value));
 </script>
 
 <template>
@@ -34,20 +36,21 @@ const playing = computed(() => active.value && props.player.state.playing);
                 class="round-play"
                 type="button"
                 :aria-label="`${playing ? 'Pause' : 'Play'} ${sound.title}`"
-                @click="
-                    player.toggle(sampleId(sample), sampleUrl(sample.audio))
-                "
+                :aria-busy="loading"
+                @click="player.toggleSample(sample)"
             >
                 <Icon :name="playing ? 'pause' : 'play'" :size="15" />
             </button>
             <span>{{ sample.duration.toFixed(2) }}s <b>·</b> WAV</span>
-            <a
+            <button
                 class="sound-download"
-                :href="sampleUrl(sample.audio)"
-                :download="sample.audio"
+                type="button"
+                :disabled="!!player.state.downloadId"
+                :aria-busy="downloading"
+                @click="player.downloadSample(sample)"
                 :aria-label="`Download ${sound.title} as WAV`"
                 ><Icon name="download" :size="17"
-            /></a>
+            /></button>
         </div>
         <p v-if="active && player.state.error" class="audio-error" role="alert">
             {{ player.state.error }}

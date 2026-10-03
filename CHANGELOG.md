@@ -6,7 +6,15 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 
 ## Unreleased
 
+### Added
+- Original background music collection: 12 themes × three arrangements, seamless four-bar loops, editable Song scores, and browser playback/downloads.
+- Sound Studio with draggable instrument layers, a 16-step note grid, envelopes/effects, undo/redo, local drafts, project import/export, and locally rendered WAV downloads.
+- Curated asset-free sound library: 64 authored recipes, six editable voicings each, nine categories, and seamless ambience loops through `tono_core::library`.
+- Searchable website sound library with variation selection, local previews, editable recipe downloads, and browser-generated stereo WAVs with loop metadata.
+- Lean `tono-web` WebAssembly adapter reusing the Rust DSP, bounded worker rendering and PCM caching, plus native/WASM sample-equivalence and full-catalog checks.
+
 ### Changed
+- Website SFX previews ship recipes and a shared synthesis engine instead of pre-rendered WAV files.
 - Builds, CI, CLI release binaries, and Python wheels are Linux-only; Windows/macOS bug patches remain welcome.
 - SoundDoc/Song schema 2 and DSP engine 5 are the supported formats; Program format 3 derives document facts and streaming capabilities from their authoritative source.
 

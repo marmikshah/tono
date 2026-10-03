@@ -6,9 +6,11 @@ export interface SoundSample {
   seed: number;
   duration: number;
   sampleRate: number;
-  audio: string;
   source: string;
+  score?: string;
   waveform: number[];
+  label?: string;
+  looping?: boolean;
 }
 
 const templates = [
@@ -81,7 +83,7 @@ export const sounds = templates.map((template) => {
 export type Sound = (typeof sounds)[number];
 export const sampleUrl = (file: string) => withBase(`/generated/sfx/${file}`);
 export const sampleId = (sample: SoundSample) =>
-  `sfx:${sample.template}:${sample.seed}`;
+  `sfx:${sample.source}`;
 
 export interface MusicTrack {
   id: string;
