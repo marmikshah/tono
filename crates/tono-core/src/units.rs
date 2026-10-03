@@ -1,5 +1,4 @@
 //! Typed units and exact musical time for the composition/compile layer
-//! (ADR 0002).
 //!
 //! The composition model speaks in exact [`Beat`] rationals; audio speaks in
 //! integer [`Frames`]. The two meet exactly once, at the scheduling boundary,
@@ -216,7 +215,7 @@ impl std::fmt::Display for BeatError {
 impl std::error::Error for BeatError {}
 
 /// Convert an exact beat position to an audio frame — the ONE place musical
-/// time crosses to audio time (ADR 0002). All composition math before this
+/// time crosses to audio time. All composition math before this
 /// boundary stays rational, so the conversion never compounds rounding error.
 ///
 /// The rule is specified exactly: `seconds = beats × 60 / bpm` in `f64`, then

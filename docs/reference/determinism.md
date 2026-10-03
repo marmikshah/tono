@@ -1,59 +1,35 @@
-# Byte-identity, engine revisions, and streaming
+# Determinism and streaming
 
-The guarantees behind "audio as a pure function": what makes a render
-reproducible, how engine revisions let fidelity improve without ever
-changing an older sound, and which documents can stream live.
+A render depends on the graph, seed and sample rate. The current engine uses
+fixed f64 transcendental kernels and a fixed-order convolution FFT, so the
+same supported document produces byte-identical samples across platforms.
 
-## Determinism
+## Current formats
 
-- Rendering is a pure function of `(graph, seed, sample_rate)` — a document
-  renders **byte-identical** every time. With `engine: 5` (the default for
-  new documents and songs) that identity holds **across platforms**;
-  engine ≤ 4 documents keep their historical per-platform renders
-  bit-for-byte (platform libm's last bits differ between macOS-arm64 and
-  linux-x86_64, though integer-RNG, PolyBLEP, and rational-filter content
-  is identical everywhere).
-- The document's top-level `seed` drives every noise source, `dust` train,
-  and Karplus-Strong pluck burst, so takes are reproducible; change `seed`
-  for a different-but-equivalent roll.
-- Because the document *is* the artifact, version your `.json` files and
-  you can always reproduce the exact WAV — no separate session log needed.
+SoundDocs and Songs use schema `version: 2` and DSP `engine: 5`. Omitted pins
+select these defaults. Explicit unsupported revisions fail validation.
+Compiled Programs use format 3 and verify both their content hash and resolved
+document on load. Recompile the source song when a bundle is unsupported.
+The desktop replaces unsupported or corrupt projects with a fresh current
+project and displays file errors without stopping the application.
 
-## Pick an engine revision
+Noise, dust and pluck bursts use deterministic per-node random streams.
+Named tracks have independent streams; editing another track does not move
+their random draws. Save the source JSON and seed with exported audio.
 
-A document carries two independent version numbers: `version` is the
-**schema** version (document structure); `engine` is the **DSP-kernel**
-revision (which audio kernels render it). They are split so a fidelity
-upgrade never changes the bytes of an older sound.
+## Native streaming
 
-| `engine` | what changed |
-|----------|--------------|
-| omitted (0) | the original kernels — byte-for-byte forever |
-| 1 | anti-aliased `drive` (ADAA) |
-| 2 | per-node structurally-seeded RNG for `noise`/`dust` (decorrelated siblings; byte-identical streaming randomness) |
-| 3 | the inharmonic additive `piano` voice (stretched partials, per-partial decay, hammer spectrum, detuned unison pair) |
-| 4 | corrected mixer output stage (joint stereo loudness normalization, gated BS.1770, oversampled true-peak) and per-note humanize jitter |
-| 5 | deterministic transcendental kernels (`det`: fdlibm-grade sin/cos/exp/ln/powf/tanh in pure f64) replace platform libm everywhere in the render path; `convolve` runs a fixed-order radix-2 FFT with deterministic twiddles ⇒ **renders byte-identically on every platform** |
+`StreamGraph::blockers` explains which parts need a whole-buffer render.
+`Player` supplies that render when native streaming is unavailable.
 
-- To modernise an existing sound, set `"engine": 5` — its output will
-  change; that's the point.
-- To keep a legacy sound bit-exact, leave `engine` off.
-- New documents and songs stamp 5 by default.
+| Streams natively | Uses the buffer-backed Player |
+|---|---|
+| Source nodes and their modulators, including noise, dust and sequences | SoundFont sampler sequences |
+| Filters/EQ with constant cutoffs and gain with constant amounts | Modulated filter/EQ cutoffs or gain amounts |
+| Tremolo | Convolution and granular effects |
+| A tracks root with sidechains, buses and automation | Nested mixers |
+| Causal effects | Whole-buffer normalization, loop playback, Haas/Wide stereo treatment |
 
-## What streams live
-
-The streaming renderer pulls a document block-by-block, byte-identical to
-the offline render. `StreamGraph::blockers` reports what a document trips,
-each blocker naming the fix:
-
-| streams natively | falls back to the buffer-backed `Player` (byte-identical, whole-buffer) |
-|------------------|---------------------------------------------------------------|
-| every node with constant filter/EQ cutoffs and gain amounts | a `normalize` output stage (whole-buffer op) |
-| all modulators on source params (closed forms of the sample index; `rand` carries its walk) | a filter/EQ/gain carrying a modulated cutoff or amount |
-| `tremolo` (a closed form of the sample index) | `loop` playback; a `stereo` (Haas/Wide) treatment (write-time ops) |
-| `noise`/`dust`/`seq` under engine ≥ 2 (structurally-seeded RNG) | RNG nodes under engine < 2; the `sampler` seq |
-| a schema-v2 `tracks` root — sidechains, buses, automation | a schema-v1 `tracks` root |
-
-`convolve` / `granular` are offline-only whole-buffer effects — no
-streaming form exists; bounce them offline and keep the streamed graph
-causal.
+Supported streaming graphs match the offline render at every block size.
+For live compilation, `CompileTarget::Runtime` rejects streaming blockers
+instead of accepting a buffer-backed program.

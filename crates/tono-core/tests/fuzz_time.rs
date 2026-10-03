@@ -1,6 +1,5 @@
-//! Property tests for the exact-time walks (issue #52, workstream 9) — the
-//! ADR 0002 contract that musical time crosses to audio frames in exactly one
-//! specified way, so the compiler and the runtime can never disagree:
+//! Property tests for shared musical-time conversion: the compiler and
+//! runtime land on the same frames with explicit rounding and bounds.
 //!
 //!   1. `units::beat_at_bar` is non-decreasing in bar — meter maps and
 //!      pickups can reshape bars, but a later barline never moves earlier.
@@ -8,12 +7,12 @@
 //!      `units::beat_to_frames` are THE SAME conversion (same 60/bpm
 //!      expression, same halves-away-from-zero rounding, same degenerate
 //!      clamps) — asserted bit-exact, because a drift here IS the bug class
-//!      ADR 0002 exists to prevent.
+//!      shared conversion prevents.
 //!   3. `dsl::tempo_map_seconds_at` is non-decreasing in beat, and
 //!      `dsl::tempo_map_beat_at_seconds` inverts it within 1e-9 — the map is
 //!      a continuous piecewise-linear walk, so the round-trip is exact up to
 //!      f64 dust.
-//!   4. Plain meter: `units::bar_count_at_beat` equals the compiler's legacy
+//!   4. Plain meter: `units::bar_count_at_beat` equals the compiler's constant-meter
 //!      ceil — `note_end.div_ceil(beats_per_bar × steps_per_beat)` from
 //!      song/compile.rs `length_bars`, restated in beats (`note_end` steps at
 //!      `steps_per_beat` is `Beat::new(note_end, steps_per_beat)`).
@@ -173,12 +172,12 @@ proptest! {
         }
     }
 
-    /// Contract 4: plain-meter `bar_count_at_beat` is the compiler's legacy
+    /// Contract 4: plain-meter `bar_count_at_beat` is the compiler's constant-meter
     /// ceil, restated in beats. (`note_end` steps at `spb` steps/beat is the
-    /// beat `note_end/spb`; the legacy formula ceils it against
+    /// beat `note_end/spb`; the constant-meter formula ceils it against
     /// `beats_per_bar × steps_per_beat` steps.)
     #[test]
-    fn bar_count_at_beat_matches_the_legacy_ceil(
+    fn bar_count_at_beat_matches_constant_meter_ceil(
         note_end in 0..=512u32,
         spb in 1..=8u32,
         bpb in 1..=8u32,

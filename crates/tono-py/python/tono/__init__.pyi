@@ -1,9 +1,4 @@
-"""Type stubs for the `tono` package.
-
-Stability tiers (docs/api-tiers.md): the legacy JSON-string API is
-*deprecated* (the typed API is the successor); the typed song API is
-*stable* — frozen at 1.10.0-rc.1.
-"""
+"""Type stubs for tono synthesis, typed composition and live performance."""
 
 from typing import Any, Optional, Union
 
@@ -52,7 +47,7 @@ __all__ = [
 # fractions.Fraction, or a (num, den) int tuple.
 Beat = Union[int, float, Fraction, tuple[int, int]]
 
-# --- legacy JSON-string API (deprecated; the typed API is the successor) ---
+# SoundDoc synthesis and native audio
 
 def render(doc_json: str) -> npt.NDArray[np.float32]:
     """Render a `SoundDoc` (JSON string) to a mono float32 array. Deterministic."""
@@ -97,7 +92,7 @@ class PatchVoice:
     """A loaded SFX patch: trigger one-shot instances with named parameters."""
     def trigger(self, **params: float) -> None: ...
 
-# --- typed song API (stable — frozen at 1.10.0-rc.1) ---
+# Typed song composition
 
 class TonoError(Exception):
     """The base error for every typed-API failure."""
@@ -368,7 +363,7 @@ class Program:
     @staticmethod
     def load(path: str) -> Program: ...
 
-# --- performance runtime (stable — frozen at 1.10.0-rc.1) ---
+# Scheduled performance
 
 class PerformanceError(TonoError):
     """A scheduling/runtime failure of a `Performance`. Base class of the

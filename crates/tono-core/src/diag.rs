@@ -1,4 +1,4 @@
-//! Structured diagnostics for song compilation (ADR 0003).
+//! Structured diagnostics for song compilation.
 //!
 //! Validation collects ALL problems in one pass instead of stopping at the
 //! first error. Each [`Diagnostic`] carries a stable machine `code`, a

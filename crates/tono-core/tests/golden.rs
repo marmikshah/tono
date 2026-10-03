@@ -1,8 +1,7 @@
 //! Current-engine PCM regression corpus.
 //!
-//! These shared pins were captured from the unchanged engine-5 implementation
-//! before removing historical kernels. They cover sound, effects, loop output,
-//! normalization, groove, automation, buses and stereo mixing on every target.
+//! These pins capture engine-5 sound, effects, loop output, normalization,
+//! groove, automation, buses and stereo mixing.
 //! Change a pin only after investigating an intentional product change.
 
 use tono_core::dsl::{Adsr, SeqWave, SoundDoc};
@@ -430,7 +429,7 @@ fn serde_roundtrip_preserves_the_render() {
 
 #[test]
 fn example_recipes_replay_byte_identically() {
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/examples/");
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/");
     for (file, pin) in [
         ("blip.json", 0x0af0b6df1a24ec76u64),
         ("hat.json", 0xbc3ab825679ceef7u64),

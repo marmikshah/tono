@@ -9,7 +9,9 @@
     "noEmit": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
-    "types": ["vite/client", "node"]
+    "types": ["vite/client", "node"],
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
   },
   "include": ["docs/.vitepress/**/*.ts", "docs/.vitepress/**/*.vue"]
 }

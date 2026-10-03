@@ -1,93 +1,24 @@
-# tono-py — the Python bindings
+# tono Python bindings
 
-The deterministic tono engine plus its live runtime, from Python: typed songs, numpy renders, and a speaker-owning engine.
+Compose typed songs, render SoundDocs and parameterized patches to numpy,
+or control live instruments, drum kits and adaptive music through native audio.
+CPython 3.9+ is supported with abi3 wheels.
 
-## Install (build from source only)
-
-Never published to PyPI (the name is taken), and **no prebuilt wheels for
-now**: the 3-platform wheel matrix is expensive in CI minutes, and this is a
-zero-budget project — so it's build-from-source only until users ask for
-wheels (the pipeline exists and is validated: `workflow_dispatch` on the
-Wheels workflow, or `maturin build` below).
+Build from a repository checkout in an activated virtual environment:
 
 ```sh
-pip install maturin
-maturin develop -m crates/tono-py/Cargo.toml              # the `tono` module in your env
-python3 crates/tono-py/tests/smoke.py                     # the determinism smoke test
-maturin build --release -m crates/tono-py/Cargo.toml      # abi3 wheel → target/wheels/
+python -m pip install maturin numpy
+maturin develop -m crates/tono-py/Cargo.toml
+python crates/tono-py/tests/smoke.py
+python crates/tono-py/tests/test_typed.py
+maturin build --locked --release -m crates/tono-py/Cargo.toml
 ```
 
-- abi3-py39: one wheel per platform covers every CPython 3.9+.
-- Requires stable Rust (`rust-version` in the workspace `Cargo.toml`) and CPython 3.9+.
+Linux builds need ALSA development headers. The manual Wheels workflow
+produces install-tested Linux x86_64 artifacts.
 
-## Compile a song
-
-```python
-import tono
-
-song = tono.Song("night-drive", tempo=122.0)
-bass = song.track("bass", tono.instruments.bass("finger"))
-riff = tono.Pattern(bars=1)
-riff.notes(["C2", "C2", "Eb2", "G2"], durations=0.5)
-song.arrange(bass, riff, bars=range(4))
-
-program = song.compile(sample_rate=48000)   # tono.CompileError carries .diagnostics
-audio = program.render()                    # np.float32, shape (frames, 2), L/R
-```
-
-- Typed `Song` / `Pattern` / `Program` wrap the native Rust model (stable —
-  frozen at 1.10.0-rc.1): no JSON, `py.typed` stubs in the wheel, and the same
-  canonical program hash an equivalent Rust song compiles to.
-- `Voice` builders chain: `.gain(..).pan(..).reverb(..).swing(..).humanize(..)`.
-- `program.save(path)` / `tono.Program.load(path)` ship the hashed bundle.
-- Runnable examples: [`examples/night_drive.py`](examples/night_drive.py)
-  (compose → compile → live `Performance`),
-  [`examples/golden_hour.py`](examples/golden_hour.py) (a produced 16-bar
-  track — compiles, renders, and bounces `golden_hour.wav` you can play),
-  [`examples/fur_elise.py`](examples/fur_elise.py) (Beethoven's bagatelle on
-  the sampled grand — 3/8 meter map with a pickup, a tempo-map ritardando,
-  per-note dynamics), and
-  [`examples/monsoon_melody.py`](examples/monsoon_melody.py) (an original
-  Bollywood-style ballad — flute over nylon-guitar arpeggios, a swung
-  half-time kit, a glockenspiel-shadowed lift). Plus the game-genre pack,
-  all original melodies: [`examples/neon_rush.py`](examples/neon_rush.py)
-  (synthwave racing), [`examples/noir_lounge.py`](examples/noir_lounge.py)
-  (jazz noir), [`examples/emerald_vale.py`](examples/emerald_vale.py) (a 6/8
-  fantasy village), and [`examples/puzzle_menu.py`](examples/puzzle_menu.py)
-  (a quirky puzzle theme built by pattern transforms).
-
-## Run it live
-
-```python
-with tono.Performance(program, headless=True) as perf:   # or headless=False for speakers
-    perf.play()
-    perf.set_gain(0.8, at=tono.next_bar())
-    perf.transition("chorus", at=tono.next_bar())        # a named section
-    audio = perf.fill(program.sample_rate * 10)          # stereo (frames, 2), float32
-    print(perf.metrics())                                # frames, commands, queue depth, …
-```
-
-Commands schedule at frames, beats, bars, markers, sections, `tono.next_beat()`,
-or `tono.next_bar()` — and execute at exact frames, never waiting on Python to
-wake up. Seeks, loops, crossfaded swaps, stingers, capture/replay, and
-snapshots work the same in both modes.
-
-## Render a sound or patch
-
-| Call | Returns |
-| --- | --- |
-| `tono.render(doc_json)` | Mono `np.float32` bounce of a SoundDoc — deterministic, CI-testable. |
-| `tono.Patch(json).render(**params)` | A parametric SFX patch rendered with named parameter values. |
-
-## Drive the live engine
-
-`tono.Engine(sample_rate=48000)` owns a cpal output stream and a render thread:
-
-| Call | What it gives you |
-| --- | --- |
-| `engine.instrument("warm_lead")` | A catalog instrument, driven live with `note_on` / `set_param`. |
-| `engine.drumkit()` | The GM drum kit. |
-| `engine.load_patch(json).trigger(...)` | One-shot SFX patches. |
-| `engine.adaptive()` | An adaptive-music bed. |
-
-More: the [sound-effects guide](https://marmikshah.github.io/tono/guides/sound-effects), the [runtime model](https://marmikshah.github.io/tono/guides/live), and the design notes — [ADR 0004 (bindings)](../../docs/adr/0004-python-bindings.md), [ADR 0005 (command delivery)](../../docs/adr/0005-realtime-command-delivery.md).
+See the [Python guide](https://marmikshah.github.io/tono/guides/python),
+[live runtime guide](https://marmikshah.github.io/tono/guides/live), and
+[runnable examples](https://github.com/marmikshah/tono/tree/master/crates/tono-py/examples).
+The root [README](https://github.com/marmikshah/tono) covers contributor gates
+and releases. tono is [MIT licensed](https://github.com/marmikshah/tono/blob/master/LICENSE).

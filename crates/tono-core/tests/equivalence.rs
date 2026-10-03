@@ -1,4 +1,4 @@
-//! The Rust ↔ Python cross-language contract (ADR 0004): the same song, built
+//! The Rust ↔ Python cross-language contract: the same song, built
 //! through the Rust API here and through the typed Python API in
 //! `crates/tono-py/tests/test_typed.py`, compiles to the same canonical
 //! Program hash. If the pinned value changes, change BOTH sides or the

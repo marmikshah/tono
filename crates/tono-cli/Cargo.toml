@@ -11,11 +11,6 @@ repository.workspace = true
 readme = "../../README.md"
 keywords = ["audio", "synthesis", "dsp", "chiptune", "gamedev"]
 categories = ["multimedia::audio", "game-development"]
-# The package ships src + tests + README (and Cargo.lock) only — the showcase
-# assets (docs/, ~14 MB of example audio), the Pages site and dev tooling live
-# outside this directory, so no `exclude` list is needed. LICENSE/CHANGELOG are
-# not duplicated into the crate (the MIT SPDX field declares the license),
-# matching tono-core's packaging.
 
 [dependencies]
 # Feature-declared so a change to core's defaults can't silently unbuild this

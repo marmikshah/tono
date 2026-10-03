@@ -1,24 +1,12 @@
-//! det — deterministic transcendental kernels (ADR 0001, engine revision 5).
+//! Deterministic transcendental kernels for the current DSP engine.
 //!
-//! Documents stamped `engine >= 5` render through these instead of platform
-//! libm, whose last bits differ between macOS-arm64 and linux-x86_64. Every
-//! kernel here is pure IEEE f64 arithmetic with pinned coefficients (the
-//! fdlibm minimax sets), so the output is **identical on every platform and
-//! every process** — not by approximation but by construction. Older engine
-//! revisions keep their historical per-platform renders; `dsp.rs`'s wrappers
-//! dispatch on the document's engine.
+//! Every kernel uses IEEE f64 arithmetic with pinned fdlibm minimax
+//! coefficients, avoiding platform-dependent libm results. The f32 wrappers
+//! cast once at the end. Tests bound error against libm to about 1 ulp of f64.
 //!
-//! Accuracy: minimax polynomials accurate to ~1 ulp of f64 against the
-//! reference libm (asserted in tests), so the f32-casting wrappers are the
-//! correctly-rounded value virtually everywhere. Determinism does not depend
-//! on accuracy, but musical fidelity does — the polynomial degrees are the
-//! proven fdlibm ones.
-//!
-//! The module also carries the fixed-order radix-2 [`fft`] and the
-//! [`convolve`] built on it: rustfft picks algorithms per platform (and its
-//! twiddles come from libm), so engine ≥ 5's `convolve` node transforms
-//! through these instead — one pinned butterfly order, twiddles from
-//! [`sin`]/[`cos`], f64 throughout.
+//! The fixed-order radix-2 [`fft`] and [`convolve`] use one butterfly order,
+//! twiddles from [`sin`]/[`cos`] and f64 throughout. They do not select a
+//! platform-specific FFT algorithm.
 
 // The fdlibm polynomial coefficients NEED full f64 precision — truncating
 // them measurably degrades the kernels (the tests pin the error bounds).
@@ -280,7 +268,7 @@ pub fn log10f(x: f32) -> f32 {
     log10(x as f64) as f32
 }
 
-// --- The fixed-order radix-2 FFT behind engine ≥ 5's convolve (ADR 0001). ---
+// Fixed-order radix-2 FFT for convolution.
 
 /// A complex f64 — the deterministic FFT's element type. det.rs is
 /// dependency-free by design, so it does not borrow rustfft's `Complex`.
@@ -370,8 +358,7 @@ pub fn fft(buf: &mut [Complex64], inverse: bool) {
     }
 }
 
-/// Deterministic linear convolution of `a` with `b` — the engine ≥ 5
-/// `convolve` node's math (ADR 0001). Both signals are zero-padded to the
+/// Deterministic linear convolution of `a` with `b`. Both signals are zero-padded to the
 /// next power of two ≥ `a.len() + b.len() − 1` (this sizing rule is part of
 /// the engine revision's definition — changing it changes the bytes),
 /// transformed by the fixed-order [`fft`], multiplied pointwise, and

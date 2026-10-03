@@ -1,5 +1,5 @@
-//! transport — a sample-accurate musical clock for a compiled Program
-//! (ADR 0005): position in frames with exact conversions to beats and bars
+//! A sample-accurate clock for a compiled Program: position in frames with
+//! exact conversions to beats and bars
 //! through the program's tempo and meter maps. The transport owns no audio;
 //! it answers "where am I" and "what frame is that", deterministically, so
 //! scheduling never needs Python, a game loop, or an OS timer to wake on a
@@ -31,7 +31,7 @@ pub struct Advance {
 
 /// A sample-accurate musical clock. All arithmetic before the single
 /// frame-boundary crossings is the exact rational/f64 segment walk shared
-/// with the compiler (ADR 0002), so the transport and the offline render
+/// with the compiler, so the transport and the offline render
 /// can never disagree about where a beat lands.
 #[derive(Debug, Clone)]
 pub struct Transport {
@@ -114,7 +114,7 @@ impl Transport {
         }
     }
 
-    /// The frame a beat lands on (rounds halves away from zero, ADR 0002).
+    /// The frame a beat lands on (rounds halves away from zero).
     pub fn frame_at_beat(&self, beat: f64) -> u64 {
         (self.seconds_at_beat(beat) * self.sample_rate as f64)
             .round()

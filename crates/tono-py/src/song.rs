@@ -1,10 +1,9 @@
-//! The typed song API (ADR 0004): `tono.Song` / `tono.Pattern` / `tono.Track` /
+//! The typed song API: `tono.Song` / `tono.Pattern` / `tono.Track` /
 //! `tono.Program` wrap the native Rust objects directly — building, compiling,
 //! and rendering a song never crosses a JSON boundary. Rust owns semantics, so
 //! an equivalent song compiles to the same Program hash from either language
 //! (`crates/tono-core/tests/equivalence.rs` pins the contract).
 //!
-//! This API is **stable** — frozen at 1.10.0-rc.1 (docs/api-tiers.md).
 
 use std::collections::HashMap;
 use std::sync::Arc;

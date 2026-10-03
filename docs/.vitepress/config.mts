@@ -18,16 +18,6 @@ export default defineConfig({
       { text: 'Guides', link: '/guides/sound-effects' },
       { text: 'Reference', link: '/reference/sounddoc' },
       { text: 'Showcase', link: '/showcase' },
-      {
-        text: 'Project',
-        items: [
-          { text: 'Migration', link: '/project/migration' },
-          { text: 'API stability tiers', link: '/project/api-tiers' },
-          { text: 'Performance budgets', link: '/project/performance' },
-          { text: 'Release gates', link: '/project/release-gates' },
-          { text: 'Changelog', link: 'https://github.com/marmikshah/tono/blob/master/CHANGELOG.md' },
-        ],
-      },
     ],
     sidebar: {
       '/get-started/': [
@@ -57,22 +47,7 @@ export default defineConfig({
           items: [
             { text: 'The SoundDoc nodes', link: '/reference/sounddoc' },
             { text: 'Determinism & streaming', link: '/reference/determinism' },
-            { text: 'The CLI', link: '/reference/cli' },
             { text: 'Rust API (docs.rs)', link: 'https://docs.rs/tono-core' },
-          ],
-        },
-      ],
-      '/project/': [
-        {
-          text: 'Project',
-          items: [
-            { text: 'Migration', link: '/project/migration' },
-            { text: 'API stability tiers', link: '/project/api-tiers' },
-            { text: 'Performance budgets', link: '/project/performance' },
-            { text: 'Release gates', link: '/project/release-gates' },
-            { text: 'Architecture', link: 'https://marmikshah.github.io/tono/architecture.html' },
-            { text: 'Design decisions (ADRs)', link: 'https://github.com/marmikshah/tono/tree/master/docs/adr' },
-            { text: 'Changelog', link: 'https://github.com/marmikshah/tono/blob/master/CHANGELOG.md' },
           ],
         },
       ],

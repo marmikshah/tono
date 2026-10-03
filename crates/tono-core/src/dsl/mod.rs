@@ -538,8 +538,7 @@ pub enum SeqWave {
 
 /// Which drum-kit voicing the `kit` seq wave synthesizes. Every style follows
 /// the same General MIDI note map; they differ only in how each drum is
-/// synthesized. `Classic` is the original kit — omitting `kit` (or setting it to
-/// `classic`) renders byte-identically to before this field existed.
+/// synthesized. Omitting `kit` selects `Classic`.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -625,10 +624,10 @@ pub struct SeqNote {
     pub gain: f32,
 }
 
-/// A tempo change at an exact beat position (ADR 0002): from `at` until the
+/// A tempo change at an exact beat position: from `at` until the
 /// next change, the tempo is `bpm`. In a [`Node::Seq`]'s `tempo_map` the
 /// first point must sit at beat 0 — an empty map is the constant-tempo
-/// `bpm` behavior, byte-identical to before the map existed.
+/// `bpm` behavior.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct TempoPoint {
     /// The exact beat the change takes effect at (a normalized rational —
@@ -639,8 +638,8 @@ pub struct TempoPoint {
 }
 
 /// Seconds elapsed at `beat` under a tempo map — the segment walk in f64,
-/// the one conversion every tempo-aware path (renderer, compiler) shares
-/// (ADR 0002). Degenerate tempos floor at 1 BPM, like the seq's own clamp.
+/// the conversion shared by the renderer and compiler.
+/// Degenerate tempos floor at 1 BPM, like the seq's own clamp.
 /// The map must be non-empty and start at beat 0 (validation enforces both).
 pub fn tempo_map_seconds_at(map: &[TempoPoint], beat: f64) -> f64 {
     let mut secs = 0.0;
@@ -671,8 +670,8 @@ pub fn tempo_map_bpm_at(map: &[TempoPoint], beat: f64) -> f64 {
 }
 
 /// The inverse of [`tempo_map_seconds_at`]: the beat position at `seconds`
-/// under the map — the segment walk in f64, exact per ADR 0002. The map must
-/// be non-empty and start at beat 0.
+/// under the map, walking exact segment boundaries in f64.
+/// The map must be non-empty and start at beat 0.
 pub fn tempo_map_beat_at_seconds(map: &[TempoPoint], seconds: f64) -> f64 {
     let mut secs = 0.0;
     let mut prev_beat = 0.0f64;

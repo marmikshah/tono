@@ -1,4 +1,4 @@
-//! Property tests for the pattern transforms (issue #52, workstream 9) — the
+//! Property tests for the pattern transforms — the
 //! musical-algebra contract of `song::pattern`, pinned on random small
 //! patterns (2–16 notes at unique steps, named/"midi:N" pitches, 1–4 bars):
 //!

@@ -1,4 +1,4 @@
-//! Resource estimates bound reality (issue #52, workstream 9): for
+//! Resource estimates bound reality: for
 //! representative programs, `Program::estimates` must agree with what the
 //! renderer actually produces.
 //!

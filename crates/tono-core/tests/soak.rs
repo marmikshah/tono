@@ -1,4 +1,4 @@
-//! Release-gate soak tests (issue #52, workstream 9): the long forms of the
+//! Release-gate soak tests: the long forms of the
 //! runtime stress paths. Both tests are `#[ignore]`d — they are run ON DEMAND
 //! before a release, never in CI, so the regular Cargo test gate stays fast:
 //!

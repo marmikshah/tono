@@ -1,13 +1,9 @@
-"""tono — a deterministic sound engine, from Python.
+"""tono — deterministic synthesis, typed songs and live audio from Python.
 
-The **typed API** (stable — frozen at 1.10.0-rc.1, see
-docs/api-tiers.md) authors and compiles songs natively — `Song`, `Pattern`,
-`Track`, `Program`, the `instruments` catalog — with no JSON in the path and a
-canonical program hash equivalent songs reproduce from Rust or Python alike.
-
-The **legacy JSON-string API** (`render`, `Patch`, `Engine`, `Instrument`,
-`DrumKit`, `AdaptiveMusic`, `PatchVoice`) keeps working through v1.10
-(deprecated per docs/api-tiers.md; the typed API is the successor).
+Song, Pattern, Track and Program share the Rust composition model and
+canonical program hash. SoundDocs and parameterized Patch templates render
+sound effects to numpy. Engine, Instrument, DrumKit, AdaptiveMusic and
+PatchVoice provide native playback; Performance schedules compiled songs.
 """
 
 from ._tono import *  # noqa: F401,F403 — re-exports the whole native surface

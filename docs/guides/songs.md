@@ -57,7 +57,7 @@ Beyond the raw chiptune waves (`square`/`triangle`/`sawtooth`/`sine`/`noise`), `
 | `fm` | FM mallets/bells | tunable: `fm_ratio` 1 = piano-ish, 3.5 = bell, 14 = tine; `fm_index`/`fm_strike`. |
 | `pluck` | plucked string | Karplus-Strong guitar/harp/koto; `pluck_decay` sets ring. |
 
-`piano` (engine ≥ 3), `bass`, and `pluck` also accept optional `piano_*` / `bass_*` / `pluck_*` tone knobs (e.g. `piano_hammer`, `pluck_tone`); every default reproduces the base voice bit-for-bit. `kit` takes a voicing: `kit: "classic"` (default) or `acoustic` / `electronic` / `808`.
+`piano`, `bass`, and `pluck` also accept optional `piano_*` / `bass_*` / `pluck_*` tone knobs (e.g. `piano_hammer`, `pluck_tone`); every default reproduces the base voice bit-for-bit. `kit` takes a voicing: `kit: "classic"` (default) or `acoustic` / `electronic` / `808`.
 
 **A drum groove** — `kit` reads the note pitch as a GM drum number, not a frequency: `midi:36` kick, `38` snare, `42` closed hat, `46` open hat, `41-50` toms, `49` crash, `51` ride, `39` clap, `56` cowbell:
 
@@ -155,9 +155,9 @@ A whole piece is a **Song**: instrument tracks, reusable patterns, and an arrang
 `Song::compile` produces a **Program**:
 
 - a canonical semantic **hash** over the complete bundle (FNV-1a — identical from Rust or Python for an equivalent song)
-- the musical facts: tempo, grid, bars, duration in seconds and frames, the track roster with stable ids
+- the musical facts: tempo, grid, bars and a track roster in declaration order; track names are persistent identities and inspection indices are zero-based positions
 - bounded **resource estimates**: frames, note events, peak voices, memory
-- **streaming-coverage warnings** — a plain compiled song (a schema-v2 mixer of built-in waves) streams natively with zero warnings; any blocked part is named and falls back to the buffer-backed `Player`
+- derived **streaming-coverage warnings** — a plain compiled song (a schema-v2 mixer of built-in waves) streams natively with zero warnings; any blocked part is named and falls back to the buffer-backed `Player`
 
 ```sh
 tono compile SONG.json [-o FILE] [--sample-rate N] [--inspect]
@@ -165,7 +165,7 @@ tono compile SONG.json [-o FILE] [--sample-rate N] [--inspect]
 
 - Compilation validates in one pass — every problem at once, each with a stable code, the object path, and the fix. A failing compile exits non-zero, so `tono compile` doubles as a CI gate for song projects.
 - `--inspect` prints the machine-readable summary (hash, version pins, roster, estimates, warnings) and writes nothing.
-- Without `--inspect` it writes `<name>.program.json` — a versioned bundle that `Program::from_json` / `tono.Program.load` reloads without recompiling. A newer bundle revision is rejected (`T3001`); a hand-edited one fails its hash check (`T3002`).
+- Without `--inspect` it writes `<name>.program.json` — a versioned bundle that `Program::from_json` / `tono.Program.load` reloads without recompiling. Any revision other than the current format 3 is rejected (`T3001`); a hand-edited one fails its hash check (`T3002`).
 - Songs carry their own `engine`/`version` pins like documents, plus an optional song-level `seed`; tracks can be `mute`d or `solo`ed (console semantics: solo mutes every non-solo track; a track that is both stays muted). All of it lands in the Program, so a saved bundle reproduces its audio exactly.
 
 ### Move the tempo and meter

@@ -140,7 +140,7 @@ fn groove_note(note: &SeqNote, voice: &SeqVoice, step_dur: f32) -> (usize, f32) 
     (start, gain.clamp(0.0, 1.0))
 }
 
-/// Segment-wise tempo-map timing (ADR 0002): beats convert to seconds in
+/// Segment-wise tempo-map timing: beats convert to seconds in
 /// f64, segment by segment, and cross to frames once with halves rounded
 /// away from zero. Notes spanning a tempo change keep their musical length.
 /// The walk itself is shared ([`crate::dsl::tempo_map_seconds_at`]) so the
@@ -168,7 +168,7 @@ fn note_end_step(n: &SeqNote) -> u32 {
 
 /// Groove placement under a tempo map: the same swing/humanize math as
 /// [`groove_note`], scaled by the LOCAL step duration at the note's start,
-/// with the final frame rounded halves-away-from-zero (the ADR rule).
+/// with the final frame rounded halves-away-from-zero (the scheduling rule).
 fn groove_note_mapped(
     note: &SeqNote,
     voice: &SeqVoice,

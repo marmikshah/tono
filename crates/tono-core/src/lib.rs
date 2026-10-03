@@ -1,7 +1,7 @@
 //! Tono core — the pure, headless audio engine.
 //!
-//! This crate is the deterministic heart of tono with **no I/O and no
-//! transport**. Rendering is a pure function of `(graph, seed, sample_rate)`
+//! This crate supplies synthesis, song compilation and transport without
+//! owning an audio device. Rendering is a pure function of `(graph, seed, sample_rate)`
 //! → byte-identical audio, so a sound is data you can test, diff, and cache:
 //!
 //! ```
@@ -45,18 +45,17 @@
 //!
 //! # Features and the shell
 //!
-//! The lean build is pure compute (serde + rustfft for the convolve node's FFT
-//! convolution); the heavy deps are optional, behind features (both on by
-//! default): `analysis` pulls in image for [`analysis`]/[`review`] PNGs, and
-//! `sampler` pulls in rustysynth for the SoundFont sampler instrument. So the
-//! same core compiles to a native binary or a lean in-engine runtime. The `tono render` CLI, audio-file
-//! encoders, and MIDI export live in the `tono` shell crate that depends on this one.
+//! The lean build uses serde and a fixed-order FFT. Optional features (both
+//! enabled by default): `analysis` adds image and rustfft for feedback PNGs
+//! and statistics; `sampler` adds rustysynth and SoundFont file loading.
+//! Audio devices belong to the native adapters. The `tono` CLI supplies
+//! audio-file encoders and MIDI import/export.
 //!
-//! Longer-form guides: the [cookbook] (the node vocabulary + recipes) and the
-//! [architecture guide] (how the pieces compose, bottom-up).
+//! See the [sound-effects guide] for graphs and recipes, and the [live guide]
+//! for composing an audio runtime.
 //!
-//! [cookbook]: https://github.com/marmikshah/tono/blob/master/docs/cookbook.md
-//! [architecture guide]: https://marmikshah.github.io/tono/architecture.html
+//! [sound-effects guide]: https://marmikshah.github.io/tono/guides/sound-effects
+//! [live guide]: https://marmikshah.github.io/tono/guides/live
 
 #![warn(missing_docs)]
 
@@ -88,7 +87,7 @@ pub mod vary;
 
 /// The workhorse names in one import: `use tono_core::prelude::*;` covers the
 /// primary flow (author a doc or a [`song::Song`], render it, analyze it, play
-/// it) without hunting across the crate's twenty-two modules.
+/// it) without hunting across modules.
 pub mod prelude {
     pub use crate::adaptive::{AdaptiveMusic, LoopBuffer, Quantize};
     #[cfg(feature = "analysis")]

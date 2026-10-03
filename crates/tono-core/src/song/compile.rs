@@ -1,7 +1,7 @@
 //! Compiling a [`Song`](super::Song) to a deterministic [`SoundDoc`] — the
 //! `tracks` root of `seq` tracks. Length/duration math lives here too, and
 //! [`Song::compile`] — the full validation + lowering entry point that
-//! returns an immutable [`Program`] (ADR 0003).
+//! returns an immutable [`Program`].
 
 use super::{Song, SongError, SongTrack};
 use crate::diag::{CompileError, Diagnostic};
@@ -115,7 +115,7 @@ impl Song {
     }
 
     /// Whether the meter is plain (`beats_per_bar`/4 throughout, no pickup) —
-    /// the legacy placement path, byte-identical to before the maps existed.
+    /// bar placements use the constant grid in this case.
     pub(crate) fn plain_meter(&self) -> bool {
         self.meter_map.is_empty() && self.pickup.is_none()
     }
@@ -332,15 +332,11 @@ impl Song {
 
 impl Song {
     /// Compile the song into an immutable, hashed [`Program`] — the central
-    /// validation + lowering entry point (ADR 0003). Validation collects
+    /// validation + lowering entry point. Validation collects
     /// every problem in one pass (unknown references, a document that fails
     /// validation); the returned artifact carries the resolved document,
-    /// musical metadata, bounded resource estimates, streaming-coverage
-    /// warnings, and a canonical semantic hash that a Python-authored
-    /// equivalent song reproduces exactly.
-    ///
-    /// This API is **stable** — frozen at 1.10.0-rc.1
-    /// (docs/api-tiers.md).
+    /// musical metadata, bounded resource estimates and a canonical semantic
+    /// hash that a Python-authored equivalent song reproduces exactly.
     ///
     /// ```
     /// use tono_core::song::{CompileOptions, Song, note};

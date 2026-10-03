@@ -19,7 +19,6 @@ edition = "2024"
 rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/marmikshah/tono"
-description = "A deterministic sound engine — synthesis, instruments, songs, and adaptive game music, rendered byte-identically to audio."
 
 [workspace.dependencies]
 # The version must match workspace.package.version above: cargo strips `path` at

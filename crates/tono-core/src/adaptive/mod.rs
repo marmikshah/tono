@@ -612,7 +612,7 @@ mod tests {
         );
     }
 
-    // ---- interactive-music v2 ----
+    // Sections, quantized intensity and stingers.
 
     fn tone(freq: f32) -> SoundDoc {
         doc(&format!(

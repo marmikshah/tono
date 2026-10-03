@@ -1,6 +1,6 @@
 //! performance — a running Program: sample-accurate transport, a bounded
 //! scheduled-command queue, stingers, click-free program swaps, metrics, and
-//! deterministic command capture/replay (ADR 0005).
+//! deterministic command capture/replay.
 //!
 //! A [`Performance`] is the runtime half of `Song::compile` → `Program`: the
 //! host schedules commands at frames, beats, bars, markers, or sections, and
@@ -11,7 +11,6 @@
 //! schedule time, so firing one mid-callback only mixes a pre-rendered
 //! buffer — no render, no allocation on the render path.
 //!
-//! This API is **stable** — frozen at 1.10.0-rc.1 (docs/api-tiers.md).
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -23,7 +22,7 @@ use crate::program::Program;
 
 /// The command queue's capacity. A full queue rejects the new command (the
 /// caller decides what to drop) and counts it — the defined exhaustion
-/// behavior (ADR 0005).
+/// behavior.
 pub const COMMAND_QUEUE_CAP: usize = 4096;
 
 /// The program-swap crossfade length in frames (~21 ms at 48 kHz): long

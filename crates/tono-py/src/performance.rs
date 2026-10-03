@@ -1,4 +1,4 @@
-//! The performance runtime face (ADR 0005): `tono.Performance` runs a compiled
+//! The performance runtime face: `tono.Performance` runs a compiled
 //! `Program` — a sample-accurate transport, a bounded scheduled-command queue,
 //! stingers, crossfaded program swaps, metrics, and command capture — live on
 //! the speakers, or headless for tests, servers, and CI.
@@ -10,7 +10,6 @@
 //! headless mode keeps the identical control path but spawns no threads:
 //! `fill` drives the render manually.
 //!
-//! This API is **stable** — frozen at 1.10.0-rc.1 (docs/api-tiers.md).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;

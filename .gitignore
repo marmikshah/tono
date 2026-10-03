@@ -4,18 +4,12 @@
 *.swp
 /crates/tono-desktop/gen/
 
-# The workspace lockfile IS committed (issue #52, WS9): CI and releases
-# resolve with --locked so a build is exactly what the tag says it is.
-# (Libraries resolve at the consumer's end regardless; this pins OUR builds.)
-
 # Python byproducts: `maturin develop` drops the extension next to the sources
 # (and a stale one there would leak into the wheel), tests write __pycache__.
 __pycache__/
 /crates/tono-py/python/tono/_tono*.so
-
-# Local-only notes kept out of the repo
-/docs/architecture.html
-/docs/ROADMAP.md
+/crates/tono-py/python/tono/_tono*.pyd
+.venv/
 
 # Docs site (VitePress)
 /node_modules/

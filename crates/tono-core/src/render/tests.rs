@@ -149,7 +149,7 @@ fn tracks_have_independent_rng_streams() {
     let right = |d: &SoundDoc| render_tracks(d).unwrap().right;
     let sine = r#"{ "type": "sine", "freq": 440 }"#;
     let noise = r#"{ "type": "noise" }"#;
-    // v2: editing track 0 never changes track 1's noise content.
+    // Editing track 0 never changes track 1's noise content.
     assert_eq!(
         right(&mk(sine, r#", "version": 2"#)),
         right(&mk(noise, r#", "version": 2"#))
@@ -1725,8 +1725,7 @@ fn bus_inserts_process_only_the_routed_signal() {
     );
 }
 
-/// The new fields round-trip through serde (and stay out of the way when
-/// absent — older documents parse unchanged).
+/// Bus routing and sends survive serialization without changing the render.
 #[test]
 fn buses_and_sends_round_trip_through_serde() {
     let d = doc(r#"{ "name":"t", "duration":0.1, "seed":1, "version":2,

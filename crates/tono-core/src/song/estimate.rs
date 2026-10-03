@@ -1,5 +1,5 @@
 //! Resource estimates for a compiled Program (frames, events, peak voices,
-//! memory) — bounded numbers the runtime preallocates from (ADR 0005).
+//! memory) — bounded numbers the runtime preallocates from.
 
 use super::compile::note_end;
 use crate::dsl::{Node, SoundDoc};

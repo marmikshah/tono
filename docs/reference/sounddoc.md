@@ -14,8 +14,8 @@ Document-level fields:
 | `duration` | 0.3 | length in seconds |
 | `sample_rate` | 44100 | Hz |
 | `seed` | 0 | drives every `noise` source, `dust` train, and pluck burst |
-| `version` | omitted ⇒ 1 | DSL schema version; current **2** (per-track RNG streams) |
-| `engine` | omitted ⇒ 0 | DSP-kernel revision; current **5** |
+| `version` | 2 | current document schema; other revisions are rejected |
+| `engine` | 5 | current deterministic DSP kernels; other revisions are rejected |
 | `stereo` | mono | `wide` / `haas` treatment on the final render |
 | `normalize` | unset ⇒ a transparent −0.1 dBFS sample-peak safety limit only | loudness match + true-peak limit |
 | `playback` | `oneshot` | or `loop` |
@@ -58,7 +58,7 @@ Document-level fields:
 | `delay` | `secs`, `feedback` = 0 | feedback echo / comb |
 | `reverb` | `room` = 0, `mix` = 0 | Schroeder-style reverb |
 | `modal` | `modes` = `[{freq, decay=0.4, gain=1}]` (1..=64), `mix` = 1 | resonator bank — a struck body |
-| `drive` | `amount`, `shape` = `tanh`, `aa`? | waveshaper: `tanh` warm, `hard` clip, `fold` metallic; ADAA on engine ≥ 1 |
+| `drive` | `amount`, `shape` = `tanh`, `aa`? | waveshaper: `tanh` warm, `hard` clip, `fold` metallic; ADAA by default; `aa: false` selects the raw curve |
 | `ringmod` | `freq` | ring modulation — metallic, robotic |
 | `tremolo` | `rate` = 6, `depth` = 0.5 | amp wobble; streams natively |
 | `chorus` | `rate` = 1.5, `depth` = 0.5, `mix` = 0.5 | thickening / width |

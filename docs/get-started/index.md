@@ -36,12 +36,11 @@ let (left, right) = program.render_stereo();
 
 ## The Python bindings
 
-Build from source with maturin — **no prebuilt wheels for now** (the project
-is never published to PyPI; the wheel pipeline exists but stays manual until
-users ask for wheels):
+Build from a repository checkout with Maturin in a virtual environment.
+The manual Wheels workflow also produces install-tested Linux x86_64 artifacts:
 
 ```sh
-pip install maturin
+python -m pip install maturin numpy
 maturin develop -m crates/tono-py/Cargo.toml
 ```
 
