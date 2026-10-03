@@ -17,6 +17,9 @@ export default defineConfig({
       { text: 'Get started', link: '/get-started/' },
       { text: 'Guides', link: '/guides/sound-effects' },
       { text: 'Reference', link: '/reference/sounddoc' },
+      { text: 'Sound library', link: '/sounds' },
+      { text: 'Background music', link: '/bgm' },
+      { text: 'Create', link: '/create' },
       { text: 'Showcase', link: '/showcase' },
       {
         text: 'Contribute',

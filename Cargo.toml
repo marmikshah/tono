@@ -8,6 +8,7 @@ members = [
     "crates/tono-desktop",
     "crates/tono-play",
     "crates/tono-py",
+    "crates/tono-web",
 ]
 # Core and CLI need no native GUI/audio packages. CI also checks the desktop,
 # speaker adapter and Python extension with their platform dependencies.

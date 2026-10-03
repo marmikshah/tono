@@ -16,6 +16,8 @@ const active = computed(
     () => props.player.state.activeId === sampleId(sample.value),
 );
 const playing = computed(() => active.value && props.player.state.playing);
+const loading = computed(() => props.player.state.loadingId === sampleId(sample.value));
+const downloading = computed(() => props.player.state.downloadId === sampleId(sample.value));
 
 function select(id: string) {
     props.player.stop();
@@ -66,12 +68,11 @@ function next() {
                 class="preview-play"
                 type="button"
                 :aria-label="`${playing ? 'Pause' : 'Play'} ${sound.title} preview`"
-                @click="
-                    player.toggle(sampleId(sample), sampleUrl(sample.audio))
-                "
+                :aria-busy="loading"
+                @click="player.toggleSample(sample)"
             >
                 <Icon :name="playing ? 'pause' : 'play'" :size="17" />{{
-                    playing ? "Pause sound" : "Play sound"
+                    loading ? "Rendering…" : playing ? "Pause sound" : "Play sound"
                 }}
             </button>
             <button
@@ -83,12 +84,14 @@ function next() {
             >
                 <Icon name="shuffle" :size="18" />
             </button>
-            <a
+            <button
                 class="preview-download"
-                :href="sampleUrl(sample.audio)"
-                :download="sample.audio"
+                type="button"
+                :disabled="!!player.state.downloadId"
+                :aria-busy="downloading"
+                @click="player.downloadSample(sample)"
                 :aria-label="`Download ${sound.title} variation ${take + 1} as WAV`"
-                ><Icon name="download" :size="16" /> WAV</a
+                ><Icon name="download" :size="16" /> {{ downloading ? 'Rendering…' : 'WAV' }}</button
             >
         </div>
         <div class="preview-bottom">
@@ -104,7 +107,7 @@ function next() {
             :aria-label="`Download the editable ${sound.title} recipe`"
             >Editable recipe <Icon name="download" :size="12"
         /></a>
-        <p class="audio-error" v-if="active && player.state.error" role="alert">
+        <p class="audio-error" v-if="player.state.error" role="alert">
             {{ player.state.error }}
         </p>
     </section>

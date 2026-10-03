@@ -14,6 +14,7 @@ for Windows or macOS builds; patches for bugs on those platforms are welcome.
 crates/
 ├── tono-core/     Graphs, DSP, song compiler, streaming, runtime and analysis
 │   └── tests/     Regression/property tests and current JSON fixtures
+├── tono-web/      Lean WebAssembly adapter using the same core DSP
 ├── tono-cli/      Audio/MIDI files, feedback images and the tono command
 ├── tono-play/     Shared cpal speaker adapter and runnable Rust examples
 ├── tono-desktop/  Tauri pattern station; Rust state and a static webview
@@ -56,10 +57,21 @@ Docs need Node 22.12+ and Rust. Use `python3` where `python` is unavailable.
 
 ```sh
 npm ci
+rustup target add wasm32-unknown-unknown
 npm run docs:dev
 npm run docs:check
 npm run docs:build
+npm run docs:test
 ```
+
+The [sound library](https://marmikshah.github.io/tono/sounds) contains 64
+procedural designs with six voicings each. The site serves editable recipes
+and renders previews and WAV downloads locally through WebAssembly. The
+Rust API is `tono_core::library`; original game starters remain in `generate`.
+The [background music library](https://marmikshah.github.io/tono/bgm) adds 12
+original themes in three arrangements each, with editable Song scores.
+Use the [Sound Studio](https://marmikshah.github.io/tono/create) to add instrument
+layers, write notes, shape envelopes and effects, and export your own sounds.
 
 Ready PRs check pinned/latest Rust, Linux native builds and installed wheels.
 Before release run `cargo deny check advisories licenses` and

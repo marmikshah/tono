@@ -1,0 +1,18 @@
+[package]
+name = "tono-web"
+description = "A lean browser WebAssembly adapter for the Tono synthesis engine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Browser synthesis uses the same DSP as native Tono without image analysis or
+# SoundFont filesystem loading. No generated JavaScript bindings are required.
+tono-core = { path = "../tono-core", default-features = false }
+serde_json = { workspace = true }

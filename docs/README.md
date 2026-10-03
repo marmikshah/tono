@@ -11,20 +11,50 @@ From the repo root, with Node.js 22.12+ and the pinned Rust toolchain installed:
 
 ```sh
 npm ci
+rustup target add wasm32-unknown-unknown
 npm run docs:dev      # development server at /tono/
 npm run docs:check    # strict Vue/TypeScript check
 npm run docs:build    # static site in docs/.vitepress/dist
+npm run docs:test     # WAV encoding and WASM/native equivalence + catalog checks
 npm run docs:preview  # preview the production build
 ```
 
-The dev, check, and build commands first render 32 SFX previews with the shared
-Rust generator: eight starters, each with seeds 42–45. The example
-`crates/tono-cli/examples/site_samples.rs` writes mono 48 kHz, 16-bit WAVs,
-editable SoundDocs, and waveform metadata into `docs/public/generated/sfx/`.
-That directory is ignored by Git and regenerated during the Pages build.
-Use `npm run docs:audio` to refresh it after changing a recipe while the dev
-server is running.
+`docs:audio` exports editable SoundDocs and measured waveform metadata for
+the 32 starter previews, the sound library's 64 recipes × six variations
+(384 sounds), and 12 background music themes × three arrangements (36 loops).
+BGM exports include editable Song scores as well as their compiled SoundDocs.
+The exporter writes no WAV/OGG files. These generated files
+live in `docs/public/generated/sfx/`, which is ignored by Git and rebuilt
+during the Pages build. Run `npm run docs:audio` after changing a recipe.
 
-The Sound Lab plays those rendered previews; generation runs locally through
-the CLI or Rust API. The listening room uses the existing tracks in
-`public/audio/`. Both pages share one audio player so previews do not overlap.
+The dev and build commands also run `docs:engine`: a lean `tono-web` build
+for `wasm32-unknown-unknown`, copied to `public/generated/engine/tono.wasm`.
+It uses the existing core DSP with analysis and native SoundFont loading
+disabled. There is no separate JavaScript synthesizer or wasm-bindgen CLI.
+Run `npm run docs:engine` after changing DSP code while the server is running.
+
+The Sound Lab, `/sounds`, `/bgm` and `/create` lazily load this engine in a worker. Each play
+request loads a recipe, validates it, and renders stereo PCM away from the
+UI thread. Web Audio plays the result; WAV downloads encode those samples
+locally, including loop metadata. A 24 MiB in-memory LRU cache avoids repeated
+rendering; the worker and player release their resources on page navigation.
+Musical loop exports preserve their bar duration, with warm-up and crossfade
+material outside the playback region so the rhythm stays on the grid.
+The listening room continues to use the tracks in `public/audio/`. One
+transport per page keeps music and synthesized previews from overlapping.
+
+The browser adapter limits documents to 1 MiB, 30 seconds, and 48 kHz, plus
+graph complexity/work bounds. Sequence budgets count actual note gates and
+scratch, with separate limits for graph intermediates and musical voice work.
+Errors appear on the page and failed or stale
+play requests never replace a more recent selection. `docs:test` checks WAV
+encoding, exact native/WASM sample equivalence across DSP fixtures, and every
+exported recipe in the actual WASM module. Pages CI runs these checks.
+
+The Sound Studio at `/create` builds SoundDocs from draggable instrument layers
+and a 16-step note grid. Its controls cover tempo, duration, seed, note length,
+transposition, volume, pan, envelopes, filtering and delay. Users can undo/redo,
+save and reopen their own projects, and export a recipe or WAV. Drafts stay in
+the browser's local storage. The editor uses the same worker's direct-document
+API; it creates no server-side project or audio file. A streaming AudioWorklet
+adapter for live notes remains a later extension of the current bounce player.

@@ -12,6 +12,9 @@ import Logo from "./Logo.vue";
             </div>
             <nav aria-label="Footer navigation">
                 <a :href="withBase('/get-started/')">Documentation</a
+                ><a :href="withBase('/sounds')">Sound library</a
+                ><a :href="withBase('/bgm')">Background music</a
+                ><a :href="withBase('/create')">Create</a
                 ><a :href="withBase('/showcase')">Showcase</a
                 ><a
                     href="https://github.com/marmikshah/tono"

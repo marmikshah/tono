@@ -24,12 +24,13 @@ function closeMenu() {
                 :class="{ 'is-open': menuOpen }"
                 aria-label="Main navigation"
             >
-                <a :href="withBase('/#sounds')" @click="menuOpen = false"
+                <a :href="withBase('/sounds')" @click="menuOpen = false"
                     >Sound effects</a
                 >
-                <a :href="withBase('/showcase')" @click="menuOpen = false"
-                    >Music &amp; examples</a
+                <a :href="withBase('/bgm')" @click="menuOpen = false"
+                    >Background music</a
                 >
+                <a :href="withBase('/create')" @click="menuOpen = false">Sound Studio</a>
                 <a :href="withBase('/get-started/')" @click="menuOpen = false"
                     >Documentation <Icon name="external" :size="13"
                 /></a>
@@ -45,8 +46,8 @@ function closeMenu() {
                 /></a>
                 <a
                     class="button button-small button-outline header-cta"
-                    :href="withBase('/guides/generation')"
-                    >Start creating <Icon name="arrow" :size="16"
+                    :href="withBase('/create')"
+                    >Make your own sound <Icon name="arrow" :size="16"
                 /></a>
                 <button
                     ref="menuButton"

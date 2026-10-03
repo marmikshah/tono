@@ -10,6 +10,8 @@ on:
       - "package*.json"
       - "crates/tono-cli/**"
       - "crates/tono-core/**"
+      - "crates/tono-web/**"
+      - "scripts/*.mjs"
       - "tsconfig.json"
       - "Cargo.*"
       - "rust-toolchain.toml"
@@ -36,9 +38,12 @@ jobs:
           cache: npm
       - run: npm ci
       - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: npm run docs:check
       - run: npm run docs:build
+      - run: npm run docs:test
       - run: npm audit --audit-level=moderate
       - uses: actions/upload-pages-artifact@v4
         if: github.event_name != 'pull_request'

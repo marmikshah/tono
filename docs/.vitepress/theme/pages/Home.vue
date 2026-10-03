@@ -51,7 +51,7 @@ const filtered = computed(() =>
                 <Icon name="wave" :size="24" />
                 <p>
                     <strong>Small sounds. Big personality.</strong
-                    ><span>8 ready-to-use sound effect starters</span>
+                    ><span>Hundreds of ready-to-use sound variations</span>
                 </p>
             </div>
             <div>
@@ -77,8 +77,8 @@ const filtered = computed(() =>
                     <h2>Little sounds. <em>Instant character.</em></h2>
                     <p>Press play. Find a favorite. Make it your own.</p>
                 </div>
-                <a class="text-link" :href="withBase('/guides/generation')"
-                    >Explore the generator <Icon name="arrow" :size="17"
+                <a class="text-link" :href="withBase('/sounds')"
+                    >Browse the full sound library <Icon name="arrow" :size="17"
                 /></a>
             </div>
             <div class="filter-row">
@@ -110,7 +110,7 @@ const filtered = computed(() =>
                 />
             </div>
             <p class="collection-note">
-                <Icon name="wave" :size="14" /> Real engine renders. Try four
+                <Icon name="wave" :size="14" /> Rendered in your browser. Try four
                 seeded variations of each sound in the Sound Lab above.
             </p>
         </section>
@@ -126,8 +126,8 @@ const filtered = computed(() =>
                             for yours.
                         </p>
                     </div>
-                    <a class="text-link" :href="withBase('/showcase')"
-                        >Visit the listening room <Icon name="arrow" :size="17"
+                    <a class="text-link" :href="withBase('/bgm')"
+                        >Find background music <Icon name="arrow" :size="17"
                     /></a>
                 </div>
                 <div class="music-grid">
@@ -190,7 +190,7 @@ const filtered = computed(() =>
             <p>Start small. Make something you want to press play on.</p>
             <a
                 class="button button-primary"
-                :href="withBase('/guides/generation')"
+                :href="withBase('/create')"
                 >Start creating <Icon name="arrow" :size="18"
             /></a>
         </section>

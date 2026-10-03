@@ -2,6 +2,35 @@
 
 Write tunes with the `seq` sequencer node, then compile a whole piece — tracks, patterns, arrangement — into a hashed, validated **Program**.
 
+## Start with background music
+
+The [background music library](/bgm) has 12 original four-bar themes for menus,
+puzzles, exploration, cozy scenes, suspense and action. Each comes in Original,
+Calm and Drive arrangements with its own instrumentation and rhythm. Preview
+them in your browser, then download a seamless stereo WAV, a SoundDoc recipe,
+or the editable Song score. All are MIT licensed and require no sample assets.
+
+```rust
+use tono_core::bgm::{BgmSpec, BgmVariant, generate, score};
+
+let spec = BgmSpec::new("lantern-trail", BgmVariant::Calm, 42);
+let song = score(&spec)?;       // Editable one-cycle score
+let doc = generate(&spec)?;     // Warmed-up, exact four-bar loop
+let samples = tono_core::player::render_stereo(&doc);
+```
+
+Discover themes through `tono_core::bgm::COMPOSITIONS`. Saved specs pin their
+composition revision and seed; save the generated SoundDoc to preserve the
+sound across future revisions. Loops include warm-up and crossfade material
+outside their playback region, preserving the musical period to the nearest
+sample. An exported Song is the editable four-bar score; its ordinary render
+is a one-shot. Use the generated SoundDoc for the prepared seamless loop.
+
+To write your own pattern visually, use the [Sound Studio](/create): add an
+instrument, enter notes or chords on the grid, and shape the envelope and mix.
+Its project exports reopen in the editor and are also valid SoundDocs for the
+CLI and existing runtimes.
+
 ## Write music with `seq`
 
 <a id="music-with-seq"></a>
