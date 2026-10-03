@@ -410,15 +410,17 @@ mod tests {
     fn from_json_rejects_an_unsupported_revision() {
         let program = two_track_program();
         let mut value: serde_json::Value = serde_json::from_str(&program.to_json()).unwrap();
-        value["program_version"] = serde_json::json!(PROGRAM_VERSION + 1);
-        let err = Program::from_json(&serde_json::to_string(&value).unwrap()).unwrap_err();
-        assert_eq!(
-            err,
-            ProgramError::UnsupportedVersion {
-                found: PROGRAM_VERSION + 1,
-                supported: PROGRAM_VERSION,
-            }
-        );
+        for found in [0, PROGRAM_VERSION - 1, PROGRAM_VERSION + 1] {
+            value["program_version"] = serde_json::json!(found);
+            let err = Program::from_json(&serde_json::to_string(&value).unwrap()).unwrap_err();
+            assert_eq!(
+                err,
+                ProgramError::UnsupportedVersion {
+                    found,
+                    supported: PROGRAM_VERSION
+                }
+            );
+        }
     }
 
     #[test]
