@@ -290,7 +290,7 @@ proptest! {
     ) {
         // Sanity: the program's own frame math is reachable mid-script (a
         // seek target the script can actually land on).
-        let transport = Transport::for_program(&program.meta);
+        let transport = Transport::for_program(&program);
         prop_assert!(transport.frame_at_beat(0.0) == 0);
         let a = run_script(&program, &script, total_frames, block_a, true);
         let b = run_script(&program, &script, total_frames, block_b, true);

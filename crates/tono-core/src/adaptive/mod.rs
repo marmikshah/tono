@@ -22,7 +22,6 @@ mod schedule;
 mod sections;
 
 use crate::dsl::SoundDoc;
-use crate::render;
 use crate::runtime::AudioSource;
 pub use schedule::Quantize;
 
@@ -41,7 +40,7 @@ impl LoopBuffer {
     /// the doc with a `loop` playback so its tail meets its head, or trim it
     /// with [`from_stereo`](Self::from_stereo).)
     pub fn from_doc(doc: &SoundDoc) -> Self {
-        let (left, right) = render_stereo_pair(doc);
+        let (left, right) = crate::render::render_product(doc).into_stereo();
         LoopBuffer::from_stereo(left, right)
     }
 
@@ -71,7 +70,7 @@ impl LoopBuffer {
     /// loop grid so their layered cross-fades stay sample-aligned (never drift
     /// phase). See [`AdaptiveMusic::add_stem_set`].
     pub fn from_doc_len(doc: &SoundDoc, frames: usize) -> Self {
-        let (mut left, mut right) = render_stereo_pair(doc);
+        let (mut left, mut right) = crate::render::render_product(doc).into_stereo();
         left.resize(frames, 0.0);
         right.resize(frames, 0.0);
         LoopBuffer {
@@ -159,17 +158,6 @@ const DUCK_ATTACK_SECS: f32 = 0.002;
 /// Snap threshold (~-80 dB from target) so the exponential ramps land exactly
 /// instead of asymptoting forever.
 const DUCK_SNAP_EPSILON: f32 = 1e-4;
-
-/// Render a doc once and return its stereo pair — mono is **duplicated**, the
-/// doc's Haas/Wide `stereo` treatment is NOT applied (unlike
-/// `player::render_stereo`, which stereoizes; unifying the two would change
-/// adaptive playback bytes for treated docs, so the divergence is deliberate).
-/// Public so hosts can render off the audio thread and hand the buffers to
-/// [`AdaptiveMusic::stinger_stereo`].
-pub fn render_stereo_pair(doc: &SoundDoc) -> (Vec<f32>, Vec<f32>) {
-    let p = render::render_product(doc);
-    p.stereo.unwrap_or_else(|| (p.mono.clone(), p.mono))
-}
 
 /// A deferred change fired when the clock reaches `fire_at` frames.
 struct Scheduled {

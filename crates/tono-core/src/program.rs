@@ -1,44 +1,29 @@
-//! program — the immutable result of compiling a [`Song`](crate::song::Song)
-//! (ADR 0003).
-//!
-//! A [`Program`] is the artifact applications render, ship, and (from
-//! 1.10.0-alpha.3) run: the resolved [`SoundDoc`], the musical metadata a
-//! transport needs, bounded resource estimates, streaming-coverage warnings,
-//! and a canonical content hash — all under three independently evolving
-//! version pins (`SCHEMA_VERSION`, `ENGINE_VERSION`, [`PROGRAM_VERSION`]).
-//! A Program is immutable by convention: it is *validated and resolved*, so
-//! mutating a public field invalidates [`Program::hash`] (a round-trip
-//! through [`Program::from_json`] re-verifies and catches it).
-//!
-//! This API is **stable** — frozen at 1.10.0-rc.1 (docs/api-tiers.md).
+//! Compiled songs: a resolved sound document, musical metadata, resource
+//! bounds and a canonical integrity hash. Rendering and transport share the
+//! document's format, sample rate and duration.
 
 use serde::{Deserialize, Serialize};
 
 use crate::diag::Diagnostic;
 use crate::dsl::{SeqWave, SoundDoc};
-use crate::ids::TrackId;
 use crate::render;
 use crate::streaming::StreamGraph;
 
 /// The current Program bundle format revision. A Program records the revision
-/// it was compiled with; a loader rejects a bundle newer than itself. Bumped
+/// it was compiled with; a loader accepts only this revision. Bumped
 /// when the serialized shape (or its semantics) changes — independently of
 /// the document schema and DSP engine revisions.
-pub const PROGRAM_VERSION: u32 = 2;
+pub const PROGRAM_VERSION: u32 = 3;
 
 /// A compiled song: validated, resolved, hashed. Built by
 /// [`Song::compile`](crate::song::Song::compile); reloaded by
 /// [`Program::from_json`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Program {
     /// The bundle revision (see [`PROGRAM_VERSION`]).
     pub program_version: u32,
-    /// The resolved document's effective schema version.
-    pub schema_version: u32,
-    /// The resolved document's effective engine revision.
-    pub engine_version: u32,
-    /// Canonical semantic hash. Version 1 covers the document; version 2
-    /// covers every serialized semantic field except this hash.
+    /// Canonical semantic hash over every serialized field except this hash.
     pub hash: u64,
     /// The target this program was compiled for (offline or runtime).
     #[serde(default)]
@@ -51,18 +36,12 @@ pub struct Program {
     pub meta: ProgramMeta,
     /// Bounded resource estimates the runtime preallocates from (ADR 0005).
     pub estimates: ResourceEstimates,
-    /// Offline compile warnings: streaming blockers re-derived from the
-    /// resolved document on load (a pure function of it), never stored.
-    /// Runtime-target compilation rejects these blockers instead.
-    #[serde(skip)]
-    pub warnings: Vec<Diagnostic>,
 }
 
 /// The musical facts of a compiled song, resolved once at compile time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProgramMeta {
-    /// The song's name.
-    pub name: String,
     /// Tempo in beats per minute (clamped at compile, like the compiler's
     /// duration math: degenerate tempos floor at 1).
     pub tempo_bpm: f32,
@@ -88,22 +67,14 @@ pub struct ProgramMeta {
     pub markers: Vec<crate::song::Marker>,
     /// The song's length in bars (end of its last placement or direct note).
     pub length_bars: u32,
-    /// Total duration in seconds, including the release/reverb tail.
-    pub duration_secs: f32,
-    /// Total duration in frames (`duration_secs × sample_rate`, rounded).
-    pub duration_frames: u64,
-    /// The sample rate the program was compiled for.
-    pub sample_rate: u32,
-    /// One entry per track, in declaration order (so `id` is stable).
+    /// One entry per track, in declaration order.
     pub tracks: Vec<TrackMeta>,
 }
 
 /// One track's identity and role in a compiled program.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TrackMeta {
-    /// The stable identifier: declaration order at compile time, so an
-    /// unchanged song recompiles to identical ids.
-    pub id: TrackId,
     /// The track name (also the rendered layer id).
     pub name: String,
     /// The instrument voice.
@@ -120,6 +91,7 @@ pub struct TrackMeta {
 /// are stated where an exact figure isn't cheap; the runtime preallocates
 /// from these (ADR 0005).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResourceEstimates {
     /// Total render length in frames (mono frame count).
     pub frames: u64,
@@ -140,7 +112,9 @@ pub struct ResourceEstimates {
 pub enum ProgramError {
     /// The JSON didn't parse or didn't match the bundle shape.
     Json(String),
-    /// The bundle's `program_version` is newer than this binary supports.
+    /// The resolved document fails current-format validation.
+    InvalidDocument(String),
+    /// The bundle's format revision is unsupported.
     UnsupportedVersion {
         /// The bundle's revision.
         found: u32,
@@ -161,6 +135,7 @@ impl std::fmt::Display for ProgramError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ProgramError::Json(e) => write!(f, "program JSON: {e}"),
+            ProgramError::InvalidDocument(e) => write!(f, "program document: {e}"),
             ProgramError::UnsupportedVersion { found, supported } => write!(
                 f,
                 "T3001: unsupported program version {found}; expected {supported}"
@@ -228,11 +203,7 @@ impl Program {
     /// stereo mix; a defensively duplicated mono pair is returned if it
     /// somehow doesn't.
     pub fn render_stereo(&self) -> (Vec<f32>, Vec<f32>) {
-        let product = render::render_product(&self.doc);
-        product.stereo.unwrap_or_else(|| {
-            let m = product.mono;
-            (m.clone(), m)
-        })
+        render::render_product(&self.doc).into_stereo()
     }
 
     /// Render a frame range `[start, end)` as a stereo pair — a slice of the
@@ -249,7 +220,7 @@ impl Program {
     /// Render a bar range `[start_bar, end_bar)` through the program's meter
     /// map (see [`Self::render_range_frames`]).
     pub fn render_range_bars(&self, start_bar: u32, end_bar: u32) -> (Vec<f32>, Vec<f32>) {
-        let transport = crate::runtime::Transport::for_program(&self.meta);
+        let transport = crate::runtime::Transport::for_program(self);
         self.render_range_frames(
             transport.frame_at_bar(start_bar),
             transport.frame_at_bar(end_bar),
@@ -263,10 +234,15 @@ impl Program {
         render::render_stems(&self.doc).unwrap_or_default()
     }
 
+    /// Streaming blockers, derived from the resolved document.
+    pub fn warnings(&self) -> Vec<Diagnostic> {
+        blocker_warnings(&self.doc)
+    }
+
     /// Whether the resolved document streams natively (no warnings is the
     /// same signal — blockers are the only warnings compilation produces).
     pub fn is_streamable(&self) -> bool {
-        self.warnings.is_empty()
+        StreamGraph::blockers(&self.doc).is_empty()
     }
 
     /// The machine-readable capability list: what this program can do on a
@@ -286,27 +262,37 @@ impl Program {
         serde_json::to_string(self).expect("a program serializes")
     }
 
-    /// Load a bundle: parse, reject a newer revision (T3001), re-verify the
-    /// semantic hash (T3002), and re-derive the warnings from the resolved
-    /// document. No musical recomputation — loading never recompiles.
+    /// Load a current bundle and verify its integrity and resolved document.
     pub fn from_json(json: &str) -> Result<Program, ProgramError> {
-        let mut program: Program =
+        let program: Program =
             serde_json::from_str(json).map_err(|e| ProgramError::Json(e.to_string()))?;
-        if program.program_version != PROGRAM_VERSION {
+        program.verify()?;
+        Ok(program)
+    }
+
+    pub(crate) fn verify(&self) -> Result<(), ProgramError> {
+        if self.program_version != PROGRAM_VERSION {
             return Err(ProgramError::UnsupportedVersion {
-                found: program.program_version,
+                found: self.program_version,
                 supported: PROGRAM_VERSION,
             });
         }
-        let computed = program.computed_hash();
-        if computed != program.hash {
+        let computed = self.computed_hash();
+        if computed != self.hash {
             return Err(ProgramError::HashMismatch {
-                stored: program.hash,
+                stored: self.hash,
                 computed,
             });
         }
-        program.warnings = blocker_warnings(&program.doc);
-        Ok(program)
+        self.doc
+            .validate()
+            .map_err(|e| ProgramError::InvalidDocument(e.to_string()))?;
+        if self.target == crate::song::CompileTarget::Runtime && !self.is_streamable() {
+            return Err(ProgramError::InvalidDocument(
+                "runtime target requires native streaming".into(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -383,7 +369,7 @@ mod tests {
         let program = two_track_program();
         let loaded = Program::from_json(&program.to_json()).expect("loads");
         assert_eq!(loaded.hash, program.hash);
-        assert_eq!(loaded.warnings.len(), program.warnings.len());
+        assert_eq!(loaded.warnings().len(), program.warnings().len());
         assert_eq!(loaded.target, program.target);
         assert_eq!(loaded.render_mono(), program.render_mono());
         // The capability list is machine-readable and derived on load.
@@ -399,7 +385,7 @@ mod tests {
         assert_eq!(sr, r[1000..5000].to_vec());
         // A bar range converts through the meter map.
         let (bl, _) = program.render_range_bars(0, 1);
-        let transport = crate::runtime::Transport::for_program(&program.meta);
+        let transport = crate::runtime::Transport::for_program(&program);
         assert_eq!(bl.len(), transport.frame_at_bar(1) as usize);
         // Out-of-range clamps instead of panicking.
         let (cl, _) = program.render_range_frames(u64::MAX - 1, u64::MAX);
@@ -432,12 +418,29 @@ mod tests {
         assert!(matches!(err, ProgramError::HashMismatch { .. }));
 
         let mut value: serde_json::Value = serde_json::from_str(&program.to_json()).unwrap();
-        value["meta"]["sample_rate"] = serde_json::json!(48_000);
+        value["meta"]["tempo_bpm"] = serde_json::json!(90.0);
         let err = Program::from_json(&serde_json::to_string(&value).unwrap()).unwrap_err();
         assert!(
             matches!(err, ProgramError::HashMismatch { .. }),
-            "runtime metadata is part of a v2 bundle's integrity boundary"
+            "transport metadata is part of the bundle's integrity boundary"
         );
+    }
+
+    #[test]
+    fn current_bundles_reject_invalid_documents_even_with_a_matching_hash() {
+        for pin in ["engine", "version"] {
+            let mut program = two_track_program();
+            if pin == "engine" {
+                program.doc.engine = 0;
+            } else {
+                program.doc.version = 1;
+            }
+            program.hash = program.computed_hash();
+            assert!(matches!(
+                Program::from_json(&program.to_json()),
+                Err(ProgramError::InvalidDocument(_))
+            ));
+        }
     }
 
     #[test]

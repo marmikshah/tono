@@ -46,6 +46,15 @@ pub struct RenderProduct {
     pub layers: Vec<LayerStats>,
 }
 
+impl RenderProduct {
+    /// Consume the rendered bus, duplicating mono when there is no mixer.
+    /// Output-stage Haas/Wide treatment remains the player's/exporter's job.
+    pub fn into_stereo(self) -> (Vec<f32>, Vec<f32>) {
+        self.stereo
+            .unwrap_or_else(|| (self.mono.clone(), self.mono))
+    }
+}
+
 mod output;
 mod tracks;
 

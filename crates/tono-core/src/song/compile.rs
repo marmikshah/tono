@@ -6,7 +6,6 @@
 use super::{Song, SongError, SongTrack};
 use crate::diag::{CompileError, Diagnostic};
 use crate::dsl::{Node, SeqNote, SoundDoc, Track};
-use crate::ids::TrackId;
 use crate::program::{PROGRAM_VERSION, Program, ProgramMeta, TrackMeta, blocker_warnings};
 use crate::units::Beat;
 
@@ -416,14 +415,11 @@ impl Song {
         let estimates = super::estimate::program_estimates(&doc);
         let mut program = Program {
             program_version: PROGRAM_VERSION,
-            schema_version: doc.version,
-            engine_version: doc.engine,
             hash: 0,
             target: opts.target,
             doc,
             meta,
             estimates,
-            warnings,
         };
         program.hash = program.computed_hash();
         Ok(program)
@@ -437,7 +433,6 @@ impl Song {
         let mut markers = self.markers.clone();
         markers.sort_by_key(|m| m.at);
         ProgramMeta {
-            name: doc.name.clone(),
             tempo_bpm: self.bpm.max(1.0),
             beats_per_bar: self.beats_per_bar.max(1),
             steps_per_beat: self.steps_per_beat.max(1),
@@ -447,15 +442,11 @@ impl Song {
             sections,
             markers,
             length_bars: self.length_bars(),
-            duration_secs: doc.duration,
-            duration_frames: super::estimate::duration_frames(doc),
-            sample_rate: doc.sample_rate,
             tracks: self
                 .tracks
                 .iter()
                 .enumerate()
                 .map(|(i, t)| TrackMeta {
-                    id: TrackId::from(i as u64 + 1),
                     name: t.name.clone(),
                     wave: t.wave,
                     notes: super::estimate::track_note_count(doc, i),
@@ -588,7 +579,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(program.doc.sample_rate, 48_000);
-        assert_eq!(program.meta.sample_rate, 48_000);
+        assert_eq!(program.doc.sample_rate, 48_000);
     }
 
     #[test]
@@ -600,9 +591,9 @@ mod tests {
         assert!(
             program.is_streamable(),
             "a plain compiled song streams natively now: {:?}",
-            program.warnings
+            program.warnings()
         );
-        assert!(program.warnings.is_empty());
+        assert!(program.warnings().is_empty());
     }
 
     #[test]
@@ -620,15 +611,15 @@ mod tests {
         assert!(!program.is_streamable());
         assert!(
             program
-                .warnings
+                .warnings()
                 .iter()
                 .any(|d| d.code == "T1508" && d.message.contains("the master chain")),
             "the master-chain blocker is a warning with its context: {:?}",
-            program.warnings
+            program.warnings()
         );
         assert!(
             program
-                .warnings
+                .warnings()
                 .iter()
                 .all(|d| d.severity == crate::diag::Severity::Warning),
             "warnings never fail a compile"
@@ -674,16 +665,14 @@ mod tests {
     #[test]
     fn meta_preserves_the_musical_facts() {
         let program = demo_song().compile(&CompileOptions::default()).unwrap();
-        assert_eq!(program.meta.name, "demo");
+        assert_eq!(program.doc.name, "demo");
         assert_eq!(program.meta.tempo_bpm, 120.0);
         assert_eq!(program.meta.length_bars, 1);
         assert_eq!(program.meta.tracks.len(), 2);
-        assert_eq!(program.meta.tracks[0].id.get(), 1);
-        assert_eq!(program.meta.tracks[1].id.get(), 2);
         assert_eq!(program.meta.tracks[0].name, "bass");
         assert_eq!(program.meta.tracks[0].notes, 2);
         assert_eq!(
-            program.meta.duration_frames,
+            program.estimates.frames,
             (program.doc.duration * program.doc.sample_rate as f32).round() as u64
         );
     }

@@ -172,12 +172,6 @@ impl InstrumentDesign {
         self
     }
 
-    /// Set the pitch mapping (builder style).
-    pub fn with_pitch(mut self, pitch: PitchMap) -> Self {
-        self.pitch = pitch;
-        self
-    }
-
     /// Drive a named param from note velocity, mapped across the param's declared
     /// `[min, max]` (e.g. a filter cutoff for velocity → brightness).
     pub fn with_velocity_param(mut self, name: impl Into<String>) -> Self {

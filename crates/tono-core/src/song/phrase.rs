@@ -120,10 +120,6 @@ impl Phrase {
     pub fn hat(&mut self) -> &mut Self {
         self.hit(42)
     }
-    /// Open hi-hat (GM 46).
-    pub fn open_hat(&mut self) -> &mut Self {
-        self.hit(46)
-    }
     /// Hand clap (GM 39).
     pub fn clap(&mut self) -> &mut Self {
         self.hit(39)

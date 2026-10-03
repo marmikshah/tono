@@ -68,9 +68,9 @@ fn main() {
     let program = song.compile(&CompileOptions::default()).expect("compiles");
     println!(
         "compiled '{}': hash {:#018x}, {:.1}s, {} tracks, {} events, streamable={}",
-        program.meta.name,
+        program.doc.name,
         program.hash,
-        program.meta.duration_secs,
+        program.doc.duration,
         program.meta.tracks.len(),
         program.estimates.events,
         program.is_streamable(),

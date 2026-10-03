@@ -4,7 +4,7 @@
 //!
 //! The pinned frames relationship (the exact rounding contract):
 //!
-//! - `estimates.frames` (and `meta.duration_frames`) is
+//! - `estimates.frames` is
 //!   `round(duration × sample_rate)` — `duration_frames` in song/compile.rs.
 //! - The renderer's actual frame count (`render_stereo` channel length) is
 //!   `ceil(duration × sample_rate)` with a one-frame floor — render/mod.rs
@@ -148,7 +148,6 @@ fn check(song: &Song, opts: &CompileOptions) -> Program {
     // The pinned rounding contract, both sides exact.
     let expected_estimate = (duration * sr as f32).round().max(0.0) as u64;
     assert_eq!(est.frames, expected_estimate, "estimates.frames rounds");
-    assert_eq!(program.meta.duration_frames, est.frames, "meta agrees");
     let (left, right) = program.render_stereo();
     assert_eq!(left.len(), right.len(), "stereo channels agree");
     let actual = left.len() as u64;

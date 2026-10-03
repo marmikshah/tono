@@ -51,7 +51,7 @@ fn the_reference_song_pins_the_cross_language_hash() {
     // Cross-language contract — crates/tono-py/tests/test_typed.py builds the
     // same song via the typed Python API and pins the same hash; if this
     // value changes, change both or the languages disagree.
-    assert_eq!(program.hash, 0x6790_A0ED_1072_B5F5_u64);
+    assert_eq!(program.hash, 0x11EE_57F2_CF7C_7447_u64);
 }
 
 #[test]

@@ -1387,23 +1387,23 @@ impl Program {
     /// The sample rate the program was compiled for.
     #[getter]
     fn sample_rate(&self) -> u32 {
-        self.inner.meta.sample_rate
+        self.inner.doc.sample_rate
     }
 
     /// The total duration in seconds, including the release/reverb tail.
     #[getter]
     fn duration_seconds(&self) -> f32 {
-        self.inner.meta.duration_secs
+        self.inner.doc.duration
     }
 
-    /// One dict per track, in declaration order: id, name, wave, notes, mute,
+    /// One dict per track, in declaration order: index, name, wave, notes, mute,
     /// solo.
     #[getter]
     fn tracks<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         let list = PyList::empty(py);
-        for t in &self.inner.meta.tracks {
+        for (index, t) in self.inner.meta.tracks.iter().enumerate() {
             let dict = PyDict::new(py);
-            dict.set_item("id", t.id.get())?;
+            dict.set_item("index", index)?;
             dict.set_item("name", &t.name)?;
             dict.set_item("wave", wave_str(t.wave))?;
             dict.set_item("notes", t.notes)?;
@@ -1430,7 +1430,7 @@ impl Program {
     /// of the same shape as `CompileError.diagnostics`.
     #[getter]
     fn warnings<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
-        diagnostics_list(py, &self.inner.warnings)
+        diagnostics_list(py, &self.inner.warnings())
     }
 
     /// Whether the resolved document streams natively.
@@ -1564,7 +1564,7 @@ impl Program {
     fn __repr__(&self) -> String {
         format!(
             "Program('{}', hash={:#018x}, tracks={})",
-            self.inner.meta.name,
+            self.inner.doc.name,
             self.inner.hash,
             self.inner.meta.tracks.len()
         )

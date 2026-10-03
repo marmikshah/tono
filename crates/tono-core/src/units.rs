@@ -5,9 +5,7 @@
 //! integer [`Frames`]. The two meet exactly once, at the scheduling boundary,
 //! through [`beat_to_frames`] — every placement lands on the same frame on
 //! every platform because the rounding rule is specified, not emergent. The
-//! plain newtypes ([`Samples`], [`SampleRate`], [`Hertz`], [`Decibels`],
-//! [`Tempo`], [`Bars`]) exist so a function's signature says which quantity it
-//! takes instead of trusting a bare number at every call site.
+//! [`SampleRate`] and [`Tempo`] make the conversion units explicit.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -20,29 +18,12 @@ use serde::{Deserialize, Serialize};
 #[serde(transparent)]
 pub struct Frames(pub u64);
 
-/// A count of individual samples (channel-agnostic), e.g. a buffer length.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
-)]
-#[serde(transparent)]
-pub struct Samples(pub u64);
-
 /// A sample rate in Hz (frames per second), e.g. 44100 or 48000.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
 )]
 #[serde(transparent)]
 pub struct SampleRate(pub u32);
-
-/// A frequency in Hz.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(transparent)]
-pub struct Hertz(pub f32);
-
-/// A level in decibels.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(transparent)]
-pub struct Decibels(pub f32);
 
 /// A tempo in beats per minute. Below 1 BPM the conversion to frames floors
 /// the tempo at 1 — the same clamp the song compiler applies
@@ -51,23 +32,9 @@ pub struct Decibels(pub f32);
 #[serde(transparent)]
 pub struct Tempo(pub f32);
 
-/// A count of bars (measures) — the arrangement's coarse unit of position
-/// and length.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
-)]
-#[serde(transparent)]
-pub struct Bars(pub u32);
-
 impl From<u64> for Frames {
     fn from(n: u64) -> Self {
         Frames(n)
-    }
-}
-
-impl From<u64> for Samples {
-    fn from(n: u64) -> Self {
-        Samples(n)
     }
 }
 
@@ -82,34 +49,6 @@ impl std::ops::Sub for Frames {
     type Output = Frames;
     fn sub(self, rhs: Frames) -> Frames {
         Frames(self.0 - rhs.0)
-    }
-}
-
-impl std::ops::Add for Samples {
-    type Output = Samples;
-    fn add(self, rhs: Samples) -> Samples {
-        Samples(self.0 + rhs.0)
-    }
-}
-
-impl std::ops::Sub for Samples {
-    type Output = Samples;
-    fn sub(self, rhs: Samples) -> Samples {
-        Samples(self.0 - rhs.0)
-    }
-}
-
-impl std::ops::Add for Bars {
-    type Output = Bars;
-    fn add(self, rhs: Bars) -> Bars {
-        Bars(self.0 + rhs.0)
-    }
-}
-
-impl std::ops::Sub for Bars {
-    type Output = Bars;
-    fn sub(self, rhs: Bars) -> Bars {
-        Bars(self.0 - rhs.0)
     }
 }
 
@@ -524,7 +463,6 @@ mod tests {
     fn integer_units_do_the_obvious_arithmetic() {
         assert_eq!(Frames(10) + Frames(5), Frames(15));
         assert_eq!(Frames(10) - Frames(5), Frames(5));
-        assert_eq!(Bars(1) + Bars(2), Bars(3));
         assert_eq!(Frames::from(3u64), Frames(3));
         assert!(SampleRate(96_000) > SampleRate(44_100));
     }

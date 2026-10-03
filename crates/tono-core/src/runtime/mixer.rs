@@ -73,8 +73,6 @@ struct Bus {
     name: String,
     kind: BusKind,
     gain: f32,
-    /// Dry level into master (0 = send-only). Unused by the master bus.
-    to_master: f32,
     /// A stereo insert chain (identical coefficients, independent L/R state).
     inserts: Option<(EffectChain, EffectChain)>,
     /// Post-fader sends into FX buses, as `(target bus index, level)`.
@@ -136,7 +134,6 @@ impl Mixer {
             name: "master".into(),
             kind: BusKind::Master,
             gain: 1.0,
-            to_master: 1.0,
             inserts: None,
             sends: Vec::new(),
         };
@@ -208,7 +205,6 @@ impl Mixer {
             name,
             kind,
             gain: 1.0,
-            to_master: 1.0,
             inserts,
             sends: Vec::new(),
         });
@@ -268,15 +264,6 @@ impl Mixer {
     pub fn set_bus_gain(&mut self, bus: BusId, gain: f32) {
         if let Some(b) = self.buses.get_mut(bus.0 as usize) {
             b.gain = gain.max(0.0);
-        }
-    }
-
-    /// Set a bus's dry level into master (0 = send-only). No-op for master.
-    pub fn set_bus_dry(&mut self, bus: BusId, level: f32) {
-        if bus != BusId::MASTER
-            && let Some(b) = self.buses.get_mut(bus.0 as usize)
-        {
-            b.to_master = level.max(0.0);
         }
     }
 
@@ -397,7 +384,7 @@ impl AudioSource for Mixer {
                 cr.process(&mut bus_r[..frames]);
             }
             let fader = self.buses[bi].gain;
-            let dry = fader * self.buses[bi].to_master;
+            let dry = fader;
             for f in 0..frames {
                 master_l[f] += bus_l[f] * dry;
                 master_r[f] += bus_r[f] * dry;
@@ -447,7 +434,7 @@ impl AudioSource for Mixer {
                 cl.process(&mut fl[..frames]);
                 cr.process(&mut fr[..frames]);
             }
-            let ret = self.buses[bi].gain * self.buses[bi].to_master;
+            let ret = self.buses[bi].gain;
             for f in 0..frames {
                 master_l[f] += fl[f] * ret;
                 master_r[f] += fr[f] * ret;
