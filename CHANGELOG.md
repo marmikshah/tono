@@ -7,6 +7,7 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 ## Unreleased
 
 ### Added
+- Beginner audio lessons covering pitch, tempo, patterns, instruments, and sound graphs, with a playable phrase to hear how each setting affects the result.
 - Original background music collection: 12 themes × three arrangements, seamless four-bar loops, editable Song scores, and browser playback/downloads.
 - Sound Studio with draggable instrument layers, a 16-step note grid, envelopes/effects, undo/redo, local drafts, project import/export, and locally rendered WAV downloads.
 - Curated asset-free sound library: 64 authored recipes, six editable voicings each, nine categories, and seamless ambience loops through `tono_core::library`.
@@ -14,6 +15,11 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 - Lean `tono-web` WebAssembly adapter reusing the Rust DSP, bounded worker rendering and PCM caching, plus native/WASM sample-equivalence and full-catalog checks.
 
 ### Changed
+- Website guides use concise, runnable Rust and Python examples with a language preference shared across code blocks and pages.
+- Website uses a charcoal audio workspace with lilac accents, a direct sound-browser homepage, consistent controls, and keyboard-accessible global search.
+- Effects and music use compact waveform rows, a selected-sound inspector, category filters, variation selectors, saved bookmarks, shareable searches, editable exports, and a persistent preview player. Smaller screens show details inline; waveform cards remain an optional view.
+- Sound Studio keeps its continuous sequencer and tabbed device dock visible together on desktop, with grouped instrument browsing, compact transport, an ADSR graph, and project utilities. Smaller screens show a lightweight preset demo instead of the composer, with demo-oriented navigation and library hints.
+- Composition examples use a searchable, compact list with direct playback, source links, and downloads.
 - Website SFX previews ship recipes and a shared synthesis engine instead of pre-rendered WAV files.
 - Builds, CI, CLI release binaries, and Python wheels are Linux-only; Windows/macOS bug patches remain welcome.
 - SoundDoc/Song schema 2 and DSP engine 5 are the supported formats; Program format 3 derives document facts and streaming capabilities from their authoritative source.

@@ -14,7 +14,7 @@ export default defineConfig({
   themeConfig: {
     logo: '/img/mark.svg',
     nav: [
-      { text: 'Get started', link: '/get-started/' },
+      { text: 'Get started', link: '/get-started/basics' },
       { text: 'Guides', link: '/guides/sound-effects' },
       { text: 'Reference', link: '/reference/sounddoc' },
       { text: 'Sound library', link: '/sounds' },
@@ -38,8 +38,12 @@ export default defineConfig({
         {
           text: 'Get started',
           items: [
+            { text: 'How sound works', link: '/get-started/basics' },
             { text: 'Install', link: '/get-started/' },
-            { text: 'Ten-minute quickstart', link: '/get-started/quickstart' },
+            { text: 'Your first sound', link: '/get-started/quickstart' },
+            { text: 'Pitch & notes', link: '/get-started/pitch' },
+            { text: 'Tempo & patterns', link: '/get-started/rhythm' },
+            { text: 'Instruments & tone', link: '/get-started/instruments' },
           ],
         },
       ],
@@ -47,11 +51,12 @@ export default defineConfig({
         {
           text: 'Guides',
           items: [
+            { text: 'Start with the basics', link: '/get-started/basics' },
             { text: 'Generate game SFX', link: '/guides/generation' },
             { text: 'Design sound effects', link: '/guides/sound-effects' },
             { text: 'Compose songs', link: '/guides/songs' },
             { text: 'Run live & embedded', link: '/guides/live' },
-            { text: 'Python', link: '/guides/python' },
+            { text: 'Arrays & saved files', link: '/guides/python' },
           ],
         },
       ],

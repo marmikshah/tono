@@ -1,53 +1,35 @@
 # Install tono
 
-Three faces, one engine — pick the one you need; every one renders the same bytes.
+Choose a language, then [make your first sound](/get-started/quickstart). New to audio? [Start with the basics](/get-started/basics) to hear what pitch, tempo, instruments, and patterns do.
 
-## The CLI
+You need Git and Rust 1.88 or newer. Python also needs CPython 3.9+.
+On Linux, building the Python bindings needs `pkg-config` and ALSA development headers (`libasound2-dev` on Debian/Ubuntu).
 
-```sh
-cargo install tono
+Run these commands from the directory where you keep projects:
+
+::: code-group
+
+```sh [Rust]
+git clone https://github.com/marmikshah/tono.git
+cargo new tono-demo
+cd tono-demo
+cargo add tono-core --path ../tono/crates/tono-core
+cargo add serde_json hound
+cargo check
 ```
 
-Prove it works — list the 31 built-in voices:
-
-```sh
-tono catalog
-```
-
-## The Rust library
-
-```sh
-cargo add tono-core
-```
-
-Prove it works — compile a song and render the mix:
-
-```rust
-use tono_core::catalog::Bass;
-use tono_core::prelude::*;
-
-let mut song = Song::new("demo", 120.0);
-song.add_voice("bass", &Bass::finger());
-song.add_pattern("riff", 1, vec![note(0, 2, "C2"), note(4, 2, "G2")]);
-song.arrange_repeat("bass", "riff", 0, 1);
-let program = song.compile(&CompileOptions::default()).expect("compiles");
-let (left, right) = program.render_stereo();
-```
-
-## The Python bindings
-
-Build from a repository checkout with Maturin in a virtual environment.
-The manual Wheels workflow also produces install-tested Linux x86_64 artifacts:
-
-```sh
+```sh [Python]
+git clone https://github.com/marmikshah/tono.git
+cd tono
+python3 -m venv .venv
+source .venv/bin/activate
 python -m pip install maturin numpy
-maturin develop -m crates/tono-py/Cargo.toml
+maturin develop --locked --release -m crates/tono-py/Cargo.toml
+python -c "import tono; print('tono is ready')"
 ```
 
-Prove it works — the determinism smoke test:
+:::
 
-```sh
-python3 crates/tono-py/tests/smoke.py
-```
+The Python commands use a Unix shell. In Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`.
 
-Next: the [ten-minute quickstart](/get-started/quickstart).
+For the optional CLI, run `cargo install --locked --path crates/tono-cli` from the `tono` checkout, then `tono catalog`.

@@ -1,67 +1,94 @@
-# Python
+# Arrays and saved files
 
-The deterministic tono engine plus its live runtime, from Python: typed songs, numpy renders, and a speaker-owning engine — the `tono` module from [crates/tono-py](https://github.com/marmikshah/tono/tree/master/crates/tono-py).
+[Install tono](/get-started/) and run the [quickstart](/get-started/quickstart) to create `blip.json`. For each task, replace Rust's `src/main.rs` and run `cargo run`, or save the Python code as `example.py` and run `python example.py`. Run from the directory containing `blip.json`.
 
-## Install
+## Load a recipe into samples
 
-Build from a repository checkout in a virtual environment. Requires the
-workspace's Rust toolchain and CPython 3.9+. The manual Wheels workflow
-produces abi3 artifacts for Linux x86_64.
+Render the JSON, inspect its peak, and check that rendering it again gives identical samples. Python returns a mono `float32` NumPy array; Rust returns `Vec<f32>`.
 
-```sh
-python -m pip install maturin numpy
-maturin develop -m crates/tono-py/Cargo.toml              # the `tono` module in your env
-python3 crates/tono-py/tests/smoke.py                     # the determinism smoke test
-maturin build --release -m crates/tono-py/Cargo.toml      # abi3 wheel → target/wheels/
+::: code-group
+
+```rust [Rust]
+use std::error::Error;
+use tono_core::{dsl::SoundDoc, render::render};
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let json = std::fs::read_to_string("blip.json")?;
+    let doc: SoundDoc = serde_json::from_str(&json)?;
+    doc.validate()?;
+    let audio = render(&doc);
+    let peak = audio.iter().fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+    println!("{} mono samples, peak={peak:.3}", audio.len());
+    assert_eq!(audio, render(&doc));
+    Ok(())
+}
 ```
 
-## Compile a song
+```python [Python]
+from pathlib import Path
 
-```python
+import numpy as np
 import tono
 
-song = tono.Song("night-drive", tempo=122.0)
+recipe = Path("blip.json").read_text()
+audio = tono.render(recipe)
+print(f"{audio.size} mono samples, peak={np.abs(audio).max():.3f}")
+assert audio.dtype == np.float32
+assert np.array_equal(audio, tono.render(recipe))
+```
+
+:::
+
+The quickstart recipe produces 12,000 samples. For WAV export, reuse the [quickstart writer](/get-started/quickstart).
+
+## Save and reload a compiled song
+
+This creates `riff.program.json`, reloads it with integrity checking, and renders the saved song.
+
+::: code-group
+
+```rust [Rust]
+use std::error::Error;
+use tono_core::{catalog::Bass, prelude::*, program::Program};
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let mut song = Song::new("riff", 120.0).with_seed(7);
+    song.add_voice("bass", &Bass::finger());
+    song.add_pattern("notes", 1, vec![note(0, 2, "C2"), note(8, 2, "G2")]);
+    song.arrange_repeat("bass", "notes", 0, 1);
+    let program = song.compile(&CompileOptions {
+        sample_rate: Some(48000), ..CompileOptions::default()
+    }).expect("valid score");
+    std::fs::write("riff.program.json", program.to_json())?;
+
+    let loaded = Program::from_json(&std::fs::read_to_string("riff.program.json")?)?;
+    assert_eq!(loaded.hash, program.hash);
+    let (left, right) = loaded.render_stereo();
+    println!("{} stereo frames", left.len());
+    assert_eq!(left.len(), right.len());
+    Ok(())
+}
+```
+
+```python [Python]
+import tono
+
+song = tono.Song("riff", tempo=120, seed=7)
 bass = song.track("bass", tono.instruments.bass("finger"))
-riff = tono.Pattern(bars=1)
-riff.notes(["C2", "C2", "Eb2", "G2"], durations=0.5)
-song.arrange(bass, riff, bars=range(4))
+notes = tono.Pattern(bars=1)
+notes.note("C2", at=0, duration=0.5)
+notes.note("G2", at=2, duration=0.5)
+song.arrange(bass, notes, bars=[0])
+program = song.compile(sample_rate=48000)
+program.save("riff.program.json")
 
-program = song.compile(sample_rate=48000)   # tono.CompileError carries .diagnostics
-audio = program.render()                    # np.float32, shape (frames, 2), L/R
+loaded = tono.Program.load("riff.program.json")
+assert loaded.hash == program.hash
+audio = loaded.render()
+print(f"{audio.shape[0]} stereo frames")
+assert audio.shape[1] == 2  # columns are left, right
 ```
 
-Typed `Song` / `Pattern` / `Program` wrap the native Rust model: no JSON,
-`py.typed` stubs in the wheel, and the same canonical program hash an
-equivalent Rust song compiles to. `program.save(path)` /
-`tono.Program.load(path)` ship the hashed bundle.
+:::
 
-## Run it live
-
-```python
-with tono.Performance(program, headless=True) as perf:   # or headless=False for speakers
-    perf.play()
-    perf.set_gain(0.8, at=tono.next_bar())
-    perf.transition("chorus", at=tono.next_bar())        # a named section
-    audio = perf.fill(program.sample_rate * 10)          # stereo (frames, 2), float32
-    print(perf.metrics())                                # frames, commands, queue depth, …
-```
-
-Commands schedule at frames, beats, bars, markers, sections, `tono.next_beat()`,
-or `tono.next_bar()` — and execute at exact frames, never waiting on Python to
-wake up. Seeks, loops, crossfaded swaps, stingers, capture/replay, and
-snapshots work the same in both modes.
-
-## Runnable examples
-
-All in [`crates/tono-py/examples/`](https://github.com/marmikshah/tono/tree/master/crates/tono-py/examples):
-
-- [`night_drive.py`](https://github.com/marmikshah/tono/blob/master/crates/tono-py/examples/night_drive.py) — the typed API end to end: compose, compile, render, and run a program live with scheduled commands.
-- [`golden_hour.py`](https://github.com/marmikshah/tono/blob/master/crates/tono-py/examples/golden_hour.py) — a produced 16-bar track; compiles, renders, and bounces `golden_hour.wav` you can play.
-- [`fur_elise.py`](https://github.com/marmikshah/tono/blob/master/crates/tono-py/examples/fur_elise.py) — Beethoven's bagatelle on the sampled grand: 3/8 meter map with a pickup, a tempo-map ritardando, per-note dynamics.
-- [`monsoon_melody.py`](https://github.com/marmikshah/tono/blob/master/crates/tono-py/examples/monsoon_melody.py) — an original Bollywood-style ballad: flute over nylon-guitar arpeggios, a swung half-time kit, a glockenspiel-shadowed lift.
-- [`neon_rush.py`](https://github.com/marmikshah/tono/blob/master/crates/tono-py/examples/neon_rush.py) — an original synthwave racer: euclidean claps, probability hats, a 16th-note octave bass.
-- [`noir_lounge.py`](https://github.com/marmikshah/tono/blob/master/crates/tono-py/examples/noir_lounge.py) — an original jazz-noir theme: heavy swing, walking bass, rootless Rhodes stabs.
-- [`emerald_vale.py`](https://github.com/marmikshah/tono/blob/master/crates/tono-py/examples/emerald_vale.py) — an original fantasy-village pastoral: a true 6/8 meter map, nylon harp-rolls.
-- [`puzzle_menu.py`](https://github.com/marmikshah/tono/blob/master/crates/tono-py/examples/puzzle_menu.py) — an original puzzle/menu theme built by pattern transforms.
-- [`live_pygame.py`](https://github.com/marmikshah/tono/blob/master/crates/tono-py/examples/live_pygame.py) — live procedural audio for a Python game loop in ~10 lines.
-- [`render_numpy.py`](https://github.com/marmikshah/tono/blob/master/crates/tono-py/examples/render_numpy.py) — the pull API: render to a numpy array and use it anywhere.
+For more tracks and stereo WAV export, see [songs](/guides/songs). For scheduled playback without an audio device, see [live audio](/guides/live).
