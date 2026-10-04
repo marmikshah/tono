@@ -66,7 +66,7 @@ onBeforeUnmount(() => { if (props.open) document.body.style.overflow = previousO
             </nav>
         </div>
         <div class="sidebar-bottom">
-            <div class="sidebar-resources"><a :href="withBase('/get-started/')"><Icon name="book" :size="15" />Docs</a><a href="https://github.com/marmikshah/tono" target="_blank" rel="noopener noreferrer"><Icon name="github" :size="15" />GitHub</a></div>
+            <div class="sidebar-resources"><a :href="withBase('/get-started/basics')"><Icon name="book" :size="15" />Docs</a><a href="https://github.com/marmikshah/tono" target="_blank" rel="noopener noreferrer"><Icon name="github" :size="15" />GitHub</a></div>
             <p class="sidebar-status"><i />Open source. Free to use.</p>
         </div>
     </aside>

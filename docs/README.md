@@ -18,6 +18,11 @@ the language preference between pages. Keep examples complete and execute them
 against the source checkout when changing APIs; code blocks scroll locally on
 small screens.
 
+The foundations section under `get-started/` explains the audio concepts before
+the task guides. `LearnSound.vue` lets readers change pitch, tempo, instrument,
+and note length on a four-note phrase; it uses the shared Rust/WASM renderer and
+player, loaded on explicit playback.
+
 From the repo root, with Node.js 22.12+ and the pinned Rust toolchain installed:
 
 ```sh

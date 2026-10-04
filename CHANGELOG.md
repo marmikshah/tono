@@ -7,6 +7,7 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 ## Unreleased
 
 ### Added
+- Beginner audio lessons covering pitch, tempo, patterns, instruments, and sound graphs, with a playable phrase to hear how each setting affects the result.
 - Original background music collection: 12 themes × three arrangements, seamless four-bar loops, editable Song scores, and browser playback/downloads.
 - Sound Studio with draggable instrument layers, a 16-step note grid, envelopes/effects, undo/redo, local drafts, project import/export, and locally rendered WAV downloads.
 - Curated asset-free sound library: 64 authored recipes, six editable voicings each, nine categories, and seamless ambience loops through `tono_core::library`.

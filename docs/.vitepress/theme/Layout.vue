@@ -11,7 +11,7 @@ const GuideLanguage = defineAsyncComponent(() => import("./components/GuideLangu
 const { frontmatter } = useData();
 const route = useRoute();
 const workspace = computed(() => ["landing", "library"].includes(frontmatter.value.layout));
-const guide = computed(() => /\/(get-started|guides)(\/|$)/.test(route.path));
+const guide = computed(() => /\/(get-started|guides)(\/|$)/.test(route.path) && frontmatter.value.guideLanguage !== false);
 const { desktop } = useStudioViewport();
 const editor = computed(() => desktop.value && route.path.split(/[?#]/)[0].replace(/\.html$/, "").replace(/\/$/, "").endsWith("/create"));
 const navigationOpen = ref(false);

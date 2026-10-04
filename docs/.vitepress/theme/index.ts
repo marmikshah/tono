@@ -8,6 +8,7 @@ export default {
   extends: DefaultTheme,
   Layout,
   enhanceApp({ app }) {
+    app.component("TonoLearnSound", defineAsyncComponent(() => import("./components/LearnSound.vue")));
     app.component("TonoHome", defineAsyncComponent(() => import("./pages/Home.vue")));
     app.component("TonoShowcase", defineAsyncComponent(() => import("./pages/Showcase.vue")));
     app.component("TonoSoundLibrary", defineAsyncComponent(() => import("./pages/SoundLibrary.vue")));

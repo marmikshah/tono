@@ -1,6 +1,6 @@
 # Install tono
 
-Choose a language, then [make your first sound](/get-started/quickstart).
+Choose a language, then [make your first sound](/get-started/quickstart). New to audio? [Start with the basics](/get-started/basics) to hear what pitch, tempo, instruments, and patterns do.
 
 You need Git and Rust 1.88 or newer. Python also needs CPython 3.9+.
 On Linux, building the Python bindings needs `pkg-config` and ALSA development headers (`libasound2-dev` on Debian/Ubuntu).

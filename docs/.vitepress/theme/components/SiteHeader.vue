@@ -16,7 +16,7 @@ const links = computed(() => [
     { url: "/", label: "Library" },
     { url: "/create", label: desktop.value ? "Studio" : "Sound demo" },
     { url: "/showcase", label: "Examples" },
-    { url: "/get-started/", label: "Docs" },
+    { url: "/get-started/basics", label: "Docs" },
 ]);
 function active(url: string) {
     if (url === "/") return ["/", "/sounds", "/bgm"].some(value => path.value === withBase(value).replace(/\/$/, ""));

@@ -87,4 +87,4 @@ python first_sound.py
 
 Open `blip.wav` and `low-blip.wav` in an audio player: both are 0.25-second, 48 kHz mono WAVs; the second is two octaves lower. The matching `.json` files can be edited or rendered by the CLI.
 
-Next: [sound effects](/guides/sound-effects), [songs](/guides/songs), or [loading recipes and NumPy audio](/guides/python). The [SoundDoc reference](/reference/sounddoc) lists the available nodes and fields.
+Next, learn [how sound works](/get-started/basics), then explore [pitch and notes](/get-started/pitch). For practical tasks, see [sound effects](/guides/sound-effects), [songs](/guides/songs), or [loading recipes and NumPy audio](/guides/python). The [SoundDoc reference](/reference/sounddoc) lists the available nodes and fields.

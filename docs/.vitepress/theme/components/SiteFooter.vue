@@ -2,7 +2,7 @@
 import { withBase } from "vitepress";
 </script>
 <template>
-    <footer class="workspace-footer"><div class="site-container workspace-footer-inner"><p><strong>tono.</strong> Sound, made yours.</p><nav aria-label="Footer navigation"><a :href="withBase('/get-started/')">Documentation</a><a href="https://github.com/marmikshah/tono" target="_blank" rel="noopener noreferrer">GitHub</a><a href="https://github.com/marmikshah/tono/blob/master/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a></nav></div></footer>
+    <footer class="workspace-footer"><div class="site-container workspace-footer-inner"><p><strong>tono.</strong> Sound, made yours.</p><nav aria-label="Footer navigation"><a :href="withBase('/get-started/basics')">Documentation</a><a href="https://github.com/marmikshah/tono" target="_blank" rel="noopener noreferrer">GitHub</a><a href="https://github.com/marmikshah/tono/blob/master/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a></nav></div></footer>
 </template>
 <style scoped>
 .workspace-footer { margin-top: 6px; border-top: 1px solid var(--line); }

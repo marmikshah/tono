@@ -229,8 +229,8 @@ body { background: var(--paper); }
 .VPSidebarItem .text { color: var(--muted); }
 .VPSidebarItem.is-active > .item > .link > .text { color: var(--accent-ink); }
 
-.VPDoc:has(.guide-language) .vp-doc h1 { font-size: 30px; line-height: 1.25; }
-.VPDoc:has(.guide-language) .vp-doc p { line-height: 1.65; }
+.VPDoc:has(.guide-language, .learn-sound) .vp-doc h1 { font-size: 30px; line-height: 1.25; }
+.VPDoc:has(.guide-language, .learn-sound) .vp-doc p { line-height: 1.65; }
 .VPDoc:has(.guide-language) .vp-code-group { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; }
 .VPDoc:has(.guide-language) .vp-code-group > .tabs { margin-inline: 0; padding-inline: 6px; border-radius: 0; background: var(--sidebar); }
 .VPDoc:has(.guide-language) .vp-code-group > .tabs label { min-height: 44px; padding-inline: 14px; font-size: 13px; line-height: 44px; }

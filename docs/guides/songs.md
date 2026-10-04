@@ -11,8 +11,8 @@ example as `song.py` and run `python song.py`.
 
 ## Render a melody to WAV
 
-This writes `melody.wav`: one bar of piano at 120 BPM, stereo, 48 kHz, plus
-the compiler’s two-second release tail.
+This writes `melody.wav`: two seconds of piano notes at 120 BPM in 48 kHz
+stereo, plus the compiler’s two-second tail allowance for lingering effects.
 
 ::: code-group
 
