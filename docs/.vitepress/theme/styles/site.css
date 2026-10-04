@@ -229,6 +229,18 @@ body { background: var(--paper); }
 .VPSidebarItem .text { color: var(--muted); }
 .VPSidebarItem.is-active > .item > .link > .text { color: var(--accent-ink); }
 
+.VPDoc:has(.guide-language) .vp-doc h1 { font-size: 30px; line-height: 1.25; }
+.VPDoc:has(.guide-language) .vp-doc p { line-height: 1.65; }
+.VPDoc:has(.guide-language) .vp-code-group { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; }
+.VPDoc:has(.guide-language) .vp-code-group > .tabs { margin-inline: 0; padding-inline: 6px; border-radius: 0; background: var(--sidebar); }
+.VPDoc:has(.guide-language) .vp-code-group > .tabs label { min-height: 44px; padding-inline: 14px; font-size: 13px; line-height: 44px; }
+.VPDoc:has(.guide-language) .vp-code-group > .tabs input:focus-visible + label { outline: 2px solid var(--focus); outline-offset: -3px; border-radius: 4px; }
+.VPDoc:has(.guide-language) .vp-code-group > .blocks > div[class*="language-"] { margin-inline: 0; border: 0; border-radius: 0; }
+.VPDoc:has(.guide-language) .vp-code-group div[class*="language-"] > span.lang { display: none; }
+.VPDoc:has(.guide-language) .vp-code-group pre { padding-block: 20px; }
+.VPDoc:has(.guide-language) .vp-code-group code { font-size: 13px; line-height: 1.6; }
+@media (hover: none), (pointer: coarse) { .VPDoc:has(.guide-language) div[class*="language-"] button.copy { width: 44px; height: 44px; opacity: 1; } }
+
 @media (max-width: 1100px) {
   .footer-inner { flex-wrap: wrap; }
   .footer-inner nav { justify-content: center; }

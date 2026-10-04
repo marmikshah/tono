@@ -1,128 +1,110 @@
 # Generate game sound effects
 
-Choose a starter and generate a few candidates without writing a synthesis
-graph. The generator uses authored recipes with small seeded changes to
-pitch and timing. It needs no sample pack or remote service.
+Create a seeded batch from a built-in starter. [Install tono](/get-started/) first; the Python batch example also needs the optional CLI from that page. Save Rust code as `src/main.rs` and run `cargo run`, or save Python code as `generate.py` and run `python generate.py`.
 
-From a checkout:
+## Generate four footsteps
 
-```sh
-cargo run --locked -- templates
-cargo run --locked -- generate laser --seed 42
-```
+This writes four WAVs and editable recipes to `candidates/`, using seeds 7–10. Use a new output directory for each batch. Python calls the CLI because the starter generator is currently a Rust API.
 
-The second command writes four candidates to
-`target/generated/laser-42/`. Open `index.html` in a browser to audition
-the candidates and keep their audio or source files.
-Every candidate includes editable JSON, a spectrogram, a waveform, and
-numeric analysis. `manifest.json` records its generation spec and filenames.
+::: code-group
 
-## Starters
-
-For a larger ready-to-use collection, open the [sound library](/sounds):
-64 authored designs across nine categories, each with Classic, Soft, Bright,
-Low, High and Long variations. Search by name or tag, preview in your browser,
-and download a stereo WAV or its editable JSON recipe. Ambience entries loop
-until paused; their WAV exports include a whole-buffer sampler loop.
-The site synthesizes these sounds locally with Tono's Rust engine compiled
-to WebAssembly. The recipes and generated audio are MIT licensed.
-
-The CLI starter generator below remains useful for seeded game-SFX batches.
-
-| Template | Character |
-|---|---|
-| `coin` | Bright rising pickup chime |
-| `jump` | Upward arcade pitch sweep |
-| `laser` | Descending sci-fi zap |
-| `explosion` | Noise blast with a low-frequency body |
-| `impact` | Short resonant strike |
-| `footstep` | Muted contact thud and surface noise |
-| `ui-confirm` | Soft ascending confirmation |
-| `ui-cancel` | Soft descending cancellation |
-
-## Shape a batch
-
-```sh
-tono generate footstep --seed 7 --count 8 \
-  --brightness 0.3 --punch 0.7 --variation 0.2 \
-  --sample-rate 48000 --format wav -o target/footsteps
-```
-
-- `--brightness` changes tone height, filter openness, and strike hardness.
-- `--punch` changes attack speed and transient emphasis.
-- `--variation` controls how far pitch and timing move between seeds.
-
-All three controls accept finite values from 0 to 1. Brightness and punch
-default to 0.5; variation defaults to 0.15. At zero variation, recipe
-parameters stay fixed; noise-based starters still use their synthesis seed.
-The default seed is 0. Candidate seeds increase by one, wrapping after the
-largest unsigned 64-bit integer.
-
-The sample rate defaults to 48 kHz and accepts 8–192 kHz. A batch contains
-1–32 candidates, defaulting to four. Choose WAV, FLAC, or OGG with `--format`.
-The output directory must be empty. To try another batch, choose a new
-directory or a different seed; existing exports are preserved.
-
-## Keep and edit
-
-Keep a candidate's audio and JSON together. To edit its graph and render it
-again:
-
-```sh
-tono render target/generated/laser-42/laser_v0.json \
-  --watch -o target/edited-laser
-```
-
-With the optional playback feature installed, preview the document directly:
-
-```sh
-tono play target/generated/laser-42/laser_v0.json
-```
-
-The manifest stores each candidate's template revision, controls, seed,
-sample rate, and document hash. Generation is deterministic for a supported
-recipe revision. Save the document as well: its graph and engine revision
-preserve the exact sound even when new recipes are introduced.
-
-Generated SFX are short mono one-shots, which a game can position on its own
-audio stage. Their envelopes include quiet endpoints. Listen to the results
-at the intended game volume and adjust the mix for the scene.
-
-## Generate from Rust
-
-```rust
+```rust [Rust]
+use std::error::Error;
 use tono_core::generate::{SfxSpec, SfxTemplate, generate_sfx};
 
-let mut spec = SfxSpec::new(SfxTemplate::Impact, 7);
-spec.brightness = 0.3;
-spec.punch = 0.8;
-let doc = generate_sfx(&spec)?;
-let audio = tono_core::render::render(&doc);
+fn main() -> Result<(), Box<dyn Error>> {
+    std::fs::create_dir("candidates")?;
+    for index in 0..4 {
+        let mut spec = SfxSpec::new(SfxTemplate::Footstep, 7 + index);
+        spec.brightness = 0.3;
+        spec.punch = 0.7;
+        spec.variation = 0.2;
+        let doc = generate_sfx(&spec)?;
+        let path = format!("candidates/footstep_v{index}");
+        std::fs::write(format!("{path}.json"), serde_json::to_string_pretty(&doc)?)?;
+
+        let audio = tono_core::render::render(&doc);
+        let wav_spec = hound::WavSpec {
+            channels: 2, sample_rate: doc.sample_rate, bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut wav = hound::WavWriter::create(format!("{path}.wav"), wav_spec)?;
+        for sample in audio {
+            let pcm = (sample.clamp(-1.0, 1.0) * 32767.0).round() as i16;
+            wav.write_sample(pcm)?;
+            wav.write_sample(pcm)?;
+        }
+        wav.finalize()?;
+    }
+    Ok(())
+}
 ```
 
-`SfxSpec` supports serde serialization. `generate_sfx` validates the request
-and returns an ordinary `SoundDoc`; the core performs no file or device I/O
-and works with default features disabled. Existing renderers and runtimes
-can consume the document.
+```python [Python]
+import subprocess
 
-The larger library is also available from Rust, with discovery metadata in
-`tono_core::library::RECIPES` and named voicings in `VARIANTS`:
-
-```rust
-use tono_core::library::{LibrarySpec, LibraryVariant, generate};
-
-let mut spec = LibrarySpec::new("metal-clang", LibraryVariant::Soft, 42);
-spec.pitch_semitones = -5.0;
-spec.duration_scale = 1.4;
-let doc = generate(&spec)?;
-let audio = tono_core::player::render_stereo(&doc);
+subprocess.run([
+    "tono", "generate", "footstep",
+    "--seed", "7", "--count", "4",
+    "--brightness", "0.3", "--punch", "0.7", "--variation", "0.2",
+    "--sample-rate", "48000", "--format", "wav", "-o", "candidates",
+], check=True)
 ```
 
-Library specs include an explicit recipe revision, seed, sample rate, pitch,
-duration, brightness, punch and variation. Generated documents contain named
-layers and current schema/engine pins. Save the SoundDoc to preserve the sound
-across future recipe changes; it works with the existing CLI and runtime.
+:::
 
-The [background music library](/bgm) provides original scene music loops, and
-the [Sound Studio](/create) lets you build layered sounds in your browser.
-Desktop candidate audition is planned in [the game-audio proposal](https://github.com/marmikshah/tono/issues/63).
+Open `candidates/footstep_v0.wav` through `footstep_v3.wav` to compare them. These are 48 kHz stereo files with identical left and right channels. The CLI also writes an `index.html` audition page, waveform images, analysis, and a manifest.
+
+## Render a candidate into memory
+
+Use the saved recipe in your game or audio pipeline. This renders the first candidate into mono floating-point samples without accessing a speaker.
+
+::: code-group
+
+```rust [Rust]
+use std::error::Error;
+use tono_core::{dsl::SoundDoc, render::render};
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let json = std::fs::read_to_string("candidates/footstep_v0.json")?;
+    let doc: SoundDoc = serde_json::from_str(&json)?;
+    doc.validate()?;
+    let audio: Vec<f32> = render(&doc);
+    println!("{} samples at {} Hz", audio.len(), doc.sample_rate);
+    Ok(())
+}
+```
+
+```python [Python]
+import json
+from pathlib import Path
+
+import tono
+
+recipe = Path("candidates/footstep_v0.json").read_text()
+audio = tono.render(recipe)  # Mono float32 NumPy array.
+print(f"{audio.size} samples at {json.loads(recipe)['sample_rate']} Hz")
+```
+
+:::
+
+Save the JSON alongside the audio: it contains the complete graph, seed, and engine revision needed to reproduce that sound.
+
+## Pick a starter and tune it
+
+In Rust, change `SfxTemplate::Footstep`; in Python, change `"footstep"` in the command.
+
+| Rust | CLI / Python | Sound |
+|---|---|---|
+| `Coin` | `coin` | Rising pickup chime |
+| `Jump` | `jump` | Upward arcade sweep |
+| `Laser` | `laser` | Descending zap |
+| `Explosion` | `explosion` | Noise blast and low body |
+| `Impact` | `impact` | Resonant strike |
+| `Footstep` | `footstep` | Contact thud |
+| `UiConfirm` | `ui-confirm` | Ascending confirmation |
+| `UiCancel` | `ui-cancel` | Descending cancellation |
+
+`brightness`, `punch`, and `variation` accept values from 0 to 1. Increase brightness for a sharper tone, punch for a stronger attack, or variation for more pitch and timing differences. The same spec and seed reproduce the same recipe within its supported revision.
+
+For a larger collection, browse the [sound library](/sounds) or [background music](/bgm). To build a graph yourself, follow [sound effects](/guides/sound-effects). See the [CLI reference](/reference/cli) for batch options and output formats.

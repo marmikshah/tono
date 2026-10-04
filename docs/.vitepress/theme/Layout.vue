@@ -7,9 +7,11 @@ import SiteFooter from "./components/SiteFooter.vue";
 import WorkspaceSidebar from "./components/WorkspaceSidebar.vue";
 import { useStudioViewport } from "./composables/useStudioViewport";
 const WorkspaceSearch = defineAsyncComponent(() => import("./components/WorkspaceSearch.vue"));
+const GuideLanguage = defineAsyncComponent(() => import("./components/GuideLanguage.vue"));
 const { frontmatter } = useData();
 const route = useRoute();
 const workspace = computed(() => ["landing", "library"].includes(frontmatter.value.layout));
+const guide = computed(() => /\/(get-started|guides)(\/|$)/.test(route.path));
 const { desktop } = useStudioViewport();
 const editor = computed(() => desktop.value && route.path.split(/[?#]/)[0].replace(/\.html$/, "").replace(/\/$/, "").endsWith("/create"));
 const navigationOpen = ref(false);
@@ -56,5 +58,7 @@ onBeforeUnmount(() => { document.removeEventListener("keydown", keyboard); windo
         </div>
         <WorkspaceSearch v-if="searchOpen" @close="closeSearch" />
     </div>
-    <DefaultTheme.Layout v-else />
+    <DefaultTheme.Layout v-else>
+        <template #doc-before><GuideLanguage v-if="guide" /></template>
+    </DefaultTheme.Layout>
 </template>

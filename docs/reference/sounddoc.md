@@ -31,7 +31,7 @@ Document-level fields:
 | `fm` | `freq`, `ratio`, `index` | 2-op FM — bells, e-piano; slide `index` down for a struck attack |
 | `super` | `wave` = `sawtooth`, `freq`, `voices` = 7 (1..=16), `detune_cents` = 15 | detuned unison stack (supersaw) |
 | `wavetable` | `wave` = `basic`, `freq`, `position` = 0 | morphs across built-in tables (`basic`/`harmonics`/`formant`/`metallic`) |
-| `seq` | `bpm`, `wave`, `env`, `notes`, … | note sequencer — see [Write music with `seq`](/guides/songs#write-music-with-seq) |
+| `seq` | `bpm`, `wave`, `env`, `notes`, … | note sequencer — see [Compose songs](/guides/songs) |
 | `impact` | `hardness` = 0.5, `velocity` = 1 | strike exciter; feed a `modal` bank |
 | `dust` | `density`, `decay` = 0.02 | Poisson click train; `decay` 0 = bare impulses |
 | `env` | `a`, `d`, `s`, `r`, `punch` | ADSR control signal 0..1 (not audio) |

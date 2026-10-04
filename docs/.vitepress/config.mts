@@ -39,7 +39,7 @@ export default defineConfig({
           text: 'Get started',
           items: [
             { text: 'Install', link: '/get-started/' },
-            { text: 'Ten-minute quickstart', link: '/get-started/quickstart' },
+            { text: 'Your first sound', link: '/get-started/quickstart' },
           ],
         },
       ],
@@ -51,7 +51,7 @@ export default defineConfig({
             { text: 'Design sound effects', link: '/guides/sound-effects' },
             { text: 'Compose songs', link: '/guides/songs' },
             { text: 'Run live & embedded', link: '/guides/live' },
-            { text: 'Python', link: '/guides/python' },
+            { text: 'Arrays & saved files', link: '/guides/python' },
           ],
         },
       ],

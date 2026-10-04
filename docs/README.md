@@ -11,6 +11,13 @@ the libraries remain available for listening and downloads. These pages live in
 sidebar, and local search. The [architecture guide](https://marmikshah.github.io/tono/architecture.html) and
 [decision records](adr/README.md) explain the implementation for contributors.
 
+Getting-started pages and guides use runnable Rust/Python examples in VitePress
+`::: code-group` blocks labeled `[Rust]` and `[Python]`, including shell setup
+commands. `.vitepress/theme/components/GuideLanguage.vue` synchronizes their selection and retains
+the language preference between pages. Keep examples complete and execute them
+against the source checkout when changing APIs; code blocks scroll locally on
+small screens.
+
 From the repo root, with Node.js 22.12+ and the pinned Rust toolchain installed:
 
 ```sh

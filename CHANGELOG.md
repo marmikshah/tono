@@ -14,6 +14,7 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 - Lean `tono-web` WebAssembly adapter reusing the Rust DSP, bounded worker rendering and PCM caching, plus native/WASM sample-equivalence and full-catalog checks.
 
 ### Changed
+- Website guides use concise, runnable Rust and Python examples with a language preference shared across code blocks and pages.
 - Website uses a charcoal audio workspace with lilac accents, a direct sound-browser homepage, consistent controls, and keyboard-accessible global search.
 - Effects and music use compact waveform rows, a selected-sound inspector, category filters, variation selectors, saved bookmarks, shareable searches, editable exports, and a persistent preview player. Smaller screens show details inline; waveform cards remain an optional view.
 - Sound Studio keeps its continuous sequencer and tabbed device dock visible together on desktop, with grouped instrument browsing, compact transport, an ADSR graph, and project utilities. Smaller screens show a lightweight preset demo instead of the composer, with demo-oriented navigation and library hints.
