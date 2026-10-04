@@ -4,11 +4,18 @@ import { createRenderer } from "../audio/renderClient";
 import { encodeWav, type RenderedAudio } from "../audio/wav";
 import { documentKey, documentSource } from "../audio/document";
 
+// Keep the listener's volume choice when navigating between preview pages.
+let previewVolume = 1;
+
 /** Shared transport for existing music files and locally rendered SoundDocs. */
 export function useAudioPlayer() {
-  const state = reactive({ activeId: "", playing: false, progress: 0, error: "", loadingId: "", downloadId: "" });
+  const state = reactive({
+    activeId: "", playing: false, progress: 0, currentTime: 0, duration: 0,
+    volume: previewVolume, looping: false, error: "", loadingId: "", downloadId: "",
+  });
   let audio: HTMLAudioElement | undefined;
   let context: AudioContext | undefined;
+  let output: GainNode | undefined;
   let renderer: ReturnType<typeof createRenderer> | undefined;
   let source: AudioBufferSourceNode | undefined;
   let buffer: AudioBuffer | undefined;
@@ -20,24 +27,34 @@ export function useAudioPlayer() {
   let request = 0;
   let animation = 0;
   let disposed = false;
+  let selection: { kind: "media"; id: string; url: string }
+    | { kind: "synth"; id: string; key: string; load: () => Promise<RenderedAudio> } | undefined;
   const downloads = new Map<string, ReturnType<typeof setTimeout>>();
 
   function position() {
-    if (!buffer || !context) return 0;
+    if (!buffer || !context || !buffer.duration) return 0;
     const elapsed = state.playing ? offset + context.currentTime - startedAt : offset;
     return looping ? elapsed % buffer.duration : Math.min(elapsed, buffer.duration);
   }
 
   function updateProgress() {
-    state.progress = mode === "synth"
-      ? (buffer ? position() / buffer.duration : 0)
-      : (audio?.duration ? audio.currentTime / audio.duration : 0);
+    const duration = mode === "synth" ? buffer?.duration : audio?.duration;
+    state.duration = duration && Number.isFinite(duration) ? duration : 0;
+    state.currentTime = mode === "synth" ? position() : (audio?.currentTime || 0);
+    state.progress = state.duration ? state.currentTime / state.duration : 0;
+    state.looping = mode === "synth" && Boolean(buffer) && looping;
     if (state.playing) animation = requestAnimationFrame(updateProgress);
   }
 
   onMounted(() => {
     audio = new Audio();
     audio.preload = "none";
+    audio.volume = state.volume;
+    audio.onloadedmetadata = audio.ondurationchange = audio.ontimeupdate = () => {
+      if (mode !== "media") return;
+      cancelAnimationFrame(animation);
+      updateProgress();
+    };
     audio.onplay = () => {
       if (mode !== "media") return;
       state.playing = !audio!.paused;
@@ -48,21 +65,24 @@ export function useAudioPlayer() {
       if (mode === "media" && audio?.paused) {
         state.playing = false;
         cancelAnimationFrame(animation);
+        updateProgress();
       }
     };
     audio.onended = () => {
       if (mode !== "media") return;
       state.playing = false;
-      state.progress = 1;
+      cancelAnimationFrame(animation);
+      updateProgress();
     };
   });
 
   function stopSource() {
     if (!source) return;
-    source.onended = null;
-    source.stop();
-    source.disconnect();
+    const previous = source;
     source = undefined;
+    previous.onended = null;
+    try { previous.stop(); } catch { /* A source that failed to start is already inactive. */ }
+    previous.disconnect();
   }
 
   function stop() {
@@ -74,13 +94,15 @@ export function useAudioPlayer() {
     cancelAnimationFrame(animation);
     state.playing = false;
     state.progress = 0;
+    state.currentTime = 0;
     state.loadingId = "";
     state.error = "";
   }
 
   async function toggle(id: string, url: string) {
-    if (!audio) return;
-    if (mode === "media" && state.activeId === id && !audio.paused) {
+    if (!audio || disposed) return;
+    const sameMedia = mode === "media" && selection?.kind === "media" && selection.id === id && selection.url === url;
+    if (sameMedia && !audio.paused) {
       request++;
       audio.pause();
       cancelAnimationFrame(animation);
@@ -88,15 +110,20 @@ export function useAudioPlayer() {
       state.playing = false;
       return;
     }
-    const sameMedia = mode === "media" && state.activeId === id;
     if (!sameMedia) stop();
     mode = "media";
+    selection = { kind: "media", id, url };
+    buffer = undefined;
+    activeRenderKey = "";
+    state.looping = false;
     const current = ++request;
     state.error = "";
     if (!sameMedia) {
       audio.src = url;
       state.activeId = id;
       state.progress = 0;
+      state.currentTime = 0;
+      state.duration = 0;
     } else if (audio.ended) audio.currentTime = 0;
     try {
       await audio.play();
@@ -109,7 +136,31 @@ export function useAudioPlayer() {
     }
   }
 
+  function startSource(current: number) {
+    if (!context || !buffer || !output) return;
+    const node = context.createBufferSource();
+    source = node;
+    node.buffer = buffer;
+    node.loop = looping;
+    node.connect(output);
+    node.onended = () => {
+      if (current !== request || source !== node) return;
+      state.playing = false;
+      offset = buffer!.duration;
+      node.disconnect();
+      source = undefined;
+      cancelAnimationFrame(animation);
+      updateProgress();
+    };
+    startedAt = context.currentTime;
+    node.start(0, offset);
+    state.playing = true;
+    cancelAnimationFrame(animation);
+    updateProgress();
+  }
+
   async function toggleRendered(id: string, key: string, load: () => Promise<RenderedAudio>) {
+    if (disposed) return;
     const sameSound = mode === "synth" && state.activeId === id && activeRenderKey === key;
     if (state.loadingId === id && sameSound) { stop(); return; }
     if (sameSound && state.playing) {
@@ -122,8 +173,9 @@ export function useAudioPlayer() {
       return;
     }
     const resume = sameSound && buffer && state.progress < 1;
-    if (!resume) { stop(); buffer = undefined; }
+    if (!resume) { stop(); buffer = undefined; state.duration = 0; state.looping = false; }
     mode = "synth";
+    selection = { kind: "synth", id, key, load };
     state.activeId = id;
     activeRenderKey = key;
     state.loadingId = id;
@@ -132,6 +184,11 @@ export function useAudioPlayer() {
     try {
       // Unlock on the user's click, before asynchronous fetching/rendering.
       context ??= new AudioContext();
+      if (!output) {
+        output = context.createGain();
+        output.gain.value = state.volume;
+        output.connect(context.destination);
+      }
       await context.resume();
       if (current !== request || disposed) return;
       if (!resume) {
@@ -144,31 +201,50 @@ export function useAudioPlayer() {
         offset = 0;
       }
       if (current !== request || disposed || !buffer) return;
-      source = context.createBufferSource();
-      source.buffer = buffer;
-      source.loop = looping;
-      source.connect(context.destination);
-      source.onended = () => {
-        if (current !== request) return;
-        state.playing = false;
-        state.progress = 1;
-        offset = 0;
-        source?.disconnect();
-        source = undefined;
-        cancelAnimationFrame(animation);
-      };
-      startedAt = context.currentTime;
-      source.start(0, offset);
-      state.playing = true;
-      cancelAnimationFrame(animation);
-      updateProgress();
+      startSource(current);
     } catch (error) {
       if (current === request && !disposed) {
+        stopSource();
         state.playing = false;
         state.error = error instanceof Error ? error.message : "This preview could not play. Please try again.";
       }
     } finally {
       if (current === request) state.loadingId = "";
+    }
+  }
+
+  function toggleActive() {
+    if (!selection) return Promise.resolve();
+    return selection.kind === "media"
+      ? toggle(selection.id, selection.url)
+      : toggleRendered(selection.id, selection.key, selection.load);
+  }
+
+  function seek(fraction: number) {
+    if (!Number.isFinite(fraction) || state.loadingId || !state.duration || disposed) return;
+    const progress = Math.min(1, Math.max(0, fraction));
+    if (mode === "media") {
+      if (audio) audio.currentTime = progress * state.duration;
+    } else if (buffer) {
+      const playing = state.playing;
+      const current = ++request;
+      stopSource();
+      offset = looping && progress === 1 ? 0 : progress * buffer.duration;
+      state.playing = false;
+      if (playing && offset < buffer.duration) startSource(current);
+    }
+    cancelAnimationFrame(animation);
+    updateProgress();
+  }
+
+  function setVolume(value: number) {
+    if (!Number.isFinite(value)) return;
+    state.volume = Math.min(1, Math.max(0, value));
+    previewVolume = state.volume;
+    if (audio) audio.volume = state.volume;
+    if (context && output) {
+      output.gain.cancelScheduledValues(context.currentTime);
+      output.gain.setTargetAtTime(state.volume, context.currentTime, 0.01);
     }
   }
 
@@ -240,9 +316,11 @@ export function useAudioPlayer() {
     disposed = true;
     stop();
     renderer?.dispose();
+    output?.disconnect();
     void context?.close().catch(() => {});
     if (audio) {
       audio.onplay = audio.onpause = audio.onended = null;
+      audio.onloadedmetadata = audio.ondurationchange = audio.ontimeupdate = null;
       audio.removeAttribute("src");
       audio.load();
     }
@@ -250,7 +328,7 @@ export function useAudioPlayer() {
     downloads.clear();
   });
 
-  return { state, toggle, toggleSample, toggleDocument, downloadSample, downloadDocument, stop };
+  return { state, toggle, toggleActive, toggleSample, toggleDocument, downloadSample, downloadDocument, seek, setVolume, stop };
 }
 
 export type AudioPlayer = ReturnType<typeof useAudioPlayer>;

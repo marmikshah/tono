@@ -1,36 +1,16 @@
 <script setup lang="ts">
 import { withBase } from "vitepress";
-import Logo from "./Logo.vue";
 </script>
-
 <template>
-    <footer class="site-footer">
-        <div class="site-container footer-inner">
-            <div>
-                <a :href="withBase('/')" aria-label="tono home"><Logo /></a>
-                <p>Sound, made yours.</p>
-            </div>
-            <nav aria-label="Footer navigation">
-                <a :href="withBase('/get-started/')">Documentation</a
-                ><a :href="withBase('/sounds')">Sound library</a
-                ><a :href="withBase('/bgm')">Background music</a
-                ><a :href="withBase('/create')">Create</a
-                ><a :href="withBase('/showcase')">Showcase</a
-                ><a
-                    href="https://github.com/marmikshah/tono"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    >GitHub</a
-                >
-            </nav>
-            <p class="footer-note">
-                Built with Rust.<br /><a
-                    href="https://github.com/marmikshah/tono/blob/master/LICENSE"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    >Open source under MIT.</a
-                >
-            </p>
-        </div>
-    </footer>
+    <footer class="workspace-footer"><div class="site-container workspace-footer-inner"><p><strong>tono.</strong> Sound, made yours.</p><nav aria-label="Footer navigation"><a :href="withBase('/get-started/')">Documentation</a><a href="https://github.com/marmikshah/tono" target="_blank" rel="noopener noreferrer">GitHub</a><a href="https://github.com/marmikshah/tono/blob/master/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a></nav></div></footer>
 </template>
+<style scoped>
+.workspace-footer { margin-top: 6px; border-top: 1px solid var(--line); }
+.workspace-footer-inner { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 46px; padding-block: 4px; }
+.workspace-footer-inner > p { color: var(--muted); font-size: 10px; }
+.workspace-footer-inner strong { margin-right: 9px; color: var(--ink); font-size: 15px; letter-spacing: -.5px; }
+.workspace-footer nav { display: flex; gap: 18px; }
+.workspace-footer nav a { display: inline-flex; align-items: center; min-height: 44px; color: var(--muted); font-size: 10px; }
+.workspace-footer nav a:hover { color: var(--ink); }
+@media (max-width: 700px) { .workspace-footer-inner { align-items: flex-start; flex-direction: column; justify-content: center; gap: 3px; padding-block: 17px; } .workspace-footer nav { gap: 21px; } .workspace-footer nav a { min-height: 35px; } }
+</style>

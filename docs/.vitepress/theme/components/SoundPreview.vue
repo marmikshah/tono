@@ -33,8 +33,8 @@ function next() {
 <template>
     <section class="sound-preview" aria-label="Try the sound effects">
         <div class="preview-topline">
-            <span><Icon name="wave" :size="16" /> THE SOUND LAB</span
-            ><span class="preview-status"><i /> Engine preview</span>
+            <span><Icon name="wave" :size="16" /> TRY A SOUND</span
+            ><span class="preview-status"><i /> {{ loading ? 'Preparing…' : playing ? 'Playing' : 'Ready to play' }}</span>
         </div>
         <div class="preset-grid" role="group" aria-label="Sound presets">
             <button
@@ -59,7 +59,7 @@ function next() {
                 :progress="active ? player.state.progress : 0"
             />
             <div class="scope-meta">
-                <span>AMPLITUDE</span
+                <span aria-live="polite">VARIATION {{ take + 1 }} OF {{ sound.takes.length }}</span
                 ><span>{{ sample.duration.toFixed(2) }} SEC</span>
             </div>
         </div>
@@ -67,12 +67,12 @@ function next() {
             <button
                 class="preview-play"
                 type="button"
-                :aria-label="`${playing ? 'Pause' : 'Play'} ${sound.title} preview`"
+                :aria-label="`${loading ? 'Cancel rendering' : playing ? 'Pause' : 'Play'} ${sound.title} preview`"
                 :aria-busy="loading"
                 @click="player.toggleSample(sample)"
             >
                 <Icon :name="playing ? 'pause' : 'play'" :size="17" />{{
-                    loading ? "Rendering…" : playing ? "Pause sound" : "Play sound"
+                    loading ? "Cancel" : playing ? "Pause sound" : "Play sound"
                 }}
             </button>
             <button
@@ -82,7 +82,7 @@ function next() {
                 title="Try the next variation"
                 @click="next"
             >
-                <Icon name="shuffle" :size="18" />
+                <Icon name="arrow" :size="18" />
             </button>
             <button
                 class="preview-download"
@@ -94,21 +94,28 @@ function next() {
                 ><Icon name="download" :size="16" /> {{ downloading ? 'Rendering…' : 'WAV' }}</button
             >
         </div>
-        <div class="preview-bottom">
-            <span aria-live="polite"
-                >Variation {{ take + 1 }} of {{ sound.takes.length }}
-                <b>·</b> Seed {{ sample.seed }}</span
-            ><span>{{ sample.sampleRate / 1000 }} kHz / 16-bit</span>
-        </div>
-        <a
+        <details class="preview-details">
+            <summary>Recipe &amp; audio details <Icon name="chevron" :size="13" /></summary>
+            <div class="preview-bottom"><span>Seed {{ sample.seed }}</span><span>{{ sample.sampleRate / 1000 }} kHz / 16-bit stereo</span></div>
+            <a
             class="preview-source"
             :href="sampleUrl(sample.source)"
             :download="sample.source"
             :aria-label="`Download the editable ${sound.title} recipe`"
             >Editable recipe <Icon name="download" :size="12"
         /></a>
+        </details>
         <p class="audio-error" v-if="player.state.error" role="alert">
             {{ player.state.error }}
         </p>
     </section>
 </template>
+
+<style scoped>
+.preview-details { margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--line); }
+.preview-details summary { display: flex; justify-content: space-between; align-items: center; min-height: 30px; color: var(--muted); font-size: 12px; list-style: none; }
+.preview-details summary::-webkit-details-marker { display: none; }
+.preview-details[open] summary svg { transform: rotate(180deg); }
+.preview-details .preview-bottom { margin-top: 7px; font-size: 12px; }
+.preview-details .preview-source { min-height: 36px; font-size: 12px; }
+</style>
