@@ -1,4 +1,4 @@
-# Supply-chain policy (issue #52, WS9): checked in CI and locally with
+# Supply-chain policy: checked in CI and locally with
 # `cargo deny check advisories licenses`.
 
 [licenses]
