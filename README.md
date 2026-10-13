@@ -1,16 +1,59 @@
 # tono
 
-tono is a deterministic Rust audio engine for sound effects, instruments,
-songs and adaptive game music, with native playback and Python integrations.
+tono is a deterministic audio engine written in Rust. It synthesizes sound
+effects, instruments, songs and adaptive game music from small JSON recipes
+(SoundDocs) and Rust or Python code. The same recipe renders byte-identical
+audio on every supported target, so sounds can be tested in CI.
 
-It's also a personal experiment — [a personal note](#a-personal-note).
+Use it to generate game sound effects without asset files, compose and compile
+songs as code, run adaptive music live, or render in the browser through
+WebAssembly.
 
 [Docs and demos](https://marmikshah.github.io/tono/) · [Architecture](docs/public/architecture.html) · [Changelog](CHANGELOG.md) · [Rust API](https://docs.rs/tono-core) · [MIT](LICENSE)
 
-Formats: SoundDoc/Song 2, DSP engine 5, Program 3; the desktop resets corrupt projects.
+## Quickstart
 
-Builds, CI and release artifacts are Linux-only. I no longer have the budget
-for Windows or macOS builds; patches for bugs on those platforms are welcome.
+```sh
+cargo install tono
+tono generate laser --seed 42 -o laser   # candidates: wav, editable JSON, spectrograms
+tono render laser/laser_v0.json           # SoundDoc -> wav + analysis images
+```
+
+A SoundDoc is plain JSON. Render one from Rust with `tono-core`:
+
+```rust
+use tono_core::{dsl::SoundDoc, render::render};
+
+let doc: SoundDoc = serde_json::from_str(r#"{
+  "name": "blip", "duration": 0.25, "sample_rate": 48000, "engine": 5, "seed": 7,
+  "root": { "type": "mul", "inputs": [
+    { "type": "sine", "freq": 880 },
+    { "type": "env", "a": 0.002, "d": 0.08, "s": 0.0, "r": 0.05 }
+  ] }
+}"#)?;
+doc.validate()?;
+let samples: Vec<f32> = render(&doc); // identical on every platform
+```
+
+See [your first sound](https://marmikshah.github.io/tono/get-started/quickstart)
+for a complete Rust and Python walkthrough. Python bindings currently build
+from source (see below); they are not on PyPI yet.
+
+## Status
+
+- **Formats:** SoundDoc/Song 2, DSP engine 5, Program 3. Older engine
+  revisions keep rendering unchanged. The desktop app resets corrupt projects.
+- **Rust:** MSRV is 1.88 (pinned in `rust-toolchain.toml`). Versions follow
+  semver; a changed render output for an existing `engine` revision is a bug.
+- **Platforms:** CI, release binaries and wheels run on Linux x86_64. macOS and
+  Windows are not tested in CI; bug reports and patches for them are welcome.
+- **Quality gates:** about 600 tests, including property/fuzz tests, golden
+  renders, realtime-allocation checks and soak runs; `clippy -D warnings`,
+  strict rustdoc, `cargo deny` and an installed-wheel test on every PR.
+- **Authorship:** the code was written with AI assistance under human
+  direction and has not had a full line-by-line human review. Review it before
+  production use, and report problems through [SECURITY.md](SECURITY.md) or
+  issues.
 
 ```text
 crates/
@@ -83,16 +126,6 @@ Bump both versions in Cargo.toml; with Python 3.11+ run
 Tags publish core then CLI and GitHub binaries. Wheels are a manual workflow;
 See the [release workflow](docs/project/release-gates.md); scripts provide `--help`.
 
-## A personal note
+## Contributing
 
-**Every line of code in tono was written by AI.** My part was direction, and
-holding the project to the standards I use where I still write the code
-myself. If tono helps you as a tool, a reference, or a kick-start, that makes
-me happy: the tokens are already spent; the least they can do is be useful to
-you too.
-
-> [!NOTE]
-> **The code has not been fully reviewed by a human.** Tests and AI reviews
-> help, but they do not replace that human review. Bugs, security issues, and
-> breaking changes may still be present. Please review the code before using
-> tono in production.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md).

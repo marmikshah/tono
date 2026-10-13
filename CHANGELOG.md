@@ -42,7 +42,7 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 compile once into a hashed, validated Program, render offline or run live
 with sample-accurate scheduling — byte-identical on every platform. The
 composition API is **frozen stable as of rc.1** (schema v2, program v2,
-engine v5; see `docs/api-tiers.md` and `docs/release-gates.md`).
+engine v5; see `docs/project/release-gates.md`).
 
 ### Added
 - **Engine revision 5 — cross-platform byte-identity.** Deterministic
@@ -137,7 +137,7 @@ engine v5; see `docs/api-tiers.md` and `docs/release-gates.md`).
 ### Removed
 - **The C ABI and WASM faces** — shipped during the betas, dropped before
   release as overkill (native hosts embed `tono-core`); recorded in
-  `docs/release-gates.md`. Can return on demand.
+  `docs/project/release-gates.md`. Can return on demand.
 
 ### Fixed
 - **A scheduled program swap no longer renders on the audio path** — swap
