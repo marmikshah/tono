@@ -169,7 +169,7 @@ impl LibrarySpec {
 
 /// Discovery metadata for an authored sound. All entries are original
 /// procedural recipes licensed with the crate; every voicing is editable.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct Recipe {
     /// Stable recipe slug.
     pub id: &'static str,
@@ -185,7 +185,6 @@ pub struct Recipe {
     pub duration: f32,
     /// Whether the generated document renders a seamless loop body.
     pub looping: bool,
-    #[serde(skip)]
     shape: RecipeShape,
 }
 
