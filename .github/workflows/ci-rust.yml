@@ -18,8 +18,8 @@ jobs:
       CARGO_TERM_COLOR: always
       RUSTUP_TOOLCHAIN: ${{ inputs.toolchain }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Install Linux native dependencies
@@ -59,7 +59,7 @@ jobs:
           python -m pip install maturin
           maturin build --locked --release --out dist -m crates/tono-py/Cargo.toml
           python scripts/wheel_test.py dist
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: inputs.toolchain == '1.88.0'
         with:
           python-version: "3.9"
