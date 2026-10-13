@@ -12,6 +12,10 @@ readme = "../../README.md"
 keywords = ["audio", "synthesis", "dsp", "chiptune", "gamedev"]
 categories = ["multimedia::audio", "game-development"]
 
+# docs.rs builds the full feature set so every optional API is documented.
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 # Feature-declared so a change to core's defaults can't silently unbuild this
 # crate: the CLI re-exports + uses the analysis surface and checks .sf2 paths.

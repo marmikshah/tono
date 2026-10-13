@@ -12,6 +12,10 @@ readme = "../../README.md"
 keywords = ["audio", "synthesis", "dsp", "chiptune", "gamedev"]
 categories = ["multimedia::audio", "game-development"]
 
+# docs.rs builds the full feature set so every optional API is documented.
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 anyhow = { workspace = true }
 image = { workspace = true, optional = true }
