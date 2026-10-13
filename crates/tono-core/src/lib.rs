@@ -26,7 +26,8 @@
 //! (templates with named parameters) · [`edit`] (path-addressed edits) ·
 //! [`vary`] (deterministic variations).
 //! [`generate`] supplies authored game SFX starters without an input graph.
-//! [`library`] adds a curated collection of editable sound designs and voicings.
+//! [`library`] adds a curated collection of editable sound designs and voicings,
+//! and [`bgm`] a set of composed four-bar themes.
 //!
 //! Rendering: [`render`] (the offline bounce) · [`streaming`] (real-time,
 //! byte-identical to the bounce) · [`dsp`] (RNG, loudness, limiting) ·

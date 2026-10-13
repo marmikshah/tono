@@ -3,8 +3,8 @@
 //! The shared vocabulary for talking about WHICH notes play, one layer above
 //! the raw graph: a [`Pitch`] is an absolute note (a MIDI number), a
 //! [`PitchClass`] a note name without an octave, an [`Interval`] a distance
-//! in semitones, and [`Scale`], [`Key`], [`Chord`], and [`Voicing`] build
-//! upward from there. Everything is exact integer arithmetic; the only float
+//! in semitones, and [`Scale`], [`Key`], and [`Chord`] build upward from
+//! there. Everything is exact integer arithmetic; the only float
 //! in the module is [`Pitch::to_hz`], the single boundary where harmony
 //! becomes audio — it uses the same formula as the DSL's
 //! [`note_to_hz`](crate::dsl::note_to_hz) (12-TET, A4 = 440), so a pitch
@@ -641,7 +641,7 @@ impl Chord {
 
     /// The pitch classes of the chord, ascending from the root — C major is
     /// `[C, E, G]`. The root is always first; this is a set, not a spacing
-    /// (see [`Voicing`] for that).
+    /// (see [`Chord::arp`] and [`Inversion::pitches`] for pitches).
     pub fn notes(&self) -> Vec<PitchClass> {
         self.quality
             .intervals()
@@ -661,9 +661,9 @@ impl Chord {
         }
     }
 
-    /// The ascending arpeggio from the root in `octave` — the same pitches
-    /// as a root-position close [`Voicing`]. Errors if a note lands outside
-    /// the MIDI range (a high root plus a wide quality runs past G9).
+    /// The ascending arpeggio from the root in `octave` — the chord tones
+    /// stacked within an octave. Errors if a note lands outside the MIDI
+    /// range (a high root plus a wide quality runs past G9).
     pub fn arp(&self, octave: i8) -> Result<Vec<Pitch>, MusicError> {
         let root = Pitch::new(self.root, octave)?;
         self.quality
@@ -730,99 +730,6 @@ impl Inversion {
     }
 }
 
-/// A concrete spacing of a chord: actual pitches, low to high. Built by the
-/// constructors below (close position, drop-2 open, slash bass) or
-/// transposed from another voicing — every constructor keeps the voices
-/// strictly ascending and INSIDE the MIDI range, erroring rather than
-/// clamping when a spacing wouldn't fit.
-///
-/// Serde is the explicit struct `{"pitches": ["E3", "C4", "G4"]}`;
-/// deserializing re-checks the invariant (non-empty, strictly ascending).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
-pub struct Voicing {
-    pitches: Vec<Pitch>,
-}
-
-impl Voicing {
-    /// Root-position close voicing: the chord tones stacked within an
-    /// octave, root in the bass (C at octave 4 = C4 E4 G4).
-    pub fn close(chord: Chord, octave: i8) -> Result<Voicing, MusicError> {
-        Voicing::checked(chord.arp(octave)?)
-    }
-
-    /// Drop-2 open voicing: the close voicing with the SECOND-highest voice
-    /// dropped an octave (C at octave 4 = E3 C4 G4). The dropped voice needs
-    /// room below — a close voicing starting near the bottom of the MIDI
-    /// range errors instead of wrapping.
-    pub fn open(chord: Chord, octave: i8) -> Result<Voicing, MusicError> {
-        let close = chord.arp(octave)?;
-        let dropped = close[close.len() - 2].add_semitones(-12)?;
-        let mut pitches = vec![dropped];
-        pitches.extend_from_slice(&close[..close.len() - 2]);
-        pitches.push(close[close.len() - 1]);
-        Voicing::checked(pitches)
-    }
-
-    /// A slash chord: the close voicing over `bass`, placed in the nearest
-    /// octave strictly below the root (C/E at octave 4 = E3 C4 E4 G4).
-    /// Errors when there is no room for the bass below the root.
-    pub fn with_bass(chord: Chord, octave: i8, bass: PitchClass) -> Result<Voicing, MusicError> {
-        let close = chord.arp(octave)?;
-        let root = close[0].to_midi() as i16;
-        let mut bass_midi = (octave as i16 + 1) * 12 + bass.semitone() as i16;
-        if bass_midi >= root {
-            bass_midi -= 12;
-        }
-        let bass = Pitch::from_midi_i32(bass_midi as i32)?;
-        let mut pitches = vec![bass];
-        pitches.extend_from_slice(&close);
-        Voicing::checked(pitches)
-    }
-
-    /// The voices, strictly ascending (bass first).
-    pub fn pitches(&self) -> &[Pitch] {
-        &self.pitches
-    }
-
-    /// Every voice shifted by `interval`, erroring if any voice would leave
-    /// the MIDI range.
-    pub fn transpose(&self, interval: Interval) -> Result<Voicing, MusicError> {
-        let pitches = self
-            .pitches
-            .iter()
-            .map(|p| p.transpose(interval))
-            .collect::<Result<Vec<_>, _>>()?;
-        Voicing::checked(pitches)
-    }
-
-    /// A voicing from checked pitches — the single chokepoint for the
-    /// invariant (non-empty, strictly ascending), shared by the constructors
-    /// and serde.
-    fn checked(pitches: Vec<Pitch>) -> Result<Voicing, MusicError> {
-        if pitches.is_empty() {
-            return Err(MusicError::BadVoicing(
-                "a voicing needs at least one pitch".to_string(),
-            ));
-        }
-        if pitches.windows(2).any(|pair| pair[0] >= pair[1]) {
-            return Err(MusicError::BadVoicing(
-                "voicing pitches must be strictly ascending (bass to soprano)".to_string(),
-            ));
-        }
-        Ok(Voicing { pitches })
-    }
-}
-
-impl<'de> Deserialize<'de> for Voicing {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        struct Raw {
-            pitches: Vec<Pitch>,
-        }
-        Voicing::checked(Raw::deserialize(deserializer)?.pitches).map_err(serde::de::Error::custom)
-    }
-}
-
 /// Why a music operation failed. Every fallible constructor in the module
 /// returns this; the messages are human-readable (they name what was
 /// rejected and show an example of the valid grammar) so a tool can
@@ -838,17 +745,12 @@ pub enum MusicError {
     OutOfRange(String),
     /// A scale degree below 1 (degrees are 1-based: 1 = tonic).
     BadDegree(u32),
-    /// A voicing violated its structural invariant (empty, or not strictly
-    /// ascending).
-    BadVoicing(String),
 }
 
 impl std::fmt::Display for MusicError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MusicError::BadName(message)
-            | MusicError::OutOfRange(message)
-            | MusicError::BadVoicing(message) => f.write_str(message),
+            MusicError::BadName(message) | MusicError::OutOfRange(message) => f.write_str(message),
             MusicError::BadDegree(n) => {
                 write!(f, "degree {n} is invalid — degrees are 1-based (1 = tonic)")
             }
@@ -1292,64 +1194,6 @@ mod tests {
     }
 
     #[test]
-    fn close_voicing_stacks_in_root_position() {
-        let c = Chord::from_name("C").unwrap();
-        assert_eq!(
-            midis(Voicing::close(c, 4).unwrap().pitches()),
-            vec![60, 64, 67] // C4 E4 G4, sorted
-        );
-        // Out-of-range spacings error instead of clamping.
-        assert!(Voicing::close(Chord::from_name("Cmaj7").unwrap(), 9).is_err());
-    }
-
-    #[test]
-    fn open_voicing_is_drop_two() {
-        let c = Chord::from_name("C").unwrap();
-        assert_eq!(
-            midis(Voicing::open(c, 4).unwrap().pitches()),
-            vec![52, 60, 67] // E3 C4 G4 — the third dropped an octave
-        );
-        let cmaj7 = Chord::from_name("Cmaj7").unwrap();
-        assert_eq!(
-            midis(Voicing::open(cmaj7, 4).unwrap().pitches()),
-            vec![55, 60, 64, 71] // G3 C4 E4 B4
-        );
-        // No room to drop near the bottom of the range.
-        assert!(Voicing::open(c, -1).is_err());
-    }
-
-    #[test]
-    fn slash_voicing_puts_the_bass_below() {
-        let c = Chord::from_name("C").unwrap();
-        let bass = |bass: &str| midis(Voicing::with_bass(c, 4, pc(bass)).unwrap().pitches());
-        assert_eq!(bass("E"), vec![52, 60, 64, 67]); // C/E: E3 below
-        assert_eq!(bass("G"), vec![55, 60, 64, 67]); // C/G
-        assert_eq!(bass("C"), vec![48, 60, 64, 67]); // root doubled below
-        assert_eq!(bass("B"), vec![59, 60, 64, 67]); // B3 — still below C4
-        // No room below a root at the bottom of the range.
-        assert!(Voicing::with_bass(c, -1, pc("E")).is_err());
-    }
-
-    #[test]
-    fn voicing_transpose_checks_every_voice() {
-        let c = Chord::from_name("C").unwrap();
-        let up = Voicing::close(c, 4)
-            .unwrap()
-            .transpose(Interval::OCTAVE)
-            .unwrap();
-        assert_eq!(midis(up.pitches()), vec![72, 76, 79]);
-        // G8 in the voicing plus a fourteenth is past G9.
-        let high = Voicing::close(c, 8).unwrap(); // C8 E8 G8
-        assert!(high.transpose(Interval::new(14)).is_err());
-        assert!(
-            Voicing::close(c, 0)
-                .unwrap()
-                .transpose(Interval::new(-13))
-                .is_err()
-        );
-    }
-
-    #[test]
     fn serde_round_trips_every_type() {
         // PitchClass and Interval are bare numbers.
         assert_eq!(serde_json::to_string(&pc("F#")).unwrap(), "6");
@@ -1400,19 +1244,10 @@ mod tests {
             serde_json::from_str::<Chord>(r#"{"root":0,"quality":"dominant_seventh"}"#).unwrap(),
             chord
         );
-        // Inversion and Voicing round-trip too.
+        // Inversion round-trips too.
         let inversion = chord.invert(1);
         let json = serde_json::to_string(&inversion).unwrap();
         assert_eq!(serde_json::from_str::<Inversion>(&json).unwrap(), inversion);
-        let voicing = Voicing::with_bass(Chord::from_name("C").unwrap(), 4, pc("E")).unwrap();
-        assert_eq!(
-            serde_json::to_string(&voicing).unwrap(),
-            r#"{"pitches":["E3","C4","E4","G4"]}"#
-        );
-        assert_eq!(
-            serde_json::from_str::<Voicing>(r#"{"pitches":["E3","C4","E4","G4"]}"#).unwrap(),
-            voicing
-        );
     }
 
     #[test]
@@ -1426,9 +1261,6 @@ mod tests {
         assert!(serde_json::from_str::<Scale>(r#""Major""#).is_err());
         // A key is the explicit struct, not the display string.
         assert!(serde_json::from_str::<Key>(r#""C major""#).is_err());
-        // The voicing invariant is re-checked on load.
-        assert!(serde_json::from_str::<Voicing>(r#"{"pitches":[]}"#).is_err());
-        assert!(serde_json::from_str::<Voicing>(r#"{"pitches":["E4","C4"]}"#).is_err());
     }
 
     #[test]
