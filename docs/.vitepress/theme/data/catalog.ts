@@ -1,5 +1,4 @@
 import { withBase } from "vitepress";
-import manifest from "../../../public/generated/sfx/manifest.json";
 
 export interface SoundSample {
   template: string;
@@ -13,74 +12,6 @@ export interface SoundSample {
   looping?: boolean;
 }
 
-const templates = [
-  {
-    id: "coin",
-    title: "Coin pickup",
-    category: "Arcade",
-    description: "A bright little reward.",
-    color: "gold",
-  },
-  {
-    id: "jump",
-    title: "Jump",
-    category: "Movement",
-    description: "A spring in every step.",
-    color: "green",
-  },
-  {
-    id: "laser",
-    title: "Laser",
-    category: "Action",
-    description: "A little science fiction.",
-    color: "purple",
-  },
-  {
-    id: "explosion",
-    title: "Explosion",
-    category: "Action",
-    description: "Give the big moments weight.",
-    color: "orange",
-  },
-  {
-    id: "impact",
-    title: "Impact",
-    category: "Action",
-    description: "A hit you can feel.",
-    color: "pink",
-  },
-  {
-    id: "footstep",
-    title: "Footstep",
-    category: "Movement",
-    description: "Bring the ground to life.",
-    color: "sand",
-  },
-  {
-    id: "ui-confirm",
-    title: "Confirm",
-    category: "Interface",
-    description: "A satisfying little yes.",
-    color: "green",
-  },
-  {
-    id: "ui-cancel",
-    title: "Cancel",
-    category: "Interface",
-    description: "A softer change of plan.",
-    color: "blue",
-  },
-];
-
-export const sounds = templates.map((template) => {
-  const takes = (manifest as SoundSample[]).filter(
-    (sample) => sample.template === template.id,
-  );
-  if (takes.length !== 4)
-    throw new Error(`Expected four generated previews for ${template.id}`);
-  return { ...template, takes };
-});
-export type Sound = (typeof sounds)[number];
 export const sampleUrl = (file: string) => withBase(`/generated/sfx/${file}`);
 export const sampleId = (sample: SoundSample) =>
   `sfx:${sample.source}`;
