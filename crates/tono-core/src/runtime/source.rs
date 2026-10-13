@@ -89,12 +89,9 @@ impl StreamSource {
         let graph = StreamGraph::try_from_doc(doc)?;
         let stereo = graph.is_stereo();
         // Probe pass: same graph, same bytes — find the peak the offline
-        // output stage would have limited against. The duration clamp mirrors
-        // the offline render paths so an unvalidated doc can't request an
-        // unbounded probe (or seq pre-render) here.
+        // output stage would have limited against.
         let mut probe = StreamGraph::try_from_doc(doc)?;
-        let mut remaining =
-            ((doc.duration.clamp(0.0, 600.0) * doc.sample_rate as f32).ceil() as usize).max(1);
+        let mut remaining = doc.frame_count();
         let mut block = [0.0f32; 1024];
         let mut block_r = [0.0f32; 1024];
         let mut peak = 0.0f32;

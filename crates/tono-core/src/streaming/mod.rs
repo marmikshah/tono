@@ -209,10 +209,7 @@ impl StreamGraph {
                 // report the failing part with its context instead of the
                 // blanket NestedMixer.
                 for (ti, t) in tracks.iter().enumerate() {
-                    // The id fallback mirrors the renderer's (and
-                    // `ensure_track_ids`) — the same id the fix addresses.
-                    let layer_id = t.id.clone().unwrap_or_else(|| format!("layer_{ti}"));
-                    let part = format!("track '{layer_id}'");
+                    let part = format!("track '{}'", t.layer_id(ti));
                     t.node.walk(&mut |node| {
                         node_blockers(node, &mut |cause| {
                             out.push(StreamBlocker::TracksPart {
@@ -261,9 +258,7 @@ impl StreamGraph {
         if !Self::blockers(doc).is_empty() {
             return None;
         }
-        // The duration clamp mirrors the offline render paths so an
-        // unvalidated doc can't request an unbounded seq pre-render here.
-        let n = ((doc.duration.clamp(0.0, 600.0) * doc.sample_rate as f32).ceil() as usize).max(1);
+        let n = doc.frame_count();
 
         let root = if matches!(doc.root, Node::Tracks { .. }) {
             Root::Tracks(tracks::StreamTracks::build(doc)?)

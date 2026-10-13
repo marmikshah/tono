@@ -48,7 +48,7 @@ impl LoopBuffer {
     /// the safe constructor when the playback rate is the engine's, not the
     /// doc's.
     pub fn from_doc_at(doc: &SoundDoc, sample_rate: u32) -> Self {
-        LoopBuffer::from_doc(&doc_at(doc, sample_rate))
+        LoopBuffer::from_doc(&doc.at_sample_rate(sample_rate))
     }
 
     /// Loop pre-rendered stereo samples — trim them to a musical bar length for a
@@ -83,18 +83,8 @@ impl LoopBuffer {
     /// [`from_doc_len`](Self::from_doc_len) rendered at an explicit
     /// `sample_rate` (see [`from_doc_at`](Self::from_doc_at)).
     pub fn from_doc_len_at(doc: &SoundDoc, frames: usize, sample_rate: u32) -> Self {
-        LoopBuffer::from_doc_len(&doc_at(doc, sample_rate), frames)
+        LoopBuffer::from_doc_len(&doc.at_sample_rate(sample_rate), frames)
     }
-}
-
-/// The doc re-stamped to render at `sample_rate` — how every doc-taking
-/// [`AdaptiveMusic`] entry point pins rendering to the engine's rate (the same
-/// override `Engine::new_player` applies), so a doc left at the default
-/// 44 100 Hz can't play detuned through a 48 kHz engine.
-fn doc_at(doc: &SoundDoc, sample_rate: u32) -> SoundDoc {
-    let mut doc = doc.clone();
-    doc.sample_rate = sample_rate;
-    doc
 }
 
 impl AudioSource for LoopBuffer {

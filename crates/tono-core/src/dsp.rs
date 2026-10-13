@@ -141,6 +141,24 @@ pub(crate) fn exp(x: f32) -> f32 {
     crate::det::expf(x)
 }
 
+/// One-pole smoothing coefficient for a time constant of `secs` seconds at
+/// `sr` Hz: `exp(-1 / (secs × sr))`, the per-sample decay every follower and
+/// decaying envelope in the engine uses.
+#[inline]
+pub(crate) fn one_pole(secs: f32, sr: f32) -> f32 {
+    exp(-1.0 / (secs * sr))
+}
+
+/// Attack and release coefficients of an envelope follower, with both times
+/// floored at 0.1 ms so a zero never divides.
+#[inline]
+pub(crate) fn follower_coeffs(attack: f32, release: f32, sr: f32) -> (f32, f32) {
+    (
+        one_pole(attack.max(1e-4), sr),
+        one_pole(release.max(1e-4), sr),
+    )
+}
+
 /// Deterministic ln(1 + x).
 #[inline]
 pub(crate) fn ln_1p(x: f32) -> f32 {

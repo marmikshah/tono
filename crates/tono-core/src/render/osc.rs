@@ -156,7 +156,7 @@ pub(super) fn dust_signal(density: f32, decay: f32, n: usize, sr: u32, rng: &mut
     let srf = sr as f32;
     let p = (density / srf).clamp(0.0, 1.0); // event probability per sample
     let g = if decay > 0.0 {
-        dsp::exp(-1.0 / (decay * srf))
+        dsp::one_pole(decay, srf)
     } else {
         0.0
     };

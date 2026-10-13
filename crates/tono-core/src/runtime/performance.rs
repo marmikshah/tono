@@ -444,9 +444,7 @@ impl Performance {
         self.require_queue_room()?;
         // Stingers render at the program's rate: the runtime's one internal
         // rate (resampling to the device belongs at the adapter).
-        let mut doc = doc.clone();
-        doc.sample_rate = self.sample_rate;
-        let (left, right) = crate::player::render_stereo(&doc);
+        let (left, right) = crate::player::render_stereo(&doc.at_sample_rate(self.sample_rate));
         let mut buf = Vec::with_capacity(left.len() * 2);
         for i in 0..left.len() {
             buf.push(left[i]);

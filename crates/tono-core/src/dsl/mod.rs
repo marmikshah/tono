@@ -123,6 +123,24 @@ impl SoundDoc {
             root,
         }
     }
+
+    /// The number of frames the document renders: `duration × sample_rate`,
+    /// rounded up, at least one. The duration is clamped to the 600 s that
+    /// [`validate`](Self::validate) enforces, so a render path reached with
+    /// an unvalidated document cannot be asked for an unbounded allocation.
+    pub fn frame_count(&self) -> usize {
+        ((self.duration.clamp(0.0, 600.0) * self.sample_rate as f32).ceil() as usize).max(1)
+    }
+
+    /// A copy re-stamped to render at `sample_rate`. The runtime pins every
+    /// document it renders to its one internal rate this way, so a document
+    /// left at the default 44 100 Hz cannot play detuned through a 48 kHz
+    /// engine.
+    pub(crate) fn at_sample_rate(&self, sample_rate: u32) -> SoundDoc {
+        let mut doc = self.clone();
+        doc.sample_rate = sample_rate;
+        doc
+    }
 }
 
 /// How the rendered sound is meant to be played back.
