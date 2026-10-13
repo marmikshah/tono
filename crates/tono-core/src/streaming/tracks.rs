@@ -174,18 +174,13 @@ impl StreamTracks {
         };
 
         let sr = doc.sample_rate;
-        // The duration clamp mirrors the offline render paths so an
-        // unvalidated doc can't request an unbounded seq pre-render here.
-        let n = ((doc.duration.clamp(0.0, 600.0) * sr as f32).ceil() as usize).max(1);
+        let n = doc.frame_count();
 
         let bus_index = |id: &str| buses.iter().position(|b| b.id == id);
         let mut out_tracks = Vec::with_capacity(tracks.len());
         let mut links = Vec::new();
         for (ti, t) in tracks.iter().enumerate() {
-            // The id fallback mirrors the offline (the exact id
-            // `ensure_track_ids` backfills), so a document's noise is
-            // identical before and after the backfill pass.
-            let layer_id = t.id.clone().unwrap_or_else(|| format!("layer_{ti}"));
+            let layer_id = t.layer_id(ti);
             let base = track_stream_seed(doc.seed, layer_stream_key(&layer_id));
             let off = ((t.at.max(0.0) * sr as f32).round() as usize).min(n);
             let src = if t.mute {
@@ -203,15 +198,15 @@ impl StreamTracks {
                     .enumerate()
                     .find(|(_, s)| s.id.as_deref() == Some(sc.source.as_str()))
             {
-                let srf = sr as f32;
+                let (at, rt) = crate::dsp::follower_coeffs(sc.attack, sc.release, sr as f32);
                 links.push(DuckLink {
                     follower: ti,
                     source: si,
                     source_gain: source.gain,
                     gain_lane: LaneCursor::build(&source.automation, AutoTarget::Gain, source.gain),
                     env: 0.0,
-                    at: crate::dsp::exp(-1.0 / (sc.attack.max(1e-4) * srf)),
-                    rt: crate::dsp::exp(-1.0 / (sc.release.max(1e-4) * srf)),
+                    at,
+                    rt,
                     amount: sc.amount,
                 });
             }

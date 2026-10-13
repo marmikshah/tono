@@ -3,7 +3,7 @@
 //! lets [`AudioSource::fill`](crate::runtime::AudioSource::fill) render
 //! identically at any host block size.
 
-use super::{Action, AdaptiveMusic, Scheduled, SoundDoc, doc_at};
+use super::{Action, AdaptiveMusic, Scheduled, SoundDoc};
 
 /// When a scheduled change takes effect, relative to the musical clock. Anything
 /// but [`Immediate`](Quantize::Immediate) needs a tempo ([`set_tempo`](AdaptiveMusic::set_tempo));
@@ -116,7 +116,7 @@ impl AdaptiveMusic {
     /// the audio thread); only its playback is deferred to the boundary.
     pub fn stinger_at(&mut self, doc: &SoundDoc, q: Quantize) {
         let (left, right) =
-            crate::render::render_product(&doc_at(doc, self.sample_rate)).into_stereo();
+            crate::render::render_product(&doc.at_sample_rate(self.sample_rate)).into_stereo();
         self.stinger_stereo_at(left, right, q);
     }
 

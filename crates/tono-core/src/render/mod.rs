@@ -101,21 +101,13 @@ pub fn render(doc: &SoundDoc) -> Signal {
 /// renderer matches byte-for-byte (used by the streaming byte-identity tests).
 #[cfg(test)]
 pub(crate) fn render_graph(doc: &SoundDoc) -> Signal {
-    let sr = doc.sample_rate;
-    // validate() caps duration at 600 s; the clamp guards direct render calls
-    // on unvalidated docs from an unbounded allocation (1e12 s ⇒ OOM abort).
-    let n = ((doc.duration.clamp(0.0, 600.0) * sr as f32).ceil() as usize).max(1);
-    render_node(&doc.root, n, sr, doc.seed)
+    render_node(&doc.root, doc.frame_count(), doc.sample_rate, doc.seed)
 }
 
 /// The non-mixer render path: one graph, one mono buffer.
 fn render_plain(doc: &SoundDoc) -> Signal {
     let sr = doc.sample_rate;
-    // validate() caps duration at 600 s; the clamp guards direct render calls
-    // on unvalidated docs from an unbounded allocation (1e12 s ⇒ OOM abort).
-    let n = ((doc.duration.clamp(0.0, 600.0) * sr as f32).ceil() as usize).max(1);
-
-    let mut out = render_node(&doc.root, n, sr, doc.seed);
+    let mut out = render_node(&doc.root, doc.frame_count(), sr, doc.seed);
     // A loop is rendered as its seamless body (tail crossfaded onto the head).
     if let Playback::Loop {
         start_secs,
@@ -250,8 +242,7 @@ fn apply_processor(node: &Node, input: &[f32], sr: u32, path: u64) -> Signal {
             // gain dip on the chained signal — the sidechain pump.
             let trig = render_node(trigger, input.len(), sr, node_path(path, 0));
             let srf = sr as f32;
-            let at = crate::dsp::exp(-1.0 / (attack.max(1e-4) * srf));
-            let rt = crate::dsp::exp(-1.0 / (release.max(1e-4) * srf));
+            let (at, rt) = crate::dsp::follower_coeffs(*attack, *release, srf);
             let mut env = 0.0f32;
             input
                 .iter()

@@ -61,6 +61,16 @@ pub struct Track {
     pub sends: Vec<Send>,
 }
 
+impl Track {
+    /// The track's stable layer id, or the `layer_<index>` fallback for a
+    /// track at `index` whose id has not been backfilled yet. Every renderer
+    /// keys the track's noise streams by this, so a document renders the
+    /// same bytes before and after the backfill pass.
+    pub fn layer_id(&self, index: usize) -> String {
+        self.id.clone().unwrap_or_else(|| format!("layer_{index}"))
+    }
+}
+
 /// A mix bus in a [`Node::Tracks`] root: a named submix with its own insert
 /// chain, returned onto the master bus. Tracks route to it with their `bus`
 /// field and feed it with `sends`; the rendered mix without it is

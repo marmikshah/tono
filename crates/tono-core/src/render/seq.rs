@@ -507,7 +507,7 @@ fn piano_note(voice: &SeqVoice, note: &SeqNote, f: &[f32], sr: u32, rng: &mut Rn
             step: ratio,
             amp,
             env: 1.0,
-            dmul: dsp::exp(-1.0 / (srf * decay)),
+            dmul: dsp::one_pole(decay, srf),
             // Spread start phases (golden ratio) so the onset isn't a
             // hard in-phase transient — deterministic, no RNG draw.
             phase: [(kf * 0.618_034).fract(), (kf * 0.381_966).fract()],
