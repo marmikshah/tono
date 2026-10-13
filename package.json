@@ -13,10 +13,10 @@
     "docs:test": "node --experimental-strip-types --test scripts/web-audio.test.mjs scripts/document.test.mjs scripts/studio.test.mjs scripts/transport.test.mjs && node --experimental-strip-types scripts/web-engine.test.mjs"
   },
   "devDependencies": {
-    "@types/node": "^22.20.4",
-    "typescript": "~5.9.3",
+    "@types/node": "^26.6.5",
+    "typescript": "~7.0.2",
     "vitepress": "2.0.0-alpha.20",
     "vue": "^3.5.41",
-    "vue-tsc": "^3.3.11"
+    "vue-tsc": "^3.3.13"
   }
 }
