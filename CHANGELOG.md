@@ -30,6 +30,7 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 
 ### Removed
 - Historical DSP/schema implementations, obsolete identity slots, duplicate state, unused tooling, and unused assets.
+- Unused public API: `edit::describe`/`morph` and their map types, `vary::humanize`, `music::Voicing`, and the `Serialize` derives on `library::Recipe` and `bgm::Composition`.
 
 ## 1.10.1 — 2026-08-11
 

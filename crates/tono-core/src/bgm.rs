@@ -117,7 +117,7 @@ impl BgmSpec {
 }
 
 /// Discovery metadata for a composed four-bar musical theme.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct Composition {
     /// Stable theme identifier.
     pub id: &'static str,
@@ -135,19 +135,12 @@ pub struct Composition {
     pub key: &'static str,
     /// Number of 4/4 bars in the rendered loop.
     pub bars: u32,
-    #[serde(skip)]
     tonic: u8,
-    #[serde(skip)]
     scale: &'static [i8; 7],
-    #[serde(skip)]
     progression: [i8; 4],
-    #[serde(skip)]
     melody: &'static [(u32, u32, i8)],
-    #[serde(skip)]
     lead: Instrument,
-    #[serde(skip)]
     harmony: Instrument,
-    #[serde(skip)]
     syncopated: bool,
 }
 

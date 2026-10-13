@@ -1,9 +1,8 @@
 //! Variation tools: derive new takes from an existing sound.
 //!
-//! These never invent content — they perturb (`mutate`) or coherently shift
-//! (`humanize`) an existing graph, deterministically from a seed. Together with
-//! `edit::morph` they power round-robin sets and "nudge until it's right"
-//! exploration.
+//! `mutate` never invents content — it perturbs an existing graph,
+//! deterministically from a seed, for round-robin sets and "nudge until it's
+//! right" exploration.
 
 use crate::dsl::{Modulator, Node, SoundDoc, Value};
 use crate::dsp::Rng;
@@ -12,92 +11,6 @@ use crate::dsp::Rng;
 /// noise stream for the same seed.
 fn salted_rng(seed: u64) -> Rng {
     Rng::new(seed ^ 0xA076_1D64_78BD_642F)
-}
-
-/// A round-robin take. Rather than jittering every parameter independently
-/// (which drifts off-character), humanize applies ONE coherent pitch shift
-/// (± `pitch_cents`) to every pitched source and ONE level trim (± `gain_db`)
-/// to the whole sound — exactly the variation a real performer produces
-/// between repeats. Identity parameters (envelopes, filters, structure) are
-/// untouched.
-pub fn humanize(doc: &SoundDoc, pitch_cents: f32, gain_db: f32, seed: u64) -> SoundDoc {
-    let mut rng = salted_rng(seed);
-    let ratio = 2f32.powf((rng.bi() * pitch_cents) / 1200.0);
-    let level = 10f32.powf((rng.bi() * gain_db) / 20.0);
-    let mut out = doc.clone();
-    out.name = format!("{}_h", doc.name);
-    out.seed = doc.seed.wrapping_add(seed | 1);
-    transpose_node(&mut out.root, ratio);
-    let trim = Node::Gain {
-        amount: Value::Const(level),
-    };
-    if let Node::Tracks { master, .. } = &mut out.root {
-        // `tracks` must stay the root, so the level trim joins the master
-        // chain (Gain is an ordinary processor) instead of wrapping the doc.
-        master.push(trim);
-    } else {
-        let old = std::mem::replace(
-            &mut out.root,
-            Node::Mix { inputs: Vec::new() }, // placeholder, replaced below
-        );
-        out.root = Node::Chain {
-            stages: vec![old, trim],
-        };
-    }
-    out
-}
-
-/// Scale every pitch-bearing `Value` by `ratio` (note names resolve to Hz).
-fn transpose_value(v: &mut Value, ratio: f32) {
-    match v {
-        Value::Const(c) => *c *= ratio,
-        Value::Note(s) => {
-            if let Some(hz) = crate::dsl::note_to_hz(s) {
-                *v = Value::Const(hz * ratio);
-            }
-        }
-        Value::Modulated(m) => match m {
-            Modulator::Slide { from, to, .. } => {
-                *from *= ratio;
-                *to *= ratio;
-            }
-            Modulator::Lfo { center, depth, .. } => {
-                *center *= ratio;
-                *depth *= ratio;
-            }
-            Modulator::Arp { steps, .. } => steps.iter_mut().for_each(|s| *s *= ratio),
-            Modulator::EnvMod { from, to, .. } => {
-                *from *= ratio;
-                *to *= ratio;
-            }
-            Modulator::Rand { from, to, .. } => {
-                *from *= ratio;
-                *to *= ratio;
-            }
-        },
-    }
-}
-
-/// Recursively transpose only the pitched sources (oscillator frequencies and
-/// seq note pitches) — filters / envelopes / levels are identity, not pitch.
-/// The recursion goes through the shared [`Node::children_mut`] traversal, so
-/// every nesting spot (mix/mul/chain, a tracks' layers AND its master chain,
-/// a duck's trigger) is covered by construction.
-fn transpose_node(node: &mut Node, ratio: f32) {
-    match node {
-        Node::Square { freq, .. }
-        | Node::Triangle { freq }
-        | Node::Sawtooth { freq }
-        | Node::Sine { freq }
-        | Node::Fm { freq, .. }
-        | Node::Super { freq, .. }
-        | Node::Wavetable { freq, .. } => transpose_value(freq, ratio),
-        Node::Seq { notes, .. } => notes
-            .iter_mut()
-            .for_each(|n| transpose_value(&mut n.pitch, ratio)),
-        _ => {}
-    }
-    node.children_mut().for_each(|c| transpose_node(c, ratio));
 }
 
 /// Return a perturbed copy of `doc`: numeric parameters are jittered by up to
@@ -461,60 +374,5 @@ mod tests {
             let m = mutate(&d, 1.0, seed);
             m.validate().unwrap_or_else(|e| panic!("seed {seed}: {e}"));
         }
-    }
-
-    #[test]
-    fn transpose_node_reaches_into_a_duck_trigger() {
-        // The trigger carries the pitched material (e.g. the kick the pump
-        // follows) — skipping it left the trigger untransposed.
-        let mut node: Node = serde_json::from_str(
-            r#"{ "type": "duck", "amount": 0.8, "trigger": { "type": "sine", "freq": 55 } }"#,
-        )
-        .unwrap();
-        transpose_node(&mut node, 2.0);
-        let Node::Duck { trigger, .. } = &node else {
-            panic!("still a duck");
-        };
-        let Node::Sine { freq } = trigger.as_ref() else {
-            panic!("still a sine");
-        };
-        assert!(matches!(freq, Value::Const(c) if *c == 110.0));
-    }
-
-    #[test]
-    fn humanize_keeps_tracks_at_the_root() {
-        let d: SoundDoc = serde_json::from_str(
-            r#"{ "name": "band", "duration": 0.2, "root": { "type": "tracks",
-                "tracks": [ { "node": { "type": "sine", "freq": 220 } } ],
-                "master": [ { "type": "lowpass", "cutoff": 8000 } ] } }"#,
-        )
-        .unwrap();
-        let h = humanize(&d, 30.0, 1.0, 9);
-        // The level trim joins the master chain — wrapping the root would make
-        // the doc invalid (`tracks` must stay the root node).
-        assert_eq!(h.validate(), Ok(()));
-        let Node::Tracks { master, .. } = &h.root else {
-            panic!("tracks must stay the root");
-        };
-        assert_eq!(master.len(), 2);
-        assert!(matches!(master.last(), Some(Node::Gain { .. })));
-    }
-
-    #[test]
-    fn humanize_shifts_pitch_coherently_and_trims_level() {
-        let h = humanize(&zap(), 50.0, 1.5, 11);
-        assert_eq!(h.name, "zap_h");
-        // Root is wrapped in a chain ending in one gain stage.
-        let Node::Chain { stages } = &h.root else {
-            panic!("expected chain wrapper");
-        };
-        assert!(matches!(stages[1], Node::Gain { .. }));
-        // Both slide endpoints moved by the SAME ratio (coherent transpose).
-        let v = serde_json::to_value(&h).unwrap();
-        let slide = &v["root"]["stages"][0]["inputs"][0]["freq"]["slide"];
-        let from = slide["from"].as_f64().unwrap() / 880.0;
-        let to = slide["to"].as_f64().unwrap() / 180.0;
-        assert!((from - to).abs() < 1e-4, "ratios {from} vs {to}");
-        assert!((0.97..=1.03).contains(&from)); // within ±50 cents
     }
 }

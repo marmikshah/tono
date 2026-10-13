@@ -11,9 +11,10 @@
 //! which keeps the mix **byte-identical to an offline bounce**. Instance master
 //! controls (gain / pan / stop) apply live per block; parameter and layer-gain
 //! changes ([`Engine::set_param`] / [`Engine::set_layer_gain`]) re-render the
-//! instance and **crossfade** for a click-free swap — control-rate today, and
-//! sample-accurate once the stateful streaming renderer lands behind this same
-//! seam. Multi-threaded real-time use goes through [`Engine::split`].
+//! instance and **crossfade** for a click-free swap, so they apply at block
+//! boundaries rather than sample-accurately; sample-accurate scheduling is
+//! [`Performance`]'s job. Multi-threaded real-time use goes through
+//! [`Engine::split`].
 //!
 //! # Adapters
 //!
