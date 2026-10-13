@@ -303,7 +303,7 @@ pub(super) fn try_src(node: &Node, sr: u32, n: usize, path: u64) -> Option<Src> 
         Node::Dust { density, decay } => {
             let p = (density / srf).clamp(0.0, 1.0);
             let g = if *decay > 0.0 {
-                crate::dsp::exp(-1.0 / (decay * srf))
+                crate::dsp::one_pole(*decay, srf)
             } else {
                 0.0
             };

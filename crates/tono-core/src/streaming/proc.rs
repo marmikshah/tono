@@ -565,26 +565,32 @@ pub(super) fn try_proc(node: &Node, sr: u32, n: usize, path: u64) -> Option<Proc
             attack,
             release,
             makeup,
-        } => Proc::Compress {
-            env: 0.0,
-            at: dsp::exp(-1.0 / (attack.max(1e-4) * srf)),
-            rt: dsp::exp(-1.0 / (release.max(1e-4) * srf)),
-            threshold: *threshold,
-            ratio: ratio.max(1.0),
-            makeup: dsp::powf(10.0, makeup / 20.0),
-        },
+        } => {
+            let (at, rt) = dsp::follower_coeffs(*attack, *release, srf);
+            Proc::Compress {
+                env: 0.0,
+                at,
+                rt,
+                threshold: *threshold,
+                ratio: ratio.max(1.0),
+                makeup: dsp::powf(10.0, makeup / 20.0),
+            }
+        }
         Node::Duck {
             trigger,
             amount,
             attack,
             release,
-        } => Proc::Duck {
-            trigger: Box::new(try_src(trigger, sr, n, node_path(path, 0))?),
-            env: 0.0,
-            at: dsp::exp(-1.0 / (attack.max(1e-4) * srf)),
-            rt: dsp::exp(-1.0 / (release.max(1e-4) * srf)),
-            amount: *amount,
-        },
+        } => {
+            let (at, rt) = dsp::follower_coeffs(*attack, *release, srf);
+            Proc::Duck {
+                trigger: Box::new(try_src(trigger, sr, n, node_path(path, 0))?),
+                env: 0.0,
+                at,
+                rt,
+                amount: *amount,
+            }
+        }
         _ => return None,
     })
 }

@@ -1,7 +1,7 @@
 //! Vertical layers: intensity-driven stems, one-shot stingers, and the
 //! sidechain duck.
 
-use super::{AdaptiveMusic, DUCK_ATTACK_SECS, Layer, LoopBuffer, SoundDoc, Stinger, doc_at};
+use super::{AdaptiveMusic, DUCK_ATTACK_SECS, Layer, LoopBuffer, SoundDoc, Stinger};
 use crate::runtime::AudioSource;
 
 impl AdaptiveMusic {
@@ -65,7 +65,8 @@ impl AdaptiveMusic {
         // No tempo: the first stem's natural length is the grid — render it
         // once and reuse the buffers rather than rendering again for length.
         let (left, right) =
-            crate::render::render_product(&doc_at(first_doc, self.sample_rate)).into_stereo();
+            crate::render::render_product(&first_doc.at_sample_rate(self.sample_rate))
+                .into_stereo();
         let grid = left.len();
         self.add_layer(LoopBuffer::from_stereo(left, right), *first_fade);
         for (doc, fade_in_at) in rest {
@@ -92,7 +93,7 @@ impl AdaptiveMusic {
     /// Fire a one-shot stinger over the bed (rendered now, mixed until it ends).
     pub fn stinger(&mut self, doc: &SoundDoc) {
         let (left, right) =
-            crate::render::render_product(&doc_at(doc, self.sample_rate)).into_stereo();
+            crate::render::render_product(&doc.at_sample_rate(self.sample_rate)).into_stereo();
         self.stinger_stereo(left, right);
     }
 

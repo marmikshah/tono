@@ -410,8 +410,7 @@ pub(super) struct CompressSpec {
 /// Feed-forward compressor with a peak-detector envelope follower.
 pub(super) fn compress(input: &[f32], spec: CompressSpec, sr: u32) -> Signal {
     let srf = sr as f32;
-    let at = dsp::exp(-1.0 / (spec.attack.max(1e-4) * srf));
-    let rt = dsp::exp(-1.0 / (spec.release.max(1e-4) * srf));
+    let (at, rt) = dsp::follower_coeffs(spec.attack, spec.release, srf);
     let makeup = dsp::powf(10.0, spec.makeup / 20.0);
     let ratio = spec.ratio.max(1.0);
     let mut env = 0.0f32; // envelope in linear amplitude

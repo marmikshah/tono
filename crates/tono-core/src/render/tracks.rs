@@ -229,8 +229,7 @@ fn duck_envelope(
         }
     }
     let srf = sr as f32;
-    let at = crate::dsp::exp(-1.0 / (sc.attack.max(1e-4) * srf));
-    let rt = crate::dsp::exp(-1.0 / (sc.release.max(1e-4) * srf));
+    let (at, rt) = crate::dsp::follower_coeffs(sc.attack, sc.release, srf);
     let mut env = 0.0f32;
     sig.into_iter()
         .map(|t| {
@@ -294,17 +293,12 @@ fn render_tracks_impl(
         return None;
     };
     let sr = doc.sample_rate;
-    // validate() caps duration at 600 s; the clamp guards direct render calls
-    // on unvalidated docs from an unbounded allocation (1e12 s ⇒ OOM abort).
-    let n = ((doc.duration.clamp(0.0, 600.0) * sr as f32).ceil() as usize).max(1);
+    let n = doc.frame_count();
     let (mut left, mut right) = (vec![0.0f32; n], vec![0.0f32; n]);
     let mut layer_ids = Vec::with_capacity(tracks.len());
     let mut rendered = Vec::with_capacity(tracks.len());
     for (ti, t) in tracks.iter().enumerate() {
-        let layer_id = t.id.clone().unwrap_or_else(|| format!("layer_{ti}"));
-        // Streams are keyed by the stable layer id. The fallback hashes the
-        // exact id `ensure_track_ids` will backfill, so a document's noise is
-        // identical before and after the backfill pass.
+        let layer_id = t.layer_id(ti);
         let stream = layer_stream_key(&layer_id);
         layer_ids.push(layer_id);
         if t.mute {
