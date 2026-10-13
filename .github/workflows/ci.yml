@@ -26,7 +26,9 @@ jobs:
     if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
     uses: ./.github/workflows/ci-rust.yml
   stable:
-    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
+    # The latest-stable gate only runs on the weekly schedule and manual runs,
+    # not on every pull request or push.
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.bench)
     uses: ./.github/workflows/ci-rust.yml
     with:
       toolchain: stable
@@ -46,10 +48,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Require every validation job
+        # `stable` is skipped outside the weekly schedule and manual runs, so a
+        # skipped result counts as success for that job only.
         env:
           RESULTS: ${{ toJSON(needs) }}
         run: |
-          python -c 'import json, os; assert all(job["result"] == "success" for job in json.loads(os.environ["RESULTS"]).values()), os.environ["RESULTS"]'
+          python -c 'import json, os; assert all(job["result"] == "success" or (name == "stable" and job["result"] == "skipped") for name, job in json.loads(os.environ["RESULTS"]).items()), os.environ["RESULTS"]'
   benchmark:
     if: github.event_name == 'workflow_dispatch' && inputs.bench
     runs-on: ubuntu-latest

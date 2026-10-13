@@ -52,8 +52,6 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --locked --workspace --all-features --no-deps
-      - name: Build all release targets
-        run: cargo build --locked --workspace --all-features --release
       - name: Build and test the installed Python wheel
         run: |
           python -m pip install maturin

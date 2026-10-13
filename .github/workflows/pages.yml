@@ -3,6 +3,17 @@ name: Pages
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "docs/**"
+      - "package*.json"
+      - "crates/tono-cli/**"
+      - "crates/tono-core/**"
+      - "crates/tono-web/**"
+      - "scripts/*.mjs"
+      - "tsconfig.json"
+      - "Cargo.*"
+      - "rust-toolchain.toml"
+      - ".github/workflows/pages.yml"
   push:
     branches: [master]
     paths:
