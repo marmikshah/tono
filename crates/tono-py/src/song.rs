@@ -393,9 +393,12 @@ fn unknown_variant(family: &str, variant: &str, valid: &[&str]) -> PyErr {
 }
 
 /// One `tono.instruments` family function: variant slug → catalog constructor
-/// (the same slugs the `tono catalog` CLI lists).
+/// (the same slugs the `tono catalog` CLI lists). `$default` is a `tt` rather
+/// than a `literal` so PyO3 sees the bare string and renders it in the
+/// function's `__text_signature__` (a `literal` fragment arrives wrapped in an
+/// invisible group, which PyO3 prints as `...`).
 macro_rules! instrument_fn {
-    ($name:ident, $doc:literal, $family:literal, $default:literal, $($slug:literal => $ctor:path),+ $(,)?) => {
+    ($name:ident, $doc:literal, $family:literal, $default:tt, $($slug:literal => $ctor:path),+ $(,)?) => {
         #[doc = $doc]
         #[pyfunction]
         #[pyo3(signature = (variant = $default))]
