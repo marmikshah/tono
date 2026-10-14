@@ -1,5 +1,11 @@
 # tono
 
+[![CI](https://img.shields.io/github/actions/workflow/status/marmikshah/tono/ci.yml?branch=master&label=CI)](https://github.com/marmikshah/tono/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/tono-core.svg)](https://crates.io/crates/tono-core)
+[![docs.rs](https://img.shields.io/docsrs/tono-core)](https://docs.rs/tono-core)
+[![MSRV 1.88](https://img.shields.io/badge/MSRV-1.88-blue.svg)](#versioning-and-stability)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 tono is a deterministic audio engine written in Rust. It synthesizes sound
 effects, instruments, songs and adaptive game music from small JSON recipes
 (SoundDocs) and Rust or Python code. The same recipe renders byte-identical
@@ -62,6 +68,18 @@ from source (see below); they are not on PyPI yet.
   direction and has not had a full line-by-line human review. Review it before
   production use, and report problems through [SECURITY.md](SECURITY.md) or
   issues.
+
+## Versioning and stability
+
+- `tono-core` and `tono` follow [semver](https://semver.org/). Breaking API
+  changes only ship in a new major version.
+- The rendered output of any document pinned to an `engine` revision is part
+  of the API: it never changes within a major version. A different render for
+  the same document, seed and sample rate is a bug.
+- MSRV bumps happen in minor releases and are noted in the
+  [changelog](CHANGELOG.md).
+- 2.0 is in progress and will be breaking; see the
+  [roadmap](docs/project/roadmap.md).
 
 ```text
 crates/
