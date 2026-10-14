@@ -266,8 +266,7 @@ fn duck_with_streamable_trigger() {
 #[test]
 fn tremolo_streams_byte_identically() {
     // The tremolo gain is a closed form of the absolute sample index, so the
-    // stream matches the offline render at every block size — unlike a
-    // modulated `gain`, which is a StreamBlocker::ModulatedFilter.
+    // stream matches the offline render at every block size.
     let d = parse(
         r#"{ "name":"tr", "duration":0.08, "root": { "type":"chain", "stages": [
             { "type":"sine", "freq":220 },
@@ -275,6 +274,37 @@ fn tremolo_streams_byte_identically() {
     );
     assert!(StreamGraph::blockers(&d).is_empty());
     assert_byte_identical(&d);
+}
+
+#[test]
+fn modulated_filters_and_gain_stream_byte_identically() {
+    // A swept cutoff recomputes the biquad coefficients per sample in both
+    // paths; a modulated gain evaluates the same modulator — neither is a
+    // streaming blocker any more.
+    for json in [
+        r#"{ "name":"lp", "duration":0.1, "root": { "type":"chain", "stages": [
+            { "type":"sawtooth", "freq":110 },
+            { "type":"lowpass", "cutoff": { "lfo": { "rate":2, "depth":400, "center":800 } }, "q": 2.0 } ] } }"#,
+        r#"{ "name":"pk", "duration":0.1, "root": { "type":"chain", "stages": [
+            { "type":"noise" },
+            { "type":"peak", "cutoff": { "slide": { "from": 300, "to": 3000, "secs": 0.08, "curve": "exp" } }, "gain_db": 9 },
+            { "type":"highshelf", "cutoff": { "env": { "a": 0.01, "d": 0.05, "s": 0.2, "r": 0.02, "from": 2000, "to": 6000 } }, "gain_db": -6 } ] } }"#,
+        r#"{ "name":"g", "duration":0.1, "root": { "type":"chain", "stages": [
+            { "type":"sine", "freq":440 },
+            { "type":"gain", "amount": { "env": { "a": 0.005, "d": 0.03, "s": 0.4, "r": 0.02, "from": 0.0, "to": 0.9 } } } ] } }"#,
+    ] {
+        let d = parse(json);
+        assert!(StreamGraph::blockers(&d).is_empty(), "{json}");
+        assert_byte_identical(&d);
+    }
+    let tracks = parse(
+        r#"{ "name":"c", "duration":0.1, "version":2, "engine":5, "root": { "type":"tracks", "tracks": [
+            { "id":"lead", "node": { "type":"chain", "stages": [
+                { "type":"sawtooth", "freq":110 },
+                { "type":"lowpass", "cutoff": { "lfo": { "rate":2, "depth":400, "center":800 } } } ] } } ] } }"#,
+    );
+    assert!(StreamGraph::blockers(&tracks).is_empty());
+    assert_tracks_byte_identical(&tracks);
 }
 
 // ---- tracks root (mixer) ----
@@ -550,14 +580,6 @@ fn tracks_blockers_name_the_failing_part_with_context() {
                     "env": { "a":0.001, "s":1.0, "r":0.1 },
                     "notes": [ { "step":0, "len":4, "pitch":"C4" } ] } } ] } }"#,
             part("track 'keys'", StreamBlocker::Sampler),
-        ),
-        // A modulated filter on one track names the track.
-        (
-            r#"{ "name":"c", "duration":0.1, "version":2, "engine":5, "root": { "type":"tracks", "tracks": [
-                { "id":"lead", "node": { "type":"chain", "stages": [
-                    { "type":"sawtooth", "freq":110 },
-                    { "type":"lowpass", "cutoff": { "lfo": { "rate":2, "depth":400, "center":800 } } } ] } } ] } }"#,
-            part("track 'lead'", StreamBlocker::ModulatedFilter),
         ),
         // A master-chain blocker names the master chain.
         (
@@ -1025,12 +1047,6 @@ fn blockers_names_every_reason_with_a_fix() {
                 "env": { "a":0.001, "s":1.0, "r":0.1 },
                 "notes": [ { "step":0, "len":4, "pitch":"C4" } ] } }"#,
             StreamBlocker::Sampler,
-        ),
-        (
-            r#"{ "name":"m", "duration":0.1, "root": { "type":"chain", "stages": [
-                { "type":"sawtooth", "freq":110 },
-                { "type":"lowpass", "cutoff": { "lfo": { "rate":2, "depth":400, "center":800 } } } ] } }"#,
-            StreamBlocker::ModulatedFilter,
         ),
         (
             r#"{ "name":"cv", "duration":0.1, "root": { "type":"chain", "stages": [

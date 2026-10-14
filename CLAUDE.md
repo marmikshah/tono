@@ -11,10 +11,13 @@ follows from that promise.
    `crates/tono-core/tests/golden.rs` pins PCM hashes; if a hash changes,
    stop and explain why. Do not re-pin to make CI green. An intentional sound
    change needs a new engine revision and a changelog entry (ADR 0001).
-2. **Offline and streaming must agree.** `render` (bounce) and `streaming`
-   (realtime) produce identical bytes at every block size. Any DSP edit must
-   be made in both paths (or in the shared kernel) and is covered by
-   `crates/tono-core/src/streaming/tests.rs` and `tests/equivalence.rs`.
+2. **Offline and streaming must agree.** There is one evaluator
+   (`streaming/source.rs`, `proc.rs`, `tracks.rs`): the bounce runs it as one
+   block as long as the document, a stream runs it in chunks, and the bytes
+   must match at every block size. Keep every per-sample value a function of
+   the absolute sample index plus state that advances in order; never make a
+   node depend on the block boundary. `crates/tono-core/src/streaming/tests.rs`
+   and `tests/equivalence.rs` check it.
 3. **No allocation on the audio thread** after warm-up. `AudioSource::fill`
    implementations and anything reachable from them must not allocate, lock,
    or do I/O. `tests/rt_alloc.rs` proves this; keep it passing (ADR 0005).
@@ -100,7 +103,7 @@ in `docs/**/*.md` must run against the checkout.
 - Anything in `dsl/validate.rs`: validation is also mirrored in
   `vary::mutate_node` and `song/diagnostics.rs`; change all three.
 - Adding a `Node` variant touches `node.rs` (enum, `is_processor`, `children`,
-  `children_mut`), `validate.rs`, `render/`, `streaming/`, `vary.rs`,
+  `children_mut`), `validate.rs`, `streaming/source.rs` or `proc.rs`, `vary.rs`,
   `tests/fuzz_validation.rs`, `docs/reference/sounddoc.md`, and, for a
   processor, `Node::PROCESSOR_KINDS` next to `is_processor`.
 - Public API of `tono-core`: `bevy_tono` and the CLI depend on it. Removing or

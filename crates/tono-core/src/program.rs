@@ -310,7 +310,6 @@ pub(crate) fn blocker_warnings(doc: &SoundDoc) -> Vec<Diagnostic> {
             B::NestedMixer => "T1504",
 
             B::Sampler => "T1506",
-            B::ModulatedFilter => "T1507",
             B::OfflineEffect { .. } => "T1508",
             B::TracksPart { cause, .. } => code(cause),
         }

@@ -294,10 +294,11 @@
     </li>
     <li>
       <span class="rung-dot">5</span>
-      <div class="rung-title">Two evaluators, one answer — <span class="unit">render vs streaming</span></div>
-      <p>The same node tree has two evaluators. <code>render/</code> bounces whole buffers;
-      <code>streaming/</code> carries oscillator, filter, and mixer state between blocks.
-      Shared math keeps supported streams byte-identical to offline output. The tracks mixer
+      <div class="rung-title">One evaluator, two block sizes — <span class="unit">streaming/ and render/</span></div>
+      <p>The node tree has one evaluator, <code>streaming/</code>, which carries oscillator,
+      filter, and mixer state between blocks. <code>render/</code> is the bounce: it runs that
+      evaluator as one block as long as the document and adds the output stage, so a stream at
+      any block size is byte-identical to the offline output by construction. The tracks mixer
       handles lanes, duck envelopes, buses, and insert chains. Whole-buffer or unsupported
       combinations — including normalization, loop playback, wide stereo treatments,
       sampler, convolution, granular synthesis, and some modulated processors — use a

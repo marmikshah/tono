@@ -1,6 +1,7 @@
 use super::*;
 use crate::dsl::DriveShape;
 use crate::dsl::Modulator;
+use crate::dsl::Node;
 use crate::dsl::Stereo;
 use crate::dsp::{loudness_lufs_gated, true_peak_oversampled};
 
@@ -460,12 +461,12 @@ fn adaa_can_be_disabled_explicitly() {
     };
     let raw = render(&mk(false));
     let aa = render(&mk(true));
-    let sine = render_node(
+    let sine = crate::streaming::render_graph_offline(
         &Node::Sine {
             freq: Value::Const(3000.0),
         },
-        raw.len(),
         44_100,
+        raw.len(),
         0,
     );
     let mut reference: Vec<f32> = sine

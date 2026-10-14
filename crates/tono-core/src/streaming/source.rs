@@ -1,23 +1,29 @@
-//! Streaming sources: the stateful per-sample evaluators of every signal-
-//! producing node, and the graph walk that builds them.
+//! Sources: the stateful block evaluators of every signal-producing node and
+//! the combinators, plus the graph walk that builds them.
 
 use std::f32::consts::TAU;
 
+use super::Ctx;
 use super::proc::{Proc, try_proc};
 use super::value::Val;
 use crate::dsl::{Node, NoiseColor, SeqWave, Shape, SuperWave, Value};
 use crate::dsp::{Rng, adsr_env, node_path, node_seed};
 use crate::render::{osc, poly_blep, seq_to_signal, wavetable_frames, wavetable_lookup};
 
-/// Per-color filter state for a streaming noise node.
+/// Per-color filter state for a noise node.
 pub(super) enum NoiseKind {
     White,
     Pink { b: [f32; 7] },
     Brown { last: f32 },
 }
 
-/// A streamable source / combinator node, holding its per-sample state.
+/// A source or combinator node holding its state between blocks. `process`
+/// evaluates the samples `t0..t0 + out.len()` in order; the arithmetic per
+/// sample never depends on how the timeline was cut into blocks.
 pub(super) enum Src {
+    /// Exact zeros: a chain with no source stage, or a processor used where a
+    /// source belongs.
+    Silence,
     Sine {
         phase: f32,
         freq: Val,
@@ -76,25 +82,32 @@ pub(super) enum Src {
         srf: f32,
         rel_start: f32,
     },
-    /// a structurally-seeded noise leaf (own RNG).
+    /// A structurally-seeded noise leaf (own RNG).
     Noise {
         rng: Rng,
         kind: NoiseKind,
     },
-    /// a structurally-seeded dust leaf.
+    /// A structurally-seeded dust leaf.
     Dust {
         rng: Rng,
         p: f32,
         g: f32,
         y: f32,
     },
-    /// a seq pre-rendered (via the exact offline
-    /// synthesis, structurally seeded) and read back block-by-block.
+    /// A seq pre-rendered at build (the exact seq synthesis, structurally
+    /// seeded) and read back block by block.
     Seq {
         buf: Vec<f32>,
     },
-    Mix(Vec<Src>),
-    Mul(Vec<Src>),
+    Mix {
+        inputs: Vec<Src>,
+        /// One child's block, reused across the children.
+        scratch: Vec<f32>,
+    },
+    Mul {
+        inputs: Vec<Src>,
+        scratch: Vec<f32>,
+    },
     Chain {
         src: Box<Src>,
         procs: Vec<Proc>,
@@ -102,17 +115,20 @@ pub(super) enum Src {
 }
 
 impl Src {
-    /// The next sample at absolute index `t`. Mirrors the offline per-sample math.
-    /// `pitch` is a live multiplier applied to every oscillator frequency (1.0 =
-    /// as authored) — it drives pitch bend and glide without rebuilding the graph.
-    /// At `pitch == 1.0` the arithmetic is bit-identical to the offline render.
-    pub(super) fn step(&mut self, t: usize, pitch: f32) -> f32 {
+    /// Write the samples at absolute indices `t0..t0 + out.len()`. `pitch` is
+    /// the per-sample live multiplier on every oscillator frequency (1.0 = as
+    /// authored), driving bend and glide without a rebuild; at 1.0 the
+    /// arithmetic is the authored graph's.
+    pub(super) fn process(&mut self, out: &mut [f32], t0: usize, pitch: &[f32]) {
+        debug_assert_eq!(out.len(), pitch.len());
         match self {
+            Src::Silence => out.fill(0.0),
             Src::Sine { phase, freq, srf } => {
-                let v = osc(Shape::Sine, *phase);
-                *phase += freq.eval(t).max(0.0) * pitch / *srf;
-                *phase -= phase.floor();
-                v
+                for (i, o) in out.iter_mut().enumerate() {
+                    *o = osc(Shape::Sine, *phase);
+                    *phase += freq.eval(t0 + i).max(0.0) * pitch[i] / *srf;
+                    *phase -= phase.floor();
+                }
             }
             Src::Square {
                 phase,
@@ -120,21 +136,25 @@ impl Src {
                 duty,
                 srf,
             } => {
-                let dt = freq.eval(t).max(0.0) * pitch / *srf;
-                let du = duty.eval(t).clamp(0.01, 0.99);
-                let mut v = if *phase < du { 1.0 } else { -1.0 };
-                v += poly_blep(*phase, dt);
-                v -= poly_blep((*phase - du + 1.0).fract(), dt);
-                *phase += dt;
-                *phase -= phase.floor();
-                v
+                for (i, o) in out.iter_mut().enumerate() {
+                    let t = t0 + i;
+                    let dt = freq.eval(t).max(0.0) * pitch[i] / *srf;
+                    let du = duty.eval(t).clamp(0.01, 0.99);
+                    let mut v = if *phase < du { 1.0 } else { -1.0 };
+                    v += poly_blep(*phase, dt);
+                    v -= poly_blep((*phase - du + 1.0).fract(), dt);
+                    *o = v;
+                    *phase += dt;
+                    *phase -= phase.floor();
+                }
             }
             Src::Saw { phase, freq, srf } => {
-                let dt = freq.eval(t).max(0.0) * pitch / *srf;
-                let v = (2.0 * *phase - 1.0) - poly_blep(*phase, dt);
-                *phase += dt;
-                *phase -= phase.floor();
-                v
+                for (i, o) in out.iter_mut().enumerate() {
+                    let dt = freq.eval(t0 + i).max(0.0) * pitch[i] / *srf;
+                    *o = (2.0 * *phase - 1.0) - poly_blep(*phase, dt);
+                    *phase += dt;
+                    *phase -= phase.floor();
+                }
             }
             Src::Tri {
                 phase,
@@ -142,15 +162,17 @@ impl Src {
                 freq,
                 srf,
             } => {
-                let dt = freq.eval(t).max(0.0) * pitch / *srf;
-                let mut sq = if *phase < 0.5 { 1.0 } else { -1.0 };
-                sq += poly_blep(*phase, dt);
-                sq -= poly_blep((*phase + 0.5).fract(), dt);
-                *tri = *tri * 0.9995 + 4.0 * dt * sq;
-                let v = *tri;
-                *phase += dt;
-                *phase -= phase.floor();
-                v
+                for (i, o) in out.iter_mut().enumerate() {
+                    let dt = freq.eval(t0 + i).max(0.0) * pitch[i] / *srf;
+                    // Band-limited square (duty 0.5), integrated with a leak.
+                    let mut sq = if *phase < 0.5 { 1.0 } else { -1.0 };
+                    sq += poly_blep(*phase, dt);
+                    sq -= poly_blep((*phase + 0.5).fract(), dt);
+                    *tri = *tri * 0.9995 + 4.0 * dt * sq;
+                    *o = *tri;
+                    *phase += dt;
+                    *phase -= phase.floor();
+                }
             }
             Src::Fm {
                 cph,
@@ -160,14 +182,16 @@ impl Src {
                 ratio,
                 srf,
             } => {
-                let m = index.eval(t) * crate::dsp::sin(TAU * *mph);
-                let y = crate::dsp::sin(TAU * *cph + m);
-                let fi = freq.eval(t).max(0.0) * pitch;
-                *cph += fi / *srf;
-                *cph -= cph.floor();
-                *mph += (fi * *ratio) / *srf;
-                *mph -= mph.floor();
-                y
+                for (i, o) in out.iter_mut().enumerate() {
+                    let t = t0 + i;
+                    let m = index.eval(t) * crate::dsp::sin(TAU * *mph);
+                    *o = crate::dsp::sin(TAU * *cph + m);
+                    let fi = freq.eval(t).max(0.0) * pitch[i];
+                    *cph += fi / *srf;
+                    *cph -= cph.floor();
+                    *mph += (fi * *ratio) / *srf;
+                    *mph -= mph.floor();
+                }
             }
             Src::Super {
                 wave,
@@ -177,24 +201,28 @@ impl Src {
                 scale,
                 srf,
             } => {
-                let f = freq.eval(t).max(0.0) * pitch;
-                let mut acc = 0.0f32;
-                for k in 0..phases.len() {
-                    let dt = f * ratios[k] / *srf;
-                    let s = match wave {
-                        SuperWave::Sawtooth => (2.0 * phases[k] - 1.0) - poly_blep(phases[k], dt),
-                        SuperWave::Square => {
-                            let mut sq = if phases[k] < 0.5 { 1.0 } else { -1.0 };
-                            sq += poly_blep(phases[k], dt);
-                            sq -= poly_blep((phases[k] + 0.5).fract(), dt);
-                            sq
-                        }
-                    };
-                    acc += s;
-                    phases[k] += dt;
-                    phases[k] -= phases[k].floor();
+                for (i, o) in out.iter_mut().enumerate() {
+                    let f = freq.eval(t0 + i).max(0.0) * pitch[i];
+                    let mut acc = 0.0f32;
+                    for k in 0..phases.len() {
+                        let dt = f * ratios[k] / *srf;
+                        let s = match wave {
+                            SuperWave::Sawtooth => {
+                                (2.0 * phases[k] - 1.0) - poly_blep(phases[k], dt)
+                            }
+                            SuperWave::Square => {
+                                let mut sq = if phases[k] < 0.5 { 1.0 } else { -1.0 };
+                                sq += poly_blep(phases[k], dt);
+                                sq -= poly_blep((phases[k] + 0.5).fract(), dt);
+                                sq
+                            }
+                        };
+                        acc += s;
+                        phases[k] += dt;
+                        phases[k] -= phases[k].floor();
+                    }
+                    *o = acc * *scale;
                 }
-                acc * *scale
             }
             Src::Wavetable {
                 frames,
@@ -203,17 +231,22 @@ impl Src {
                 position,
                 srf,
             } => {
-                let v = wavetable_lookup(frames, position.eval(t), *phase);
-                *phase += freq.eval(t).max(0.0) * pitch / *srf;
-                *phase -= phase.floor();
-                v
+                for (i, o) in out.iter_mut().enumerate() {
+                    let t = t0 + i;
+                    *o = wavetable_lookup(frames, position.eval(t), *phase);
+                    *phase += freq.eval(t).max(0.0) * pitch[i] / *srf;
+                    *phase -= phase.floor();
+                }
             }
             Src::Impact { w, norm } => {
-                if t < *w {
-                    let phase = (t as f32 + 0.5) / *w as f32;
-                    *norm * 0.5 * (1.0 - crate::dsp::cos(TAU * phase))
-                } else {
-                    0.0
+                for (i, o) in out.iter_mut().enumerate() {
+                    let t = t0 + i;
+                    *o = if t < *w {
+                        let phase = (t as f32 + 0.5) / *w as f32;
+                        *norm * 0.5 * (1.0 - crate::dsp::cos(TAU * phase))
+                    } else {
+                        0.0
+                    };
                 }
             }
             Src::Env {
@@ -224,52 +257,79 @@ impl Src {
                 punch,
                 srf,
                 rel_start,
-            } => adsr_env(t as f32 / *srf, *a, *d, *s, *r, *punch, *rel_start),
+            } => {
+                for (i, o) in out.iter_mut().enumerate() {
+                    *o = adsr_env((t0 + i) as f32 / *srf, *a, *d, *s, *r, *punch, *rel_start);
+                }
+            }
             Src::Noise { rng, kind } => match kind {
-                NoiseKind::White => rng.bi(),
+                NoiseKind::White => {
+                    for o in out.iter_mut() {
+                        *o = rng.bi();
+                    }
+                }
                 NoiseKind::Pink { b } => {
-                    let w = rng.bi();
-                    b[0] = 0.99886 * b[0] + w * 0.0555179;
-                    b[1] = 0.99332 * b[1] + w * 0.0750759;
-                    b[2] = 0.96900 * b[2] + w * 0.153_852;
-                    b[3] = 0.86650 * b[3] + w * 0.3104856;
-                    b[4] = 0.55000 * b[4] + w * 0.5329522;
-                    b[5] = -0.7616 * b[5] - w * 0.0168980;
-                    let out = b[0] + b[1] + b[2] + b[3] + b[4] + b[5] + b[6] + w * 0.5362;
-                    b[6] = w * 0.115926;
-                    out * 0.11
+                    // Paul Kellet's economical pink-noise filter.
+                    for o in out.iter_mut() {
+                        let w = rng.bi();
+                        b[0] = 0.99886 * b[0] + w * 0.0555179;
+                        b[1] = 0.99332 * b[1] + w * 0.0750759;
+                        b[2] = 0.96900 * b[2] + w * 0.153_852;
+                        b[3] = 0.86650 * b[3] + w * 0.3104856;
+                        b[4] = 0.55000 * b[4] + w * 0.5329522;
+                        b[5] = -0.7616 * b[5] - w * 0.0168980;
+                        let v = b[0] + b[1] + b[2] + b[3] + b[4] + b[5] + b[6] + w * 0.5362;
+                        b[6] = w * 0.115926;
+                        *o = v * 0.11;
+                    }
                 }
                 NoiseKind::Brown { last } => {
-                    *last = (*last + 0.02 * rng.bi()) * 0.998;
-                    (*last * 8.0).clamp(-1.0, 1.0)
+                    // Leaky integration of white noise.
+                    for o in out.iter_mut() {
+                        *last = (*last + 0.02 * rng.bi()) * 0.998;
+                        *o = (*last * 8.0).clamp(-1.0, 1.0);
+                    }
                 }
             },
             Src::Dust { rng, p, g, y } => {
-                let imp = if rng.unit() < *p { rng.bi() } else { 0.0 };
-                *y = imp + *g * *y;
-                *y
-            }
-            Src::Seq { buf } => buf.get(t).copied().unwrap_or(0.0),
-            Src::Mix(cs) => {
-                let mut acc = 0.0f32;
-                for c in cs.iter_mut() {
-                    acc += c.step(t, pitch);
+                for o in out.iter_mut() {
+                    let imp = if rng.unit() < *p { rng.bi() } else { 0.0 };
+                    *y = imp + *g * *y;
+                    *o = *y;
                 }
-                acc
             }
-            Src::Mul(cs) => {
-                let mut acc = 1.0f32;
-                for c in cs.iter_mut() {
-                    acc *= c.step(t, pitch);
+            Src::Seq { buf } => {
+                for (i, o) in out.iter_mut().enumerate() {
+                    *o = buf.get(t0 + i).copied().unwrap_or(0.0);
                 }
-                acc
+            }
+            Src::Mix { inputs, scratch } => {
+                out.fill(0.0);
+                let len = out.len();
+                for c in inputs.iter_mut() {
+                    let s = &mut scratch[..len];
+                    c.process(s, t0, pitch);
+                    for (o, v) in out.iter_mut().zip(s.iter()) {
+                        *o += *v;
+                    }
+                }
+            }
+            Src::Mul { inputs, scratch } => {
+                out.fill(1.0);
+                let len = out.len();
+                for c in inputs.iter_mut() {
+                    let s = &mut scratch[..len];
+                    c.process(s, t0, pitch);
+                    for (o, v) in out.iter_mut().zip(s.iter()) {
+                        *o *= *v;
+                    }
+                }
             }
             Src::Chain { src, procs } => {
-                let mut x = src.step(t, pitch);
+                src.process(out, t0, pitch);
                 for p in procs.iter_mut() {
-                    x = p.step(x, t, pitch);
+                    p.process(out, t0, pitch);
                 }
-                x
             }
         }
     }
@@ -278,7 +338,9 @@ impl Src {
     /// the instrument brightness control. Recurses through mix/mul/chain.
     pub(super) fn set_cutoff(&mut self, scale: f32) {
         match self {
-            Src::Mix(cs) | Src::Mul(cs) => cs.iter_mut().for_each(|c| c.set_cutoff(scale)),
+            Src::Mix { inputs, .. } | Src::Mul { inputs, .. } => {
+                inputs.iter_mut().for_each(|c| c.set_cutoff(scale));
+            }
             Src::Chain { src, procs } => {
                 src.set_cutoff(scale);
                 procs.iter_mut().for_each(|p| p.set_cutoff(scale));
@@ -288,9 +350,14 @@ impl Src {
     }
 }
 
-pub(super) fn try_src(node: &Node, sr: u32, n: usize, path: u64) -> Option<Src> {
-    let srf = sr as f32;
-    let v = |val: &Value| Val::build(val, sr, n);
+/// Build the evaluator of `node` for `ctx`, seeded by its structural `path`.
+/// `None` only for a node the context refuses (a SoundFont seq while
+/// streaming — [`super::StreamGraph::blockers`] names it); the bounce
+/// context builds every node.
+pub(super) fn try_src(node: &Node, ctx: &Ctx, path: u64) -> Option<Src> {
+    let srf = ctx.srf();
+    let n = ctx.n;
+    let v = |val: &Value| Val::build(val, ctx.sr, n);
     Some(match node {
         Node::Noise { color } => Src::Noise {
             rng: Rng::new(node_seed(path)),
@@ -314,8 +381,9 @@ pub(super) fn try_src(node: &Node, sr: u32, n: usize, path: u64) -> Option<Src> 
                 y: 0.0,
             }
         }
-        Node::Seq { wave, .. } if *wave != SeqWave::Sampler => Src::Seq {
-            buf: seq_to_signal(node, n, sr, &mut Rng::new(node_seed(path))),
+        // The SoundFont sampler is an external stateful voice: bounce-only.
+        Node::Seq { wave, .. } if *wave != SeqWave::Sampler || ctx.offline => Src::Seq {
+            buf: seq_to_signal(node, n, ctx.sr, &mut Rng::new(node_seed(path))),
         },
         Node::Sine { freq } => Src::Sine {
             phase: 0.0,
@@ -357,6 +425,8 @@ pub(super) fn try_src(node: &Node, sr: u32, n: usize, path: u64) -> Option<Src> 
             let mut phases = Vec::with_capacity(count);
             let mut ratios = Vec::with_capacity(count);
             for k in 0..count {
+                // Decorrelated voice phases; symmetric detune across
+                // [-detune, +detune] cents.
                 phases.push(k as f32 / count as f32);
                 let cents = if count == 1 {
                     0.0
@@ -388,6 +458,8 @@ pub(super) fn try_src(node: &Node, sr: u32, n: usize, path: u64) -> Option<Src> 
         Node::Impact { hardness, velocity } => {
             let h = hardness.clamp(0.0, 1.0);
             let vel = velocity.clamp(0.0, 1.0);
+            // Contact time: soft ≈ 8 ms, hard ≈ 0.3 ms. The Hann lobe sums to
+            // ≈ w/2, so `norm` gives the whole pulse unit area × velocity.
             let width_s = 0.008 * (1.0 - h) + 0.0003 * h;
             let w = ((width_s * srf).round() as usize).max(1);
             Src::Impact {
@@ -404,30 +476,59 @@ pub(super) fn try_src(node: &Node, sr: u32, n: usize, path: u64) -> Option<Src> 
             srf,
             rel_start: (n as f32 / srf - adsr.r).max(0.0),
         },
-        Node::Mix { inputs } => Src::Mix(
-            inputs
+        Node::Mix { inputs } => Src::Mix {
+            inputs: inputs
                 .iter()
                 .enumerate()
-                .map(|(i, c)| try_src(c, sr, n, node_path(path, i)))
+                .map(|(i, c)| try_src(c, ctx, node_path(path, i)))
                 .collect::<Option<_>>()?,
-        ),
-        Node::Mul { inputs } => Src::Mul(
-            inputs
+            scratch: vec![0.0; ctx.cap],
+        },
+        Node::Mul { inputs } => Src::Mul {
+            inputs: inputs
                 .iter()
                 .enumerate()
-                .map(|(i, c)| try_src(c, sr, n, node_path(path, i)))
+                .map(|(i, c)| try_src(c, ctx, node_path(path, i)))
                 .collect::<Option<_>>()?,
-        ),
+            scratch: vec![0.0; ctx.cap],
+        },
         Node::Chain { stages } => {
-            let (first, rest) = stages.split_first()?;
-            let src = Box::new(try_src(first, sr, n, node_path(path, 0))?);
-            let procs = rest
+            // The last source or combinator stage is the signal and the
+            // processors after it transform it; anything before it is
+            // discarded (seeds are structural, so nothing leaks). A chain
+            // without a source runs its processors on silence.
+            let k = stages.iter().rposition(|s| !s.is_processor());
+            let (src, first_proc) = match k {
+                Some(k) => (try_src(&stages[k], ctx, node_path(path, k))?, k + 1),
+                None => (Src::Silence, 0),
+            };
+            let procs = stages[first_proc..]
                 .iter()
                 .enumerate()
-                .map(|(i, p)| try_proc(p, sr, n, node_path(path, i + 1)))
+                .map(|(i, p)| try_proc(p, ctx, node_path(path, first_proc + i)))
                 .collect::<Option<_>>()?;
-            Src::Chain { src, procs }
+            Src::Chain {
+                src: Box::new(src),
+                procs,
+            }
         }
+        // Validation rejects a nested mixer; evaluate one defensively as the
+        // plain gain-weighted sum of its tracks.
+        Node::Tracks { tracks, .. } => Src::Mix {
+            inputs: tracks
+                .iter()
+                .enumerate()
+                .map(|(i, t)| {
+                    Some(Src::Chain {
+                        src: Box::new(try_src(&t.node, ctx, node_path(path, i))?),
+                        procs: vec![Proc::Gain(Val::Const(t.gain))],
+                    })
+                })
+                .collect::<Option<_>>()?,
+            scratch: vec![0.0; ctx.cap],
+        },
+        // A processor standing where a source belongs has no input: silence.
+        _ if node.is_processor() => Src::Silence,
         _ => return None,
     })
 }

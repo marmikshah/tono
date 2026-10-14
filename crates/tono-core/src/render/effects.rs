@@ -1,9 +1,10 @@
-//! Filters and effect processors: the biquad family, reverb, convolution, the
-//! granular texture, the waveshaper (with ADAA), the modal resonator bank,
-//! modulation effects, and dynamics.
+//! Effect kernels shared with the evaluator: the biquad coefficient table,
+//! the waveshaper curves and their antiderivatives (ADAA), and the two
+//! whole-buffer effects — synthesized-IR convolution and the granular
+//! texture — that only the bounce can run.
 
-use super::{Signal, eval_value};
-use crate::dsl::{DriveShape, Mode, Value};
+use super::Signal;
+use crate::dsl::DriveShape;
 use crate::dsp::{self, Rng};
 use std::f32::consts::{LN_2, PI, TAU};
 
@@ -99,75 +100,6 @@ pub(crate) fn biquad_coeffs(
     (b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0)
 }
 
-/// Apply a filter or EQ with a constant or modulated cutoff.
-pub(super) fn biquad(input: &[f32], cutoff: &Value, q: f32, sr: u32, kind: FilterKind) -> Signal {
-    let fc = eval_value(cutoff, input.len(), sr);
-    let (mut x1, mut x2, mut y1, mut y2) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
-    let mut out = Vec::with_capacity(input.len());
-    // Coefficients are a pure function of the cutoff (kind/q/sr fixed), so
-    // recompute only when it moves — for the common constant/piecewise-constant
-    // cutoff this hoists the transcendental work out of the loop entirely,
-    // with bit-identical coefficients (and output) either way.
-    let mut prev_f = f32::NAN;
-    let (mut b0, mut b1, mut b2, mut a1, mut a2) = (0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32);
-    for (i, &x0) in input.iter().enumerate() {
-        if fc[i] != prev_f {
-            (b0, b1, b2, a1, a2) = biquad_coeffs(kind, fc[i], q, sr);
-            prev_f = fc[i];
-        }
-        let y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
-        x2 = x1;
-        x1 = x0;
-        y2 = y1;
-        y1 = y0;
-        out.push(y0);
-    }
-    out
-}
-
-/// Schroeder reverb: parallel feedback combs into series allpasses. Tunings are
-/// the classic Freeverb values, scaled to the sample rate.
-pub(super) fn reverb(input: &[f32], room: f32, mix: f32, sr: u32, spread: usize) -> Signal {
-    let (comb_lens, allpass_lens) = crate::dsp::freeverb_lengths(sr, spread);
-    let feedback = crate::dsp::freeverb_feedback(room);
-    let damp = crate::dsp::FREEVERB_DAMP;
-
-    let mut wet = vec![0.0f32; input.len()];
-    // Parallel combs (summed).
-    for &len in &comb_lens {
-        let mut buf = vec![0.0f32; len];
-        let mut idx = 0usize;
-        let mut filter_store = 0.0f32;
-        for (i, &x) in input.iter().enumerate() {
-            let y = buf[idx];
-            filter_store = y * (1.0 - damp) + filter_store * damp;
-            buf[idx] = x + filter_store * feedback;
-            idx = (idx + 1) % len;
-            wet[i] += y;
-        }
-    }
-    // Series allpasses.
-    for &len in &allpass_lens {
-        let mut buf = vec![0.0f32; len];
-        let mut idx = 0usize;
-        let g = 0.5;
-        for w in wet.iter_mut() {
-            let buffered = buf[idx];
-            let y = -*w + buffered;
-            buf[idx] = *w + buffered * g;
-            idx = (idx + 1) % len;
-            *w = y;
-        }
-    }
-    let mix = mix.clamp(0.0, 1.0);
-    let comb_norm = 1.0 / comb_lens.len() as f32;
-    input
-        .iter()
-        .zip(wet)
-        .map(|(dry, w)| dry * (1.0 - mix) + (w * comb_norm) * mix)
-        .collect()
-}
-
 /// Apply a waveshaper curve to one sample.
 pub(crate) fn drive_curve(x: f32, shape: DriveShape) -> f32 {
     match shape {
@@ -230,212 +162,9 @@ pub(crate) fn drive_antideriv(x: f32, shape: DriveShape) -> f32 {
     }
 }
 
-/// First-order antiderivative anti-aliasing for the memoryless waveshaper.
-///
-/// A pointwise nonlinearity sprays harmonics past Nyquist that fold back as
-/// inharmonic "digital" grit. ADAA replaces `f(x)` with the average of `f`
-/// over `[x[n-1], x[n]]` — `(F(x[n]) − F(x[n-1])) / (x[n] − x[n-1])` — which
-/// band-limits the result, suppressing the foldback. The `f(midpoint)`
-/// fallback avoids the 0/0 (and its catastrophic cancellation) when
-/// consecutive inputs are nearly equal. One sample of state is carried across
-/// the block. A one-pole DC blocker follows: the difference-quotient leaves a
-/// small DC term on asymmetric input.
-pub(super) fn drive_adaa(input: &[f32], amount: &[f32], shape: DriveShape) -> Signal {
-    const EPS: f32 = 1e-5;
-    // ~5 Hz one-pole DC blocker (y[n] = x[n] − x[n−1] + R·y[n−1]).
-    const R: f32 = 0.9995;
-    let mut x_prev = 0.0f32;
-    let mut f_prev = drive_antideriv(0.0, shape);
-    let (mut dc_x, mut dc_y) = (0.0f32, 0.0f32);
-    let mut out = Vec::with_capacity(input.len());
-    for (&x, &amt) in input.iter().zip(amount) {
-        let xn = amt.max(0.0) * x;
-        let f = drive_antideriv(xn, shape);
-        let d = xn - x_prev;
-        let y = if d.abs() > EPS {
-            (f - f_prev) / d
-        } else {
-            drive_curve(0.5 * (xn + x_prev), shape)
-        };
-        x_prev = xn;
-        f_prev = f;
-        let yb = y - dc_x + R * dc_y;
-        dc_x = y;
-        dc_y = yb;
-        out.push(yb);
-    }
-    out
-}
-
-/// Modal resonator bank: sum of N parallel two-pole resonators driven by the
-/// incoming signal. Each mode is a complex-conjugate pole pair at radius `r`
-/// and angle `ω`: `y[n] = b0·x[n] + 2r·cos(ω)·y[n-1] − r²·y[n-2]`. The pole
-/// radius sets the decay exactly — `r^(decay·sr) = 0.001`, i.e. −60 dB at the
-/// mode's ring time — and `b0 = gain·sin(ω)` normalises the impulse-response
-/// peak to `gain`, so a mode's loudness is its `gain` regardless of how long
-/// it rings. Coefficients are constant per mode (LTI), so no per-sample
-/// recompute and no zipper. Deterministic: pure f32 arithmetic, fixed
-/// coefficients.
-pub(super) fn modal_bank(input: &[f32], modes: &[Mode], mix: f32, sr: u32) -> Signal {
-    let mix = mix.clamp(0.0, 1.0);
-    let mut wet = vec![0.0f32; input.len()];
-    for m in modes {
-        let (a1, a2, b0) = crate::dsp::modal_coeffs(m.freq, m.decay, m.gain, sr);
-        let (mut y1, mut y2) = (0.0f32, 0.0f32);
-        for (o, &x) in wet.iter_mut().zip(input) {
-            let y = b0 * x + a1 * y1 + a2 * y2;
-            y2 = y1;
-            y1 = y;
-            *o += y;
-        }
-    }
-    input
-        .iter()
-        .zip(wet)
-        .map(|(d, w)| d * (1.0 - mix) + w * mix)
-        .collect()
-}
-
-/// Chorus: a single voice of modulated delay mixed with the dry signal.
-pub(super) fn chorus(input: &[f32], rate: f32, depth: f32, mix: f32, sr: u32) -> Signal {
-    let srf = sr as f32;
-    let base = crate::dsp::CHORUS_BASE_SECS * srf;
-    let swing = depth.clamp(0.0, 1.0) * crate::dsp::CHORUS_SWING_SECS * srf;
-    let max_delay = (base + swing) as usize + 2;
-    let mut buf = vec![0.0f32; max_delay];
-    let mut w = 0usize;
-    let mix = mix.clamp(0.0, 1.0);
-    let mut out = Vec::with_capacity(input.len());
-    for (i, &x) in input.iter().enumerate() {
-        buf[w] = x;
-        let lfo = dsp::sin(TAU * rate * i as f32 / srf);
-        let delay = base + swing * lfo;
-        // Fractional read via linear interpolation.
-        let read = w as f32 - delay;
-        let read = read.rem_euclid(max_delay as f32);
-        let i0 = read.floor() as usize % max_delay;
-        let i1 = (i0 + 1) % max_delay;
-        let frac = read - read.floor();
-        let wet = buf[i0] * (1.0 - frac) + buf[i1] * frac;
-        out.push(x * (1.0 - mix) + wet * mix);
-        w = (w + 1) % max_delay;
-    }
-    out
-}
-
-/// Flanger: a 0.5–6 ms swept delay with feedback, mixed against the dry path.
-pub(super) fn flanger(
-    input: &[f32],
-    rate: f32,
-    depth: f32,
-    feedback: f32,
-    mix: f32,
-    sr: u32,
-) -> Signal {
-    let srf = sr as f32;
-    let base = crate::dsp::FLANGER_BASE_SECS * srf; // 2.5 ms centre
-    let swing = depth.clamp(0.0, 1.0) * crate::dsp::FLANGER_SWING_SECS * srf; // up to ±2 ms
-    let max_delay = (base + swing) as usize + 2;
-    let mut buf = vec![0.0f32; max_delay];
-    let mut w = 0usize;
-    let fb = feedback.clamp(0.0, 0.95);
-    let mix = mix.clamp(0.0, 1.0);
-    let mut out = Vec::with_capacity(input.len());
-    for (i, &x) in input.iter().enumerate() {
-        let lfo = dsp::sin(TAU * rate * i as f32 / srf);
-        let delay = base + swing * lfo;
-        let read = (w as f32 - delay).rem_euclid(max_delay as f32);
-        let i0 = read.floor() as usize % max_delay;
-        let i1 = (i0 + 1) % max_delay;
-        let frac = read - read.floor();
-        let wet = buf[i0] * (1.0 - frac) + buf[i1] * frac;
-        buf[w] = x + wet * fb;
-        w = (w + 1) % max_delay;
-        out.push(x * (1.0 - mix) + wet * mix);
-    }
-    out
-}
-
-/// Phaser: four first-order all-pass stages with an LFO-swept coefficient and
-/// feedback — swept spectral notches.
-pub(super) fn phaser(
-    input: &[f32],
-    rate: f32,
-    depth: f32,
-    feedback: f32,
-    mix: f32,
-    sr: u32,
-) -> Signal {
-    let srf = sr as f32;
-    let fb = feedback.clamp(0.0, 0.95);
-    let mix = mix.clamp(0.0, 1.0);
-    let depth = depth.clamp(0.0, 1.0);
-    let mut x1 = [0.0f32; 4];
-    let mut y1 = [0.0f32; 4];
-    let mut last_wet = 0.0f32;
-    let mut out = Vec::with_capacity(input.len());
-    for (i, &x) in input.iter().enumerate() {
-        // Sweep the all-pass coefficient between ~0.15 and ~0.85.
-        let lfo = 0.5 + 0.5 * dsp::sin(TAU * rate * i as f32 / srf);
-        let g = 0.15 + 0.7 * depth * lfo;
-        let mut s = x + last_wet * fb;
-        for k in 0..4 {
-            let y = -g * s + x1[k] + g * y1[k];
-            x1[k] = s;
-            y1[k] = y;
-            s = y;
-        }
-        last_wet = s;
-        out.push(x * (1.0 - mix) + s * mix);
-    }
-    out
-}
-
-/// The `compress` node's parameters, bundled so the processor function stays
-/// under the arity cap (see [`ConvolveSpec`]).
+/// The `convolve` node's parameters.
 #[derive(Clone, Copy)]
-pub(super) struct CompressSpec {
-    /// Threshold in dBFS.
-    pub threshold: f32,
-    /// Compression ratio (≥ 1).
-    pub ratio: f32,
-    /// Attack time in seconds.
-    pub attack: f32,
-    /// Release time in seconds.
-    pub release: f32,
-    /// Makeup gain in dB.
-    pub makeup: f32,
-}
-
-/// Feed-forward compressor with a peak-detector envelope follower.
-pub(super) fn compress(input: &[f32], spec: CompressSpec, sr: u32) -> Signal {
-    let srf = sr as f32;
-    let (at, rt) = dsp::follower_coeffs(spec.attack, spec.release, srf);
-    let makeup = dsp::powf(10.0, spec.makeup / 20.0);
-    let ratio = spec.ratio.max(1.0);
-    let mut env = 0.0f32; // envelope in linear amplitude
-    let mut out = Vec::with_capacity(input.len());
-    for &x in input {
-        let rect = x.abs();
-        // Attack when rising, release when falling.
-        let coeff = if rect > env { at } else { rt };
-        env = rect + coeff * (env - rect);
-        let env_db = 20.0 * dsp::log10(env.max(1e-9));
-        let gain_db = if env_db > spec.threshold {
-            -(env_db - spec.threshold) * (1.0 - 1.0 / ratio)
-        } else {
-            0.0
-        };
-        let g = dsp::powf(10.0, gain_db / 20.0);
-        out.push(x * g * makeup);
-    }
-    out
-}
-
-/// The `convolve` node's parameters, bundled so the processor function stays
-/// under the arity cap.
-#[derive(Clone, Copy)]
-pub(super) struct ConvolveSpec {
+pub(crate) struct ConvolveSpec {
     /// RT60-ish decay time in seconds.
     pub decay: f32,
     /// IR length cap in seconds (0 = `decay`).
@@ -493,7 +222,7 @@ fn synth_ir(decay: f32, size: f32, predelay: f32, damp: f32, sr: u32, seed: u64)
 /// Offline convolution with the synthesized impulse response.
 /// Uses the fixed radix-2 FFT in `det`, zero-padded to the next power of two
 /// covering input + impulse − 1. Crossfades dry/wet and truncates to input length.
-pub(super) fn convolve(input: &[f32], spec: ConvolveSpec, sr: u32, seed: u64) -> Signal {
+pub(crate) fn convolve(input: &[f32], spec: ConvolveSpec, sr: u32, seed: u64) -> Signal {
     let mix = spec.mix.clamp(0.0, 1.0);
     if mix == 0.0 {
         // Transparent passthrough, bit-identical by construction.
@@ -509,10 +238,9 @@ pub(super) fn convolve(input: &[f32], spec: ConvolveSpec, sr: u32, seed: u64) ->
         .collect()
 }
 
-/// The `granular` node's parameters, bundled so the processor function stays
-/// under the arity cap.
+/// The `granular` node's parameters.
 #[derive(Clone, Copy)]
-pub(super) struct GranularSpec {
+pub(crate) struct GranularSpec {
     /// Grain length in milliseconds.
     pub grain_ms: f32,
     /// Grains per second.
@@ -543,7 +271,7 @@ struct Grain {
 /// summed and normalized by the window-overlap envelope, so loudness tracks
 /// the dry signal, then crossfaded per `mix`. Offline only — grains read the
 /// whole input out of order, so the streaming renderer refuses this node.
-pub(super) fn granular(input: &[f32], spec: GranularSpec, sr: u32, seed: u64) -> Signal {
+pub(crate) fn granular(input: &[f32], spec: GranularSpec, sr: u32, seed: u64) -> Signal {
     let mix = spec.mix.clamp(0.0, 1.0);
     if mix == 0.0 {
         // Transparent passthrough, bit-identical by construction.
