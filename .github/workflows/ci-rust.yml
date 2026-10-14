@@ -24,7 +24,7 @@ jobs:
           python-version: "3.13"
       - name: Install Linux native dependencies
         # ALSA for the core `cpal` speaker feature (exercised by --all-features,
-        # the CLI's `play` feature and tono-py); the rest for tono-desktop.
+        # the CLI's `play` feature and tono-py).
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev
