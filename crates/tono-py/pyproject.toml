@@ -3,7 +3,9 @@ requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "tono"
+# The PyPI name `tono` belongs to an unrelated project; the import name is
+# still `tono`.
+name = "tono-py"
 description = "Live procedural audio, adaptive music, and zero-asset SFX for Python games — a deterministic, Rust-grade synthesis engine."
 requires-python = ">=3.9"
 license = { text = "MIT" }

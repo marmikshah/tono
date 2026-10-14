@@ -20,15 +20,15 @@ def main():
     parser.add_argument("directory", type=Path, help="directory containing wheels compatible with this Python/platform")
     args = parser.parse_args()
     directory = args.directory.resolve()
-    if not list(directory.glob("tono-*.whl")):
-        parser.error(f"no tono wheels in {directory}")
+    if not list(directory.glob("tono_py-*.whl")):
+        parser.error(f"no tono-py wheels in {directory}")
     root = Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix="tono-wheel-") as folder:
         venv.EnvBuilder(with_pip=True).create(folder)
         python = Path(folder) / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         commands = [
             ["-m", "pip", "install", "numpy", "mypy"],
-            ["-m", "pip", "install", "--no-index", "--find-links", str(directory), "--no-deps", "tono"],
+            ["-m", "pip", "install", "--no-index", "--find-links", str(directory), "--no-deps", "tono-py"],
             [str(root / "crates/tono-py/tests/smoke.py")],
             [str(root / "crates/tono-py/tests/test_typed.py")],
             ["-m", "mypy.stubtest", "tono", "--allowlist", str(root / "crates/tono-py/stubtest-allowlist.txt")],

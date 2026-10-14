@@ -75,8 +75,9 @@ is where that is disclosed, so the release is only as good as its notes.
    retry. `release.yml` creates the GitHub Release from that version's
    changelog section (missing notes fail the workflow) and attaches the CLI
    binaries for Linux x86_64, macOS (Apple silicon and Intel) and Windows
-   x86_64 with SHA-256 sidecars. Python wheels are built by the manual
-   `wheels.yml` workflow and are not published to PyPI.
+   x86_64 with SHA-256 sidecars. `wheels.yml` builds the `tono-py` wheel and
+   sdist, runs the installed-wheel test, and publishes them to PyPI through
+   the `pypi` environment (trusted publishing, `skip-existing` on re-runs).
 5. A published crate version cannot be unpublished, only yanked. Speaker
    playback and real SoundFont output need a host with a device; record any
    check that could not be run in the release review.
