@@ -19,8 +19,8 @@ pub(crate) fn pan_gains(pan: f32, gain: f32) -> (f32, f32) {
 }
 
 /// Derive a track's independent RNG stream from the document seed.
-/// `stream` is the track's FNV stream key (or `MASTER_STREAM`), not a track
-/// index. SplitMix64 finalizer over a golden-gamma offset.
+/// `stream` is the track's FNV stream key, not a track index. SplitMix64
+/// finalizer over a golden-gamma offset.
 pub(crate) fn track_stream_seed(seed: u64, stream: u64) -> u64 {
     crate::dsp::splitmix_mix(
         seed ^ stream
@@ -28,9 +28,6 @@ pub(crate) fn track_stream_seed(seed: u64, stream: u64) -> u64 {
             .wrapping_mul(crate::dsp::GOLDEN_GAMMA),
     )
 }
-
-/// The master bus's stream key (validate rejects a layer id hashing to it).
-pub(crate) const MASTER_STREAM: u64 = u64::MAX;
 
 /// Post-fader, pre-master snapshot of one layer's contribution to the stereo
 /// bus — the balance numbers an author mixes by. "Pre-master" matters: a master

@@ -2,7 +2,7 @@
 //! boundary, with click-free cross-fades (including mid-fade reversals and
 //! deferred third-section switches).
 
-use super::{Action, AdaptiveMusic, LoopBuffer, Scheduled, SectionFade, SoundDoc};
+use super::{Action, AdaptiveMusic, LoopBuffer, SectionFade, SoundDoc};
 use crate::runtime::AudioSource;
 
 impl AdaptiveMusic {
@@ -104,11 +104,8 @@ impl AdaptiveMusic {
             // fill call's boundary scan and lands on the NEXT block's edge —
             // a block-size-dependent position. One frame later, `fill`'s
             // next-boundary scan picks it up exactly.
-            let fire_at = self.position + (wait.ceil().max(1.0) as u64);
-            self.pending.push(Scheduled {
-                fire_at,
-                action: Action::Transition { to },
-            });
+            let fire_at = self.position_frames() + (wait.ceil().max(1.0) as u64);
+            self.pending.push(fire_at, Action::Transition { to });
             return;
         }
         self.sections[to].buffer.reset();

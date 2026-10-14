@@ -22,7 +22,9 @@ mod schedule;
 mod sections;
 
 use crate::dsl::SoundDoc;
-use crate::runtime::AudioSource;
+use crate::runtime::oneshot::OneShot;
+use crate::runtime::timeline::Timeline;
+use crate::runtime::{AudioSource, Transport};
 pub use schedule::Quantize;
 
 /// A stereo buffer played on a seamless loop — a music stem.
@@ -121,27 +123,6 @@ struct Layer {
     target: f32,
 }
 
-struct Stinger {
-    left: Vec<f32>,
-    right: Vec<f32>,
-    pos: usize,
-}
-
-impl Stinger {
-    /// Channels of unequal length are truncated to the shorter one, so `fill`
-    /// can index both directly and the spent-stinger cull is exact.
-    fn new(mut left: Vec<f32>, mut right: Vec<f32>) -> Self {
-        let n = left.len().min(right.len());
-        left.truncate(n);
-        right.truncate(n);
-        Stinger {
-            left,
-            right,
-            pos: 0,
-        }
-    }
-}
-
 /// Duck attack time — a couple of ms is fast enough to feel instant without
 /// the click a gain step would make.
 const DUCK_ATTACK_SECS: f32 = 0.002;
@@ -149,15 +130,10 @@ const DUCK_ATTACK_SECS: f32 = 0.002;
 /// instead of asymptoting forever.
 const DUCK_SNAP_EPSILON: f32 = 1e-4;
 
-/// A deferred change fired when the clock reaches `fire_at` frames.
-struct Scheduled {
-    fire_at: u64,
-    action: Action,
-}
-
+/// A deferred change, fired by the timeline when the clock reaches its frame.
 enum Action {
     SetIntensity(f32),
-    Stinger(Stinger),
+    Stinger(OneShot),
     Transition { to: usize },
 }
 
@@ -204,7 +180,7 @@ struct SectionFade {
 /// ```
 pub struct AdaptiveMusic {
     layers: Vec<Layer>,
-    stingers: Vec<Stinger>,
+    stingers: Vec<OneShot>,
     intensity: f32,
     /// Per-sample one-pole coefficient for the layer cross-fades.
     fade_coeff: f32,
@@ -212,9 +188,11 @@ pub struct AdaptiveMusic {
     sample_rate: u32,
     /// Frozen: `fill` outputs silence and holds the position clock + layers.
     paused: bool,
-    /// Frames rendered while playing since construction or the last `reset` —
-    /// the musical clock a beat-locked game derives its beat position from.
-    position: u64,
+    /// The musical clock: frames rendered while playing since construction or
+    /// the last `reset`, with the beat/bar grid of [`set_tempo`](Self::set_tempo)
+    /// — the same [`Transport`] a [`Performance`](crate::runtime::Performance)
+    /// runs on, free-running here.
+    clock: Transport,
     /// Current master duck multiplier (1.0 = no duck), moving per sample.
     duck_gain: f32,
     /// The floor the current duck is attacking toward; snaps back to 1.0 once
@@ -226,10 +204,8 @@ pub struct AdaptiveMusic {
     duck_coeff: f32,
     /// Tempo for beat/bar quantization (`0` = unset → everything is immediate).
     bpm: f32,
-    /// Beats per bar (time-signature numerator) for bar quantization.
-    beats_per_bar: u32,
     /// Deferred changes fired when the clock reaches their frame.
-    pending: Vec<Scheduled>,
+    pending: Timeline<Action>,
     /// Horizontal sections; the current one plays as the base bed.
     sections: Vec<Section>,
     /// Index of the section currently sounding (`None` until one is added).
@@ -252,14 +228,13 @@ impl AdaptiveMusic {
             scratch: Vec::new(),
             sample_rate,
             paused: false,
-            position: 0,
+            clock: Self::clock_at(sample_rate, 0.0, 4),
             duck_gain: 1.0,
             duck_target: 1.0,
             duck_attack: 0.0,
             duck_coeff: 0.0,
             bpm: 0.0,
-            beats_per_bar: 4,
-            pending: Vec::new(),
+            pending: Timeline::with_capacity(16),
             sections: Vec::new(),
             current_section: None,
             section_fade: None,
@@ -268,6 +243,13 @@ impl AdaptiveMusic {
             section_step: 1.0 / (0.06 * sample_rate as f32),
         }
     }
+    /// A free-running constant-tempo clock, already playing.
+    fn clock_at(sample_rate: u32, bpm: f32, beats_per_bar: u32) -> Transport {
+        let mut clock = Transport::constant(sample_rate, bpm, beats_per_bar);
+        clock.play();
+        clock
+    }
+
     // ---- Transport ----
 
     /// Freeze the bed: [`fill`](AudioSource::fill) outputs silence and both the
@@ -293,7 +275,8 @@ impl AdaptiveMusic {
     /// The intensity and layer target gains are left as they are — call this to
     /// line the music up with a beat clock at sample 0.
     pub fn reset(&mut self) {
-        self.position = 0;
+        self.clock.stop();
+        self.clock.play();
         self.stingers.clear();
         self.pending.clear();
         self.section_fade = None;
@@ -323,14 +306,11 @@ impl AudioSource for AdaptiveMusic {
         let mut done = 0usize;
         while done < frames {
             self.fire_due();
-            let next = self
-                .pending
-                .iter()
-                .map(|s| s.fire_at)
-                .filter(|&t| t > self.position)
-                .min();
-            let span = match next {
-                Some(t) => ((t - self.position) as usize).min(frames - done),
+            let position = self.position_frames();
+            // Everything due has fired, so the queue's head is the next
+            // boundary strictly ahead.
+            let span = match self.pending.next_at().filter(|&t| t > position) {
+                Some(t) => ((t - position) as usize).min(frames - done),
                 None => frames - done,
             };
             self.render_span(&mut out[done * 2..(done + span) * 2], span);
@@ -415,16 +395,9 @@ impl AdaptiveMusic {
             }
         }
         for st in &mut self.stingers {
-            // Channels are equal length by construction (`Stinger::new`), so
-            // direct indexing is safe and the cull below is exact.
-            let n = (st.left.len() - st.pos).min(frames);
-            for f in 0..n {
-                out[f * 2] += st.left[st.pos];
-                out[f * 2 + 1] += st.right[st.pos];
-                st.pos += 1;
-            }
+            st.mix_into(out);
         }
-        self.stingers.retain(|s| s.pos < s.left.len());
+        self.stingers.retain(|s| !s.done());
         // Master duck: attack toward the floor, then release to unity. Skip
         // entirely when idle at unity so the common case pays nothing.
         if self.duck_gain < 1.0 || self.duck_target < 1.0 {
@@ -449,7 +422,7 @@ impl AdaptiveMusic {
                 out[f * 2 + 1] *= self.duck_gain;
             }
         }
-        self.position += frames as u64;
+        self.clock.advance(frames as u64);
     }
 }
 #[cfg(test)]

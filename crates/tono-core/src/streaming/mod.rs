@@ -187,7 +187,7 @@ pub struct StreamGraph {
 /// The streamed root: a plain mono graph, or a `tracks` mixer.
 enum Root {
     Mono(Src),
-    Tracks(tracks::StreamTracks),
+    Tracks(Box<tracks::StreamTracks>),
 }
 
 impl StreamGraph {
@@ -272,7 +272,9 @@ impl StreamGraph {
         let ctx = Ctx::stream(doc.sample_rate, doc.frame_count());
 
         let root = if matches!(doc.root, Node::Tracks { .. }) {
-            Root::Tracks(tracks::StreamTracks::build(doc, &ctx, false, false)?)
+            Root::Tracks(Box::new(tracks::StreamTracks::build(
+                doc, &ctx, false, false,
+            )?))
         } else {
             Root::Mono(try_src(&doc.root, &ctx, doc.seed)?)
         };
@@ -412,13 +414,35 @@ pub struct EffectChain {
 impl EffectChain {
     /// Build an effect chain at `sr`; returns None for a non-streamable node.
     pub fn try_new(nodes: &[Node], sr: u32) -> Option<Self> {
+        Self::build(nodes, sr, 0)
+    }
+
+    /// A left/right pair of the chain: identical coefficients, independent
+    /// state, and a reverb gets the 0/23 decorrelated-tails spread the
+    /// document mixer gives its buses — so a bus sounds the same live and
+    /// bounced.
+    pub fn stereo(nodes: &[Node], sr: u32) -> Option<(Self, Self)> {
+        Some((Self::build(nodes, sr, 0)?, Self::build(nodes, sr, 23)?))
+    }
+
+    fn build(nodes: &[Node], sr: u32, spread: usize) -> Option<Self> {
         let ctx = Ctx::stream(sr, sr as usize);
         let procs = nodes
             .iter()
             .enumerate()
-            .map(|(i, node)| try_proc(node, &ctx, node_path(0, i)))
+            .map(|(i, node)| match node {
+                Node::Reverb { room, mix } => Some(proc::reverb_proc(*room, *mix, sr, spread)),
+                _ => try_proc(node, &ctx, node_path(0, i)),
+            })
             .collect::<Option<_>>()?;
         Some(EffectChain { procs, pos: 0 })
+    }
+
+    /// Sweep every filter's cutoff live (see [`StreamGraph::set_cutoff`]).
+    pub(crate) fn set_cutoff(&mut self, scale: f32) {
+        for p in self.procs.iter_mut() {
+            p.set_cutoff(scale);
+        }
     }
 
     /// Process a mono block in place.

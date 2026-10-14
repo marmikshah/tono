@@ -31,6 +31,7 @@ checks. The 1.x line may break in minor releases; every break is listed here.
   (`Bars`, `Decibels`, `Hertz`, `Samples`), and the `Serialize` derives on
   `Recipe` and `Composition`.
 - `StreamBlocker::ModulatedFilter` (diagnostic T1507) is gone: modulated filters and gains stream. Code matching on the enum must drop that arm.
+- `Engine::play_prioritized` and `play_looping_prioritized` are replaced by `Engine::spawn(patch, Spawn { looping, priority })`; `play` and `play_looping` are unchanged.
 - Nine node types are removed: `wavetable`, `bitcrush`, `downsample`, `ringmod`, `flanger`, `phaser`, `duck`, `convolve` and `granular`. A document using one fails to parse with the unknown type named; use a mixer `sidechain` instead of `duck`, and `chorus`/`tremolo` for modulation. Documents that never used them render byte-identically (schema 2 and engine 5 stay; see ADR 0001). With them go `dsl::WavetableKind`, `StreamBlocker::OfflineEffect` (diagnostic T1508) and the FFT in `det`.
 - Program format 3: `Program` no longer duplicates `schema_version`,
   `engine_version` and `warnings`, and `ProgramMeta`/`TrackMeta` drop the
@@ -61,6 +62,8 @@ checks. The 1.x line may break in minor releases; every break is listed here.
 - The SoundDoc reference shows the external tagging of modulators and the object form of the `stereo` field.
 - `Node::PROCESSOR_KINDS` lists the processor node tags; the Python bindings validate bus effects against it instead of a private copy, and their typed-song module is split into `convert`, `instruments`, `pattern`, `song` and `program`.
 - `dsl::bounds` holds every numeric validation bound and the shared tempo-map rule (`tempo_map_problems`; `song::meter_map_problems` for meter maps): the validator, `vary::mutate`, the song compiler's diagnostics, the renderer's defensive clamps and the Python `set_tempo_map`/`set_meter_map` read one definition. The validator is split into header, mixer, layer, sidechain, bus and routing checks with unchanged messages.
+- One runtime clock and scheduler: `AdaptiveMusic` quantizes on the same `Transport` a `Performance` runs on (`Transport::constant`, `next_beat`, `next_bar`), both queue their frame-stamped actions on one timeline type, and stingers are one pre-rendered one-shot type. The performance's master gain and swap crossfade ride the same per-frame ramp as instance faders.
+- Live bus and instrument master chains built with `EffectChain::stereo` give a reverb the decorrelated 0/23 stereo tail the document mixer gives its buses, so a bus sounds the same live and bounced (the runtime `Mixer` and `Instrument` master reverbs are now stereo).
 - The song compiler builds each track's `seq` node and the document directly instead of through a JSON round trip; a test checks every catalog voice knob still lands on the node.
 - One DSP evaluator: the offline bounce now runs the same block-based kernels as the streaming renderer (one block as long as the document instead of per-sample recursion), so the two can no longer drift; every golden hash is unchanged. The mixer captures layer stats and stems in the same pass. Filters, EQ and `gain` with a modulated cutoff or amount stream natively (the coefficients follow the modulator per sample), so they no longer block streaming.
 

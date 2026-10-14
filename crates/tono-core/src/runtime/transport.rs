@@ -65,6 +65,25 @@ impl Transport {
         }
     }
 
+    /// A free-running constant-tempo clock with no program behind it — the
+    /// beat grid an [`AdaptiveMusic`](crate::adaptive::AdaptiveMusic) bed
+    /// quantizes to. It never finishes; `bpm` 0 means "no tempo" and floors
+    /// at 1 BPM for the conversions.
+    pub fn constant(sample_rate: u32, bpm: f32, beats_per_bar: u32) -> Self {
+        Transport {
+            sample_rate,
+            bpm,
+            beats_per_bar: beats_per_bar.max(1),
+            tempo_map: Vec::new(),
+            meter_map: Vec::new(),
+            pickup: None,
+            length_frames: u64::MAX,
+            state: TransportState::Stopped,
+            position: 0,
+            loop_range: None,
+        }
+    }
+
     /// The clock's sample rate.
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
@@ -130,6 +149,19 @@ impl Transport {
     pub fn frame_at_bar(&self, bar: u32) -> u64 {
         let beat = crate::units::beat_at_bar(&self.meter_map, self.beats_per_bar, self.pickup, bar);
         self.frame_at_beat(beat.to_f64())
+    }
+
+    /// The frame of the next whole beat strictly after the position.
+    pub fn next_beat(&self) -> u64 {
+        self.frame_at_beat(self.position_beats().floor() + 1.0)
+    }
+
+    /// The frame of the next bar line strictly after the position, on an
+    /// `every`-bar grid counted from bar 0 (`1` = every bar line).
+    pub fn next_bar(&self, every: u32) -> u64 {
+        let every = every.max(1);
+        let bar = (self.position_bars().floor() as u32 / every + 1) * every;
+        self.frame_at_bar(bar)
     }
 
     /// The position in frames.

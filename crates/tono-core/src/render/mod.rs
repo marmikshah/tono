@@ -51,9 +51,7 @@ mod tracks;
 
 use output::normalize_output;
 pub use output::{loop_seam_db, make_loop_buffer, stereoize};
-pub(crate) use tracks::{
-    LaneCursor, MASTER_STREAM, pan_gains, track_native_stereo, track_stream_seed,
-};
+pub(crate) use tracks::{LaneCursor, pan_gains, track_native_stereo, track_stream_seed};
 pub use tracks::{LayerStats, Stem, TracksRender, render_stems, render_tracks};
 
 /// Render a sound document once, yielding the mono mid plus the stereo bus
