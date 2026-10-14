@@ -1,8 +1,9 @@
 # Release workflow
 
-Builds, CI, CLI binaries, and wheels are Linux-only. Windows/macOS patches are
-welcome, but those builds are no longer funded. Current document formats are
-SoundDoc/Song 2, DSP engine 5, and Program 3.
+Release builds, CLI binaries, and wheels are Linux-only; CI also runs the core
+and CLI tests on macOS and Windows. Windows/macOS patches are welcome, but
+those builds are no longer funded. Current document formats are SoundDoc/Song
+2, DSP engine 5, and Program 3.
 
 ## Prepare a release
 
@@ -17,9 +18,19 @@ ignored deterministic soaks, and `cargo deny check advisories licenses`.
 For performance-sensitive changes, compare the [benchmarks](performance.md)
 on the same machine and investigate PCM or command-trace changes.
 
+Run `cargo semver-checks --package tono-core --package tono` (the CI `semver`
+job does the same against the latest crates.io release); a major bump is
+required if it reports breakage. Until 2.0.0 is tagged the job is
+informational, because 2.0 breaks the API on purpose. Confirm
+`crates/tono-core/public-api.txt` reflects the API being released and that
+every change in it has a changelog line.
+
 Ready PRs run the reusable `.github/workflows/ci-rust.yml` gate with pinned
 1.88.0 and latest Rust: every crate/feature, lean core configurations, native
 release builds, installed-wheel tests, and minimum Python 3.9 coverage.
+`ci.yml` also runs the core and CLI tests on macOS and Windows with the golden
+replays named explicitly, builds them with the `rust-version` from `Cargo.toml`,
+and checks the public API snapshot; all of these are required for merge.
 The Pages workflow checks TypeScript, the production site, and npm advisories.
 Review the results on the commit being released; local checks complement them.
 

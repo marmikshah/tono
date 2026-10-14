@@ -121,6 +121,24 @@ jobs:
             echo "::error file=crates/tono-core/public-api.txt::The public API of tono-core changed. Review the diff above, regenerate the snapshot as described in CONTRIBUTING.md, and commit it with a CHANGELOG entry."
             exit 1
           fi
+  semver:
+    # Informational until 2.0.0 is tagged: the planned 2.0 breaks the API on
+    # purpose, so this reports against the latest crates.io release without
+    # blocking. Once v2.0.0 is published, drop continue-on-error and add this
+    # job to the status aggregator's needs.
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install ALSA headers for the CLI's play feature
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: tono-core,tono
   dependencies:
     if: github.event_name != 'workflow_dispatch' || !inputs.bench
     runs-on: ubuntu-latest
