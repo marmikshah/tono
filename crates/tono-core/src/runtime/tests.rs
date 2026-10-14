@@ -67,9 +67,27 @@ fn higher_priority_steals_a_lower_one() {
     let mut e = Engine::new(44_100);
     e.set_max_voices(2);
     let p = e.load(&doc(1.0));
-    let a = e.play_looping_prioritized(p, Priority::LOW);
-    let b = e.play_looping_prioritized(p, Priority::LOW);
-    let hi = e.play_prioritized(p, Priority::HIGH);
+    let a = e.spawn(
+        p,
+        Spawn {
+            looping: true,
+            priority: Priority::LOW,
+        },
+    );
+    let b = e.spawn(
+        p,
+        Spawn {
+            looping: true,
+            priority: Priority::LOW,
+        },
+    );
+    let hi = e.spawn(
+        p,
+        Spawn {
+            looping: false,
+            priority: Priority::HIGH,
+        },
+    );
     assert!(e.is_active(hi), "the high-priority voice got in");
     // Exactly one low voice was declicked (stopping), not hard-cut.
     let stopping: Vec<u64> = e
@@ -90,9 +108,27 @@ fn outranked_voice_is_denied() {
     let mut e = Engine::new(44_100);
     e.set_max_voices(2);
     let p = e.load(&doc(1.0));
-    e.play_looping_prioritized(p, Priority::HIGH);
-    e.play_looping_prioritized(p, Priority::HIGH);
-    let low = e.play_prioritized(p, Priority::LOW);
+    e.spawn(
+        p,
+        Spawn {
+            looping: true,
+            priority: Priority::HIGH,
+        },
+    );
+    e.spawn(
+        p,
+        Spawn {
+            looping: true,
+            priority: Priority::HIGH,
+        },
+    );
+    let low = e.spawn(
+        p,
+        Spawn {
+            looping: false,
+            priority: Priority::LOW,
+        },
+    );
     assert!(!e.is_active(low), "a fully-outranked voice is denied");
     assert_eq!(
         e.instances.iter().filter(|i| !i.stopping).count(),
@@ -109,7 +145,13 @@ fn stealing_is_deterministic() {
         let p = e.load(&doc(1.0));
         for i in 0..15 {
             let prio = Priority((i % 3) as u8 * 64);
-            e.play_prioritized(p, prio);
+            e.spawn(
+                p,
+                Spawn {
+                    looping: false,
+                    priority: prio,
+                },
+            );
         }
         let mut ids: Vec<u64> = e.instances.iter().map(|i| i.id).collect();
         ids.sort_unstable();

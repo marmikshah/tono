@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use super::SCRATCH_FRAMES;
+use super::ramp::{Ramp, Tween};
 use super::ring::{Controller, Renderer, spsc};
 use super::source::AudioSource;
 use crate::dsl::{Node, SoundDoc};
@@ -66,83 +67,14 @@ impl Default for Priority {
     }
 }
 
-/// Control-rate linear smoothing over a fixed duration. `Tween::default()` /
-/// [`Tween::IMMEDIATE`] jumps instantly; [`Tween::ms`] ramps over a wall-clock time.
-#[derive(Clone, Copy, Debug)]
-pub struct Tween {
-    frames: u32,
-}
-
-impl Tween {
-    /// Jump to the target immediately (no ramp).
-    pub const IMMEDIATE: Tween = Tween { frames: 0 };
-
-    /// Ramp over an explicit number of frames.
-    pub const fn frames(n: u32) -> Self {
-        Tween { frames: n }
-    }
-
-    /// Ramp over `ms` milliseconds at `sample_rate`.
-    pub fn ms(ms: f32, sample_rate: u32) -> Self {
-        let f = (ms / 1000.0 * sample_rate as f32).round();
-        Tween {
-            frames: if f > 0.0 { f as u32 } else { 0 },
-        }
-    }
-}
-
-impl Default for Tween {
-    fn default() -> Self {
-        Tween::IMMEDIATE
-    }
-}
-
-/// A per-frame linear ramp toward a target value.
-#[derive(Clone, Copy)]
-pub(super) struct Ramp {
-    value: f32,
-    target: f32,
-    step: f32,
-    remaining: u32,
-}
-
-impl Ramp {
-    pub(super) fn new(v: f32) -> Self {
-        Ramp {
-            value: v,
-            target: v,
-            step: 0.0,
-            remaining: 0,
-        }
-    }
-
-    pub(super) fn set(&mut self, target: f32, tw: Tween) {
-        self.target = target;
-        if tw.frames == 0 {
-            self.value = target;
-            self.step = 0.0;
-            self.remaining = 0;
-        } else {
-            self.step = (target - self.value) / tw.frames as f32;
-            self.remaining = tw.frames;
-        }
-    }
-
-    /// Advance one frame and return the current value.
-    pub(super) fn tick(&mut self) -> f32 {
-        if self.remaining > 0 {
-            self.value += self.step;
-            self.remaining -= 1;
-            if self.remaining == 0 {
-                self.value = self.target;
-            }
-        }
-        self.value
-    }
-
-    fn at_target(&self) -> bool {
-        self.remaining == 0
-    }
+/// How [`Engine::spawn`] starts an instance. The default is a one-shot at
+/// [`Priority::NORMAL`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Spawn {
+    /// Loop until stopped instead of playing once.
+    pub looping: bool,
+    /// Importance under a polyphony cap.
+    pub priority: Priority,
 }
 
 /// Equal-level stereo balance (unity at centre): `pan` −1 = hard left, +1 = hard
@@ -288,34 +220,29 @@ impl Engine {
     /// Spawn a one-shot instance of a patch (plays once, then culls itself) at
     /// [`Priority::NORMAL`].
     pub fn play(&mut self, patch: PatchId) -> InstanceHandle {
-        self.spawn(patch, false, Priority::NORMAL)
+        self.spawn(patch, Spawn::default())
     }
 
     /// Spawn a looping instance of a patch (plays until [`stop`](Self::stop)ped)
     /// at [`Priority::NORMAL`].
     pub fn play_looping(&mut self, patch: PatchId) -> InstanceHandle {
-        self.spawn(patch, true, Priority::NORMAL)
+        self.spawn(
+            patch,
+            Spawn {
+                looping: true,
+                ..Spawn::default()
+            },
+        )
     }
 
-    /// Spawn a one-shot instance with an explicit [`Priority`]. Under a voice cap,
-    /// a higher priority survives a steal; a voice outranked by every sounding
-    /// instance is denied (returns an inert handle — [`is_active`](Self::is_active)
-    /// is `false`).
-    pub fn play_prioritized(&mut self, patch: PatchId, priority: Priority) -> InstanceHandle {
-        self.spawn(patch, false, priority)
-    }
-
-    /// Spawn a looping instance with an explicit [`Priority`] — e.g. music at
-    /// [`Priority::CRITICAL`] so it is never stolen by lower one-shots.
-    pub fn play_looping_prioritized(
-        &mut self,
-        patch: PatchId,
-        priority: Priority,
-    ) -> InstanceHandle {
-        self.spawn(patch, true, priority)
-    }
-
-    fn spawn(&mut self, patch: PatchId, looping: bool, priority: Priority) -> InstanceHandle {
+    /// Spawn an instance of a patch with explicit options — looping or
+    /// one-shot, and its [`Priority`] under a voice cap. A higher priority
+    /// survives a steal; a voice outranked by every sounding instance is
+    /// denied and returns an inert handle ([`is_active`](Self::is_active) is
+    /// `false`). [`play`](Self::play) and [`play_looping`](Self::play_looping)
+    /// are the common cases.
+    pub fn spawn(&mut self, patch: PatchId, how: Spawn) -> InstanceHandle {
+        let Spawn { looping, priority } = how;
         // Enforce the polyphony budget (if any) before adding a voice.
         if let Some(max) = self.max_voices
             && !self.make_room(max, priority)
@@ -493,7 +420,7 @@ impl Engine {
         let doc = self.build_doc(patch, &values, &layer_gains);
         let fresh = self.new_player(doc, looping, pos);
 
-        let fade = if tw.frames == 0 {
+        let fade = if tw.is_immediate() {
             Tween::ms(CROSSFADE_MIN_MS, self.sample_rate)
         } else {
             tw
@@ -506,7 +433,7 @@ impl Engine {
         // old mix's current weight keeps the blend monotonic instead of
         // re-fading from scratch, so the dropped tail carries only the
         // remaining (1 − w) of its energy.
-        let w0 = inst.fading_in.as_ref().map_or(0.0, |(_, m)| m.value);
+        let w0 = inst.fading_in.as_ref().map_or(0.0, |(_, m)| m.value());
         let mut mix = Ramp::new(w0);
         mix.set(1.0, fade);
         inst.fading_in = Some((outgoing, mix));
@@ -517,7 +444,7 @@ impl Engine {
     pub fn stop(&mut self, h: InstanceHandle, fade: Tween) {
         let min_fade = Tween::ms(DECLICK_MS, self.sample_rate);
         if let Some(i) = self.instance_mut(h) {
-            let fade = if fade.frames == 0 { min_fade } else { fade };
+            let fade = if fade.is_immediate() { min_fade } else { fade };
             i.gain.set(0.0, fade);
             i.stopping = true;
         }
@@ -540,7 +467,7 @@ impl Engine {
             .get(idx)?
             .fading_in
             .as_ref()
-            .map(|(_, m)| m.value)
+            .map(|(_, m)| m.value())
     }
 }
 

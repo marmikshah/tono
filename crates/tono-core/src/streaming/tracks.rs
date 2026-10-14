@@ -22,12 +22,12 @@
 //! probe measures and bakes it.
 
 use super::Ctx;
-use super::proc::{Proc, reverb_proc, try_proc};
+use super::EffectChain;
 use super::source::{Src, try_src};
 use crate::dsl::{AutoTarget, Node, SoundDoc};
 use crate::dsp::layer_stream_key;
 use crate::render::{
-    LaneCursor, LayerStats, MASTER_STREAM, Stem, pan_gains, track_native_stereo, track_stream_seed,
+    LaneCursor, LayerStats, Stem, pan_gains, track_native_stereo, track_stream_seed,
 };
 
 /// What a mixer channel plays.
@@ -78,43 +78,23 @@ struct DuckLink {
 
 /// A stereo insert chain (a bus's inserts or the master chain): every
 /// processor runs as a per-channel pair, and a reverb gets the 0/23
-/// decorrelated-tails spread. RNG leaves self-seed structurally, so the two
-/// instances of a seeded insert reproduce the same draws per channel.
-struct StereoChain {
-    fx: Vec<(Proc, Proc)>,
-}
+/// decorrelated-tails spread.
+struct StereoChain(EffectChain, EffectChain);
 
 impl StereoChain {
-    /// `path` is the bus's (or master's) stream seed, handed to every insert.
-    fn build(nodes: &[Node], ctx: &Ctx, path: u64) -> Option<Self> {
-        let fx = nodes
-            .iter()
-            .map(|node| {
-                if let Node::Reverb { room, mix } = node {
-                    Some((
-                        reverb_proc(*room, *mix, ctx.sr, 0),
-                        reverb_proc(*room, *mix, ctx.sr, 23),
-                    ))
-                } else {
-                    Some((try_proc(node, ctx, path)?, try_proc(node, ctx, path)?))
-                }
-            })
-            .collect::<Option<_>>()?;
-        Some(StereoChain { fx })
+    fn build(nodes: &[Node], ctx: &Ctx) -> Option<Self> {
+        let (l, r) = EffectChain::stereo(nodes, ctx.sr)?;
+        Some(StereoChain(l, r))
     }
 
-    fn process(&mut self, l: &mut [f32], r: &mut [f32], t0: usize) {
-        for (pl, pr) in self.fx.iter_mut() {
-            pl.process(l, t0);
-            pr.process(r, t0);
-        }
+    fn process(&mut self, l: &mut [f32], r: &mut [f32]) {
+        self.0.process(l);
+        self.1.process(r);
     }
 
     fn set_cutoff(&mut self, scale: f32) {
-        for (pl, pr) in self.fx.iter_mut() {
-            pl.set_cutoff(scale);
-            pr.set_cutoff(scale);
-        }
+        self.0.set_cutoff(scale);
+        self.1.set_cutoff(scale);
     }
 }
 
@@ -246,15 +226,14 @@ impl StreamTracks {
         let buses: Vec<BusStream> = buses
             .iter()
             .map(|b| {
-                let bpath = track_stream_seed(doc.seed, layer_stream_key(&format!("bus:{}", b.id)));
                 Some(BusStream {
                     id: b.id.clone(),
-                    chain: StereoChain::build(&b.effects, ctx, bpath)?,
+                    chain: StereoChain::build(&b.effects, ctx)?,
                     gain: if b.gain.is_finite() { b.gain } else { 1.0 },
                 })
             })
             .collect::<Option<_>>()?;
-        let master = StereoChain::build(master, ctx, track_stream_seed(doc.seed, MASTER_STREAM))?;
+        let master = StereoChain::build(master, ctx)?;
         let n_tracks = out_tracks.len();
         let n_buses = buses.len();
         let block = || vec![0.0f32; ctx.cap];
@@ -415,7 +394,7 @@ impl StreamTracks {
         for (bi, b) in self.buses.iter_mut().enumerate() {
             let bl = &mut self.bus_l[bi][..len];
             let br = &mut self.bus_r[bi][..len];
-            b.chain.process(bl, br, t0);
+            b.chain.process(bl, br);
             if let Some(stems) = self.capture.as_mut().and_then(|c| c.stems.as_mut()) {
                 for j in 0..len {
                     stems.buses[bi].0[t0 + j] = bl[j] * b.gain;
@@ -428,7 +407,7 @@ impl StreamTracks {
             }
         }
         // 5. The master chain.
-        self.master.process(out_l, out_r, t0);
+        self.master.process(out_l, out_r);
     }
 
     /// Sweep every filter's cutoff live, track graphs and insert chains

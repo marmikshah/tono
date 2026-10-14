@@ -36,9 +36,12 @@
 
 mod engine;
 mod mixer;
+pub(crate) mod oneshot;
 pub mod performance;
+pub(crate) mod ramp;
 mod ring;
 mod source;
+pub(crate) mod timeline;
 mod transport;
 
 /// Pre-allocated scratch depth (frames) shared by the runtime's `fill` paths
@@ -47,11 +50,12 @@ mod transport;
 /// scratch once, on the first such call.
 pub const SCRATCH_FRAMES: usize = 8192;
 
-pub use engine::{Engine, InstanceHandle, LayerId, ParamId, PatchId, Priority, Tween};
+pub use engine::{Engine, InstanceHandle, LayerId, ParamId, PatchId, Priority, Spawn};
 pub use mixer::{BusId, Mixer, MixerError, SourceId};
 pub use performance::{
     At, Command, Performance, PerformanceError, PerformanceMetrics, TimestampedCommand,
 };
+pub use ramp::Tween;
 pub use ring::{Controller, Pump, Renderer, spsc};
 pub use source::{AudioSource, StreamSource, write_interleaved};
 pub use transport::{Advance, Transport, TransportState};

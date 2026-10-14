@@ -177,12 +177,10 @@ impl Instrument {
         let master = if design.master.is_empty() {
             None
         } else {
-            let build = || EffectChain::try_new(&design.master, sample_rate);
-            let (l, r) = (
-                build().ok_or(InstrumentError::NotStreamable)?,
-                build().ok_or(InstrumentError::NotStreamable)?,
-            );
-            Some((l, r))
+            Some(
+                EffectChain::stereo(&design.master, sample_rate)
+                    .ok_or(InstrumentError::NotStreamable)?,
+            )
         };
         let values = design.patch.defaults();
         let inst = Instrument {

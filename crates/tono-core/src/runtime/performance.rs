@@ -12,11 +12,12 @@
 //! buffer — no render, no allocation on the render path.
 //!
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 
-use super::engine::Ramp;
-use super::{AudioSource, SCRATCH_FRAMES, StreamSource, Transport, TransportState, Tween};
+use super::oneshot::OneShot;
+use super::ramp::{Ramp, Tween};
+use super::timeline::{Stamped, Timeline};
+use super::{AudioSource, SCRATCH_FRAMES, StreamSource, Transport, TransportState};
 use crate::dsl::SoundDoc;
 use crate::program::Program;
 
@@ -27,11 +28,11 @@ pub const COMMAND_QUEUE_CAP: usize = 4096;
 
 /// The program-swap crossfade length in frames (~21 ms at 48 kHz): long
 /// enough to be click-free, short enough to read as a cut at a bar line.
-const SWAP_FADE_FRAMES: usize = 1024;
+const SWAP_FADE_FRAMES: u32 = 1024;
 
 /// The master-gain ramp length in frames: gain rides are click-free without
 /// waiting a beat.
-const GAIN_RAMP_FRAMES: usize = 256;
+const GAIN_RAMP_FRAMES: u32 = 256;
 
 /// Where a command lands on the timeline, resolved to an exact frame at
 /// schedule time (the transport lives on the control side, so musical
@@ -236,39 +237,26 @@ impl SongSource {
     }
 }
 
-/// A sounding stinger: a buffer pre-rendered at schedule time with its play
-/// head and declick gain ramp. Mixed into the output without touching the
-/// allocator (capacity is reserved when the stinger is scheduled).
-struct ActiveStinger {
-    /// The interleaved stereo buffer, rendered at the program's sample rate.
-    buf: Arc<[f32]>,
-    /// Play head in samples (frames × 2).
-    pos: usize,
-    /// The declick ramp: 1.0 → the scheduled gain over 2 ms (the same shape
-    /// the engine applies to a fresh one-shot).
-    gain: Ramp,
-}
-
 /// A running program — see the module docs.
 pub struct Performance {
     program: Arc<Program>,
     song: SongSource,
     transport: Transport,
-    queue: VecDeque<TimestampedCommand>,
+    queue: Timeline<Command>,
     /// Program sources pre-built at schedule time, keyed by the command's
     /// seq — the build (a full probe render or bounce) never happens on the
     /// audio path (same discipline as stinger pre-rendering).
     swap_sources: std::collections::HashMap<u64, SongSource>,
     clock: u64,
-    seq: u64,
-    master_gain: f32,
-    gain_ramp: Option<(f32, f32, usize)>, // (from, to, frames left)
-    fade: Option<(SongSource, usize)>,    // (outgoing source, frames left)
+    /// The master gain, ridden per frame so a gain change never clicks.
+    gain: Ramp,
+    /// The outgoing program's tail during a swap, with its fade-out weight.
+    fade: Option<(SongSource, Ramp)>,
     metrics: PerformanceMetrics,
     capture: Option<Vec<TimestampedCommand>>,
     sample_rate: u32,
     /// Stingers sounding now (pre-reserved at schedule time).
-    stingers: Vec<ActiveStinger>,
+    stingers: Vec<OneShot>,
     scratch_l: Vec<f32>,
     scratch_r: Vec<f32>,
     scratch_fl: Vec<f32>,
@@ -287,12 +275,10 @@ impl Performance {
             program,
             song,
             transport,
-            queue: VecDeque::with_capacity(COMMAND_QUEUE_CAP.min(64)),
+            queue: Timeline::with_capacity(COMMAND_QUEUE_CAP.min(64)),
             swap_sources: std::collections::HashMap::new(),
             clock: 0,
-            seq: 0,
-            master_gain: 1.0,
-            gain_ramp: None,
+            gain: Ramp::new(1.0),
             fade: None,
             metrics: PerformanceMetrics::default(),
             capture: None,
@@ -316,9 +302,9 @@ impl Performance {
         &self.transport
     }
 
-    /// The current master gain.
+    /// The current master gain (the value a ride is heading for).
     pub fn master_gain(&self) -> f32 {
-        self.master_gain
+        self.gain.target()
     }
 
     /// A health snapshot (queue depth is sampled at call time).
@@ -343,14 +329,8 @@ impl Performance {
             At::Frame(f) => *f,
             At::Beat(b) => self.deadline_for_transport_frame(self.transport.frame_at_beat(*b)),
             At::Bar(b) => self.deadline_for_transport_frame(self.transport.frame_at_bar(*b)),
-            At::NextBeat => {
-                let pos = self.transport.position_beats();
-                self.deadline_for_transport_frame(self.transport.frame_at_beat(pos.floor() + 1.0))
-            }
-            At::NextBar => self.deadline_for_transport_frame(
-                self.transport
-                    .frame_at_bar(self.transport.position_bars().floor() as u32 + 1),
-            ),
+            At::NextBeat => self.deadline_for_transport_frame(self.transport.next_beat()),
+            At::NextBar => self.deadline_for_transport_frame(self.transport.next_bar(1)),
             At::Marker(name) => {
                 let marker = self
                     .program
@@ -402,29 +382,26 @@ impl Performance {
 
     fn enqueue(&mut self, command: Command, frame: u64) -> u64 {
         debug_assert!(self.queue.len() < COMMAND_QUEUE_CAP);
-        self.seq += 1;
-        let stamped = TimestampedCommand {
-            at_frame: frame,
-            seq: self.seq,
-            command,
-        };
         // Swap sources build HERE, at schedule time (a full probe render or
         // bounce — O(duration)), never inside `fill` (see execute).
-        if let Command::Swap(program) = &stamped.command {
-            self.swap_sources
-                .insert(stamped.seq, SongSource::build(program));
+        let swap = match &command {
+            Command::Swap(program) => Some(SongSource::build(program)),
+            _ => None,
+        };
+        let captured = self.capture.is_some().then(|| command.clone());
+        let seq = self.queue.push(frame, command);
+        if let Some(source) = swap {
+            self.swap_sources.insert(seq, source);
         }
-        let pos = self
-            .queue
-            .iter()
-            .position(|c| (c.at_frame, c.seq) > (stamped.at_frame, stamped.seq))
-            .unwrap_or(self.queue.len());
-        if let Some(capture) = &mut self.capture {
-            capture.push(stamped.clone());
+        if let (Some(capture), Some(command)) = (&mut self.capture, captured) {
+            capture.push(TimestampedCommand {
+                at_frame: frame,
+                seq,
+                command,
+            });
         }
-        self.queue.insert(pos, stamped);
         self.metrics.queue_depth_max = self.metrics.queue_depth_max.max(self.queue.len());
-        self.seq
+        seq
     }
 
     /// Schedule a command at `at`. Musical positions resolve to exact frames
@@ -456,7 +433,7 @@ impl Performance {
         let pending = self
             .queue
             .iter()
-            .filter(|c| matches!(c.command, Command::Stinger { .. }))
+            .filter(|c| matches!(c.action, Command::Stinger { .. }))
             .count()
             + 1;
         self.stingers.reserve(pending);
@@ -493,11 +470,11 @@ impl Performance {
         let replaced: Vec<u64> = self
             .queue
             .iter()
-            .filter(|c| matches!(c.command, Command::SeekSection(_)))
+            .filter(|c| matches!(c.action, Command::SeekSection(_)))
             .map(|c| c.seq)
             .collect();
         self.queue
-            .retain(|c| !matches!(c.command, Command::SeekSection(_)));
+            .retain(|c| !matches!(c.action, Command::SeekSection(_)));
         if let Some(capture) = &mut self.capture {
             capture.retain(|c| !replaced.contains(&c.seq));
         }
@@ -530,25 +507,15 @@ impl Performance {
             // Bypass capture (a replay isn't a new session) and the queue cap
             // is respected: a captured queue always fits again. Swap sources
             // build here too — replay IS schedule time.
-            let frame = c.at_frame;
             if self.queue.len() >= COMMAND_QUEUE_CAP {
                 self.metrics.commands_dropped += 1;
                 continue;
             }
-            self.seq += 1;
+            let seq = self.queue.push(c.at_frame, c.command.clone());
             if let Command::Swap(program) = &c.command {
-                self.swap_sources
-                    .insert(self.seq, SongSource::build(program));
+                self.swap_sources.insert(seq, SongSource::build(program));
             }
-            self.queue.push_back(TimestampedCommand {
-                at_frame: frame,
-                seq: self.seq,
-                command: c.command.clone(),
-            });
         }
-        self.queue
-            .make_contiguous()
-            .sort_by_key(|c| (c.at_frame, c.seq));
     }
 
     /// A state snapshot: transport position/state, master gain, loop range.
@@ -557,14 +524,14 @@ impl Performance {
         PerformanceSnapshot {
             position: self.transport.position_frames(),
             state: self.transport.state(),
-            master_gain: self.master_gain,
+            master_gain: self.gain.target(),
             loop_range: self.transport.loop_range(),
         }
     }
 
     /// Restore a snapshot (deterministic: the song source re-seeks).
     pub fn apply_snapshot(&mut self, snapshot: &PerformanceSnapshot) {
-        self.master_gain = snapshot.master_gain;
+        self.gain = Ramp::new(snapshot.master_gain);
         if let Some((start, end)) = snapshot.loop_range {
             self.transport.set_loop_frames(start, end);
         } else {
@@ -580,9 +547,9 @@ impl Performance {
     }
 
     /// Execute one command (at its exact frame).
-    fn execute(&mut self, stamped: TimestampedCommand) {
+    fn execute(&mut self, stamped: Stamped<Command>) {
         self.metrics.commands_executed += 1;
-        match stamped.command {
+        match stamped.action {
             Command::Play => self.transport.play(),
             Command::Pause => self.transport.pause(),
             Command::Stop => {
@@ -611,9 +578,8 @@ impl Performance {
             }
             Command::ClearLoop => self.transport.clear_loop(),
             Command::SetGain(gain) => {
-                let from = self.current_gain();
-                self.master_gain = gain.clamp(0.0, 2.0);
-                self.gain_ramp = Some((from, self.master_gain, GAIN_RAMP_FRAMES));
+                self.gain
+                    .set(gain.clamp(0.0, 2.0), Tween::frames(GAIN_RAMP_FRAMES));
             }
             Command::Swap(program) => {
                 // The source was pre-built at schedule time (off the audio
@@ -621,7 +587,9 @@ impl Performance {
                 // through schedule) is inert, like a foreign stinger.
                 if let Some(new_source) = self.swap_sources.remove(&stamped.seq) {
                     let outgoing = std::mem::replace(&mut self.song, new_source);
-                    self.fade = Some((outgoing, SWAP_FADE_FRAMES));
+                    let mut weight = Ramp::new(1.0);
+                    weight.set(0.0, Tween::frames(SWAP_FADE_FRAMES));
+                    self.fade = Some((outgoing, weight));
                     self.transport = Transport::for_program(&program);
                     self.transport.play();
                     self.program = program;
@@ -629,25 +597,15 @@ impl Performance {
                 }
             }
             Command::Stinger { samples, gain } => {
-                let mut ramp = Ramp::new(1.0);
-                ramp.set(gain.max(0.0), Tween::ms(2.0, self.sample_rate));
-                self.stingers.push(ActiveStinger {
-                    buf: samples,
-                    pos: 0,
-                    gain: ramp,
-                });
+                // The declick ramp: 1.0 → the scheduled gain over 2 ms (the
+                // same shape the engine applies to a fresh one-shot).
+                self.stingers.push(OneShot::new(
+                    samples,
+                    gain,
+                    Tween::ms(2.0, self.sample_rate),
+                ));
                 self.metrics.stingers_fired += 1;
             }
-        }
-    }
-
-    /// The gain currently applied (mid-ramp aware).
-    fn current_gain(&self) -> f32 {
-        match &self.gain_ramp {
-            Some((from, to, left)) => {
-                from + (to - from) * (1.0 - *left as f32 / GAIN_RAMP_FRAMES as f32)
-            }
-            None => self.master_gain,
         }
     }
 
@@ -723,50 +681,32 @@ impl Performance {
         // Stingers: pre-rendered buffers mixed straight in — no render, no
         // allocation on this path (the render happened at schedule time).
         {
-            let out_frames = frames;
             let stereo = &mut self.scratch_e[..out.len()];
             stereo.fill(0.0);
             for s in &mut self.stingers {
-                let take = ((s.buf.len() - s.pos) / 2).min(out_frames);
-                for f in 0..take {
-                    let g = s.gain.tick();
-                    stereo[f * 2] += s.buf[s.pos + f * 2] * g;
-                    stereo[f * 2 + 1] += s.buf[s.pos + f * 2 + 1] * g;
-                }
-                s.pos += take * 2;
+                s.mix_into(stereo);
             }
-            self.stingers.retain(|s| s.pos < s.buf.len());
+            self.stingers.retain(|s| !s.done());
         }
         // The gain ramp and the swap crossfade advance per FRAME, so their
         // trajectories are identical under any block size — a slice's length
         // must never shape the ramp (the transport and command frames are
         // already blocking-invariant).
-        let mut fade_left = self.fade.as_ref().map(|(_, left)| *left);
         for i in 0..frames {
-            let g = if let Some((from, to, left)) = self.gain_ramp {
-                let u = (GAIN_RAMP_FRAMES - left) as f32 / GAIN_RAMP_FRAMES as f32;
-                self.gain_ramp = (left > 1).then_some((from, to, left - 1));
-                from + (to - from) * u
-            } else {
-                self.master_gain
-            };
+            let g = self.gain.tick();
             let mut left = self.scratch_l[i] * g;
             let mut right = self.scratch_r[i] * g;
-            if let Some(fl) = fade_left.filter(|fl| *fl > 0) {
-                let fade_u = fl as f32 / SWAP_FADE_FRAMES as f32;
-                fade_left = Some(fl - 1);
-                left += self.scratch_fl[i] * fade_u;
-                right += self.scratch_fr[i] * fade_u;
+            if let Some((_, weight)) = &mut self.fade {
+                let w = weight.tick();
+                left += self.scratch_fl[i] * w;
+                right += self.scratch_fr[i] * w;
             }
             out[i * 2] = left + self.scratch_e[i * 2];
             out[i * 2 + 1] = right + self.scratch_e[i * 2 + 1];
         }
-        // Commit the crossfade progress: done when its frames ran out.
-        if let Some((_, left)) = &mut self.fade {
-            match fade_left {
-                Some(fl) if fl > 0 => *left = fl,
-                _ => self.fade = None,
-            }
+        // The crossfade is over once its weight has landed on 0.
+        if self.fade.as_ref().is_some_and(|(_, w)| w.at_target()) {
+            self.fade = None;
         }
         self.metrics.frames_rendered += frames as u64;
     }
@@ -782,9 +722,8 @@ impl AudioSource for Performance {
         while done < frames {
             let due = self
                 .queue
-                .front()
-                .filter(|c| c.at_frame <= self.clock + (frames - done) as u64)
-                .map(|c| c.at_frame);
+                .next_at()
+                .filter(|at| *at <= self.clock + (frames - done) as u64);
             match due {
                 Some(at) => {
                     let at = (at.saturating_sub(self.clock) as usize).min(frames - done);
@@ -793,7 +732,7 @@ impl AudioSource for Performance {
                         self.clock += at as u64;
                         done += at;
                     }
-                    let stamped = self.queue.pop_front().expect("front was due");
+                    let stamped = self.queue.pop_due(self.clock).expect("front was due");
                     self.execute(stamped);
                 }
                 None => {
@@ -1111,8 +1050,8 @@ mod tests {
 
         let next_beat = p.transport().frame_at_beat(1.0);
         p.schedule(Command::SetGain(0.5), At::NextBeat).unwrap();
-        let queued = p.queue.back().unwrap();
-        assert_eq!(queued.at_frame, 6_000 + next_beat - 1_000);
+        let queued = p.queue.last().unwrap();
+        assert_eq!(queued.at, 6_000 + next_beat - 1_000);
     }
 
     #[test]

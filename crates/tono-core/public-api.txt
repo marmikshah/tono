@@ -2333,14 +2333,13 @@ pub fn tono_core::runtime::Engine::new(u32) -> Self
 pub fn tono_core::runtime::Engine::param(&self, tono_core::runtime::PatchId, &str) -> core::option::Option<tono_core::runtime::ParamId>
 pub fn tono_core::runtime::Engine::play(&mut self, tono_core::runtime::PatchId) -> tono_core::runtime::InstanceHandle
 pub fn tono_core::runtime::Engine::play_looping(&mut self, tono_core::runtime::PatchId) -> tono_core::runtime::InstanceHandle
-pub fn tono_core::runtime::Engine::play_looping_prioritized(&mut self, tono_core::runtime::PatchId, tono_core::runtime::Priority) -> tono_core::runtime::InstanceHandle
-pub fn tono_core::runtime::Engine::play_prioritized(&mut self, tono_core::runtime::PatchId, tono_core::runtime::Priority) -> tono_core::runtime::InstanceHandle
 pub fn tono_core::runtime::Engine::sample_rate(&self) -> u32
 pub fn tono_core::runtime::Engine::set_gain(&mut self, tono_core::runtime::InstanceHandle, f32, tono_core::runtime::Tween)
 pub fn tono_core::runtime::Engine::set_layer_gain(&mut self, tono_core::runtime::InstanceHandle, tono_core::runtime::LayerId, f32, tono_core::runtime::Tween)
 pub fn tono_core::runtime::Engine::set_max_voices(&mut self, usize)
 pub fn tono_core::runtime::Engine::set_pan(&mut self, tono_core::runtime::InstanceHandle, f32, tono_core::runtime::Tween)
 pub fn tono_core::runtime::Engine::set_param(&mut self, tono_core::runtime::InstanceHandle, tono_core::runtime::ParamId, f32, tono_core::runtime::Tween)
+pub fn tono_core::runtime::Engine::spawn(&mut self, tono_core::runtime::PatchId, tono_core::runtime::Spawn) -> tono_core::runtime::InstanceHandle
 pub fn tono_core::runtime::Engine::stop(&mut self, tono_core::runtime::InstanceHandle, tono_core::runtime::Tween)
 impl tono_core::runtime::Engine
 pub fn tono_core::runtime::Engine::split(self, usize) -> (tono_core::runtime::Controller, tono_core::runtime::Renderer)
@@ -3516,14 +3515,13 @@ pub fn tono_core::runtime::Engine::new(u32) -> Self
 pub fn tono_core::runtime::Engine::param(&self, tono_core::runtime::PatchId, &str) -> core::option::Option<tono_core::runtime::ParamId>
 pub fn tono_core::runtime::Engine::play(&mut self, tono_core::runtime::PatchId) -> tono_core::runtime::InstanceHandle
 pub fn tono_core::runtime::Engine::play_looping(&mut self, tono_core::runtime::PatchId) -> tono_core::runtime::InstanceHandle
-pub fn tono_core::runtime::Engine::play_looping_prioritized(&mut self, tono_core::runtime::PatchId, tono_core::runtime::Priority) -> tono_core::runtime::InstanceHandle
-pub fn tono_core::runtime::Engine::play_prioritized(&mut self, tono_core::runtime::PatchId, tono_core::runtime::Priority) -> tono_core::runtime::InstanceHandle
 pub fn tono_core::runtime::Engine::sample_rate(&self) -> u32
 pub fn tono_core::runtime::Engine::set_gain(&mut self, tono_core::runtime::InstanceHandle, f32, tono_core::runtime::Tween)
 pub fn tono_core::runtime::Engine::set_layer_gain(&mut self, tono_core::runtime::InstanceHandle, tono_core::runtime::LayerId, f32, tono_core::runtime::Tween)
 pub fn tono_core::runtime::Engine::set_max_voices(&mut self, usize)
 pub fn tono_core::runtime::Engine::set_pan(&mut self, tono_core::runtime::InstanceHandle, f32, tono_core::runtime::Tween)
 pub fn tono_core::runtime::Engine::set_param(&mut self, tono_core::runtime::InstanceHandle, tono_core::runtime::ParamId, f32, tono_core::runtime::Tween)
+pub fn tono_core::runtime::Engine::spawn(&mut self, tono_core::runtime::PatchId, tono_core::runtime::Spawn) -> tono_core::runtime::InstanceHandle
 pub fn tono_core::runtime::Engine::stop(&mut self, tono_core::runtime::InstanceHandle, tono_core::runtime::Tween)
 impl tono_core::runtime::Engine
 pub fn tono_core::runtime::Engine::split(self, usize) -> (tono_core::runtime::Controller, tono_core::runtime::Renderer)
@@ -3683,6 +3681,20 @@ impl core::hash::Hash for tono_core::runtime::SourceId
 pub fn tono_core::runtime::SourceId::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for tono_core::runtime::SourceId
 impl core::marker::StructuralPartialEq for tono_core::runtime::SourceId
+pub struct tono_core::runtime::Spawn
+pub tono_core::runtime::Spawn::looping: bool
+pub tono_core::runtime::Spawn::priority: tono_core::runtime::Priority
+impl core::clone::Clone for tono_core::runtime::Spawn
+pub fn tono_core::runtime::Spawn::clone(&self) -> tono_core::runtime::Spawn
+impl core::cmp::Eq for tono_core::runtime::Spawn
+impl core::cmp::PartialEq for tono_core::runtime::Spawn
+pub fn tono_core::runtime::Spawn::eq(&self, &tono_core::runtime::Spawn) -> bool
+impl core::default::Default for tono_core::runtime::Spawn
+pub fn tono_core::runtime::Spawn::default() -> tono_core::runtime::Spawn
+impl core::fmt::Debug for tono_core::runtime::Spawn
+pub fn tono_core::runtime::Spawn::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tono_core::runtime::Spawn
+impl core::marker::StructuralPartialEq for tono_core::runtime::Spawn
 pub struct tono_core::runtime::StreamSource
 impl tono_core::runtime::StreamSource
 pub fn tono_core::runtime::StreamSource::from_doc(&tono_core::dsl::SoundDoc) -> core::option::Option<Self>
@@ -3702,12 +3714,15 @@ impl tono_core::runtime::Transport
 pub fn tono_core::runtime::Transport::advance(&mut self, u64) -> tono_core::runtime::Advance
 pub fn tono_core::runtime::Transport::beat_at_frame(&self, u64) -> f64
 pub fn tono_core::runtime::Transport::clear_loop(&mut self)
+pub fn tono_core::runtime::Transport::constant(u32, f32, u32) -> Self
 pub fn tono_core::runtime::Transport::for_program(&tono_core::program::Program) -> Self
 pub fn tono_core::runtime::Transport::frame_at_bar(&self, u32) -> u64
 pub fn tono_core::runtime::Transport::frame_at_beat(&self, f64) -> u64
 pub fn tono_core::runtime::Transport::is_playing(&self) -> bool
 pub fn tono_core::runtime::Transport::length_frames(&self) -> u64
 pub fn tono_core::runtime::Transport::loop_range(&self) -> core::option::Option<(u64, u64)>
+pub fn tono_core::runtime::Transport::next_bar(&self, u32) -> u64
+pub fn tono_core::runtime::Transport::next_beat(&self) -> u64
 pub fn tono_core::runtime::Transport::pause(&mut self)
 pub fn tono_core::runtime::Transport::play(&mut self)
 pub fn tono_core::runtime::Transport::position_bars(&self) -> f64
@@ -4090,6 +4105,7 @@ impl core::marker::StructuralPartialEq for tono_core::streaming::StreamBlocker
 pub struct tono_core::streaming::EffectChain
 impl tono_core::streaming::EffectChain
 pub fn tono_core::streaming::EffectChain::process(&mut self, &mut [f32])
+pub fn tono_core::streaming::EffectChain::stereo(&[tono_core::dsl::Node], u32) -> core::option::Option<(Self, Self)>
 pub fn tono_core::streaming::EffectChain::try_new(&[tono_core::dsl::Node], u32) -> core::option::Option<Self>
 pub struct tono_core::streaming::StreamGraph
 impl tono_core::streaming::StreamGraph

@@ -73,7 +73,8 @@ struct Bus {
     name: String,
     kind: BusKind,
     gain: f32,
-    /// A stereo insert chain (identical coefficients, independent L/R state).
+    /// A stereo insert chain (identical coefficients, independent L/R state,
+    /// the document mixer's reverb spread).
     inserts: Option<(EffectChain, EffectChain)>,
     /// Post-fader sends into FX buses, as `(target bus index, level)`.
     sends: Vec<(u32, f32)>,
@@ -275,11 +276,9 @@ impl Mixer {
         if effects.is_empty() {
             return Ok(None);
         }
-        let sr = self.sample_rate;
-        let build = || EffectChain::try_new(effects, sr);
-        let l = build().ok_or(MixerError::NotStreamable)?;
-        let r = build().ok_or(MixerError::NotStreamable)?;
-        Ok(Some((l, r)))
+        EffectChain::stereo(effects, self.sample_rate)
+            .map(Some)
+            .ok_or(MixerError::NotStreamable)
     }
 
     /// Set a source's gain (no-op for an unknown handle).
