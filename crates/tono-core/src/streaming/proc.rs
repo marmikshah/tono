@@ -1,14 +1,18 @@
-//! Streaming processors: the stateful per-sample evaluators of every
-//! transforming node (filters, delays, dynamics, waveshaping), and the graph
-//! walk that builds them.
+//! Processors: the stateful block evaluators of every transforming node
+//! (filters, delays, dynamics, waveshaping, the whole-buffer effects), and
+//! the graph walk that builds them.
 
 use std::f32::consts::TAU;
 
+use super::Ctx;
 use super::source::{Src, try_src};
 use super::value::Val;
-use crate::dsl::{DriveShape, Node, Value, note_to_hz};
-use crate::dsp::{self, node_path};
-use crate::render::{FilterKind, biquad_coeffs, drive_antideriv, drive_curve};
+use crate::dsl::{DriveShape, Node};
+use crate::dsp::{self, node_path, node_seed};
+use crate::render::{
+    ConvolveSpec, FilterKind, GranularSpec, biquad_coeffs, convolve, drive_antideriv, drive_curve,
+    granular,
+};
 
 /// One resonator of a [`Proc::Modal`] bank: constant LTI coeffs + 2-pole state.
 pub(super) struct ModalMode {
@@ -19,17 +23,22 @@ pub(super) struct ModalMode {
     y2: f32,
 }
 
-/// A streamable processor, holding its per-sample state.
+/// A processor holding its state between blocks. `process` transforms the
+/// samples at `t0..t0 + buf.len()` in place.
 pub(super) enum Proc {
-    Gain(f32),
+    Gain(Val),
     Biquad {
-        // The filter spec, kept so a live cutoff sweep can recompute the
-        // coefficients without a rebuild (see `Proc::set_cutoff`).
         kind: FilterKind,
-        fc: f32,
+        /// The authored cutoff, evaluated per sample; the coefficients are
+        /// recomputed only when it moves, so a constant cutoff pays for them
+        /// once and a swept one is bit-identical to the per-sample form.
+        cutoff: Val,
+        /// The live cutoff multiplier (`set_cutoff`), 1.0 = as built.
+        scale: f32,
         q: f32,
         sr: u32,
-
+        /// The cutoff the current coefficients were computed for.
+        prev_f: f32,
         b0: f32,
         b1: f32,
         b2: f32,
@@ -125,19 +134,51 @@ pub(super) enum Proc {
     },
     Duck {
         trigger: Box<Src>,
+        /// The trigger's block.
+        scratch: Vec<f32>,
         env: f32,
         at: f32,
         rt: f32,
         amount: f32,
     },
+    /// FFT convolution with a synthesized IR: needs the whole signal at once,
+    /// so it is built only for the bounce, which processes one block as long
+    /// as the document.
+    Convolve {
+        spec: ConvolveSpec,
+        sr: u32,
+        seed: u64,
+        n: usize,
+    },
+    /// The granular texture reads the whole signal out of order: bounce-only,
+    /// like [`Proc::Convolve`].
+    Granular {
+        spec: GranularSpec,
+        sr: u32,
+        seed: u64,
+        n: usize,
+    },
 }
 
 impl Proc {
-    /// Process one sample with persistent state and the shared deterministic math.
-    pub(super) fn step(&mut self, x0: f32, t: usize, pitch: f32) -> f32 {
+    /// Transform the samples at `t0..t0 + buf.len()` in place. `pitch` is
+    /// the per-sample live multiplier the pitched processors (ring mod, a
+    /// duck's trigger) follow.
+    pub(super) fn process(&mut self, buf: &mut [f32], t0: usize, pitch: &[f32]) {
+        debug_assert_eq!(buf.len(), pitch.len());
         match self {
-            Proc::Gain(a) => x0 * *a,
+            Proc::Gain(amount) => {
+                for (i, x) in buf.iter_mut().enumerate() {
+                    *x *= amount.eval(t0 + i);
+                }
+            }
             Proc::Biquad {
+                kind,
+                cutoff,
+                scale,
+                q,
+                sr,
+                prev_f,
                 b0,
                 b1,
                 b2,
@@ -147,28 +188,47 @@ impl Proc {
                 x2,
                 y1,
                 y2,
-                ..
             } => {
-                let y0 = *b0 * x0 + *b1 * *x1 + *b2 * *x2 - *a1 * *y1 - *a2 * *y2;
-                *x2 = *x1;
-                *x1 = x0;
-                *y2 = *y1;
-                *y1 = y0;
-                y0
-            }
-            Proc::Bitcrush { half } => (x0.clamp(-1.0, 1.0) * *half).round() / *half,
-            Proc::Downsample { f, held } => {
-                if t.is_multiple_of(*f) {
-                    *held = x0;
+                for (i, x) in buf.iter_mut().enumerate() {
+                    let f = cutoff.eval(t0 + i) * *scale;
+                    if f != *prev_f {
+                        (*b0, *b1, *b2, *a1, *a2) = biquad_coeffs(*kind, f, *q, *sr);
+                        *prev_f = f;
+                    }
+                    let x0 = *x;
+                    let y0 = *b0 * x0 + *b1 * *x1 + *b2 * *x2 - *a1 * *y1 - *a2 * *y2;
+                    *x2 = *x1;
+                    *x1 = x0;
+                    *y2 = *y1;
+                    *y1 = y0;
+                    *x = y0;
                 }
-                *held
             }
-            Proc::Delay { buf, w, feedback } => {
-                let delayed = buf[*w];
-                let y = x0 + *feedback * delayed;
-                buf[*w] = y;
-                *w = (*w + 1) % buf.len();
-                y
+            Proc::Bitcrush { half } => {
+                for x in buf.iter_mut() {
+                    *x = (x.clamp(-1.0, 1.0) * *half).round() / *half;
+                }
+            }
+            Proc::Downsample { f, held } => {
+                for (i, x) in buf.iter_mut().enumerate() {
+                    if (t0 + i).is_multiple_of(*f) {
+                        *held = *x;
+                    }
+                    *x = *held;
+                }
+            }
+            Proc::Delay {
+                buf: line,
+                w,
+                feedback,
+            } => {
+                for x in buf.iter_mut() {
+                    let delayed = line[*w];
+                    let y = *x + *feedback * delayed;
+                    line[*w] = y;
+                    *w = (*w + 1) % line.len();
+                    *x = y;
+                }
             }
             Proc::Reverb {
                 combs,
@@ -179,32 +239,38 @@ impl Proc {
                 comb_norm,
                 mix,
             } => {
-                let mut wet = 0.0f32;
-                for (buf, idx, fs) in combs.iter_mut() {
-                    let y = buf[*idx];
-                    *fs = y * (1.0 - *damp) + *fs * *damp;
-                    buf[*idx] = x0 + *fs * *feedback;
-                    *idx = (*idx + 1) % buf.len();
-                    wet += y;
+                for x in buf.iter_mut() {
+                    let x0 = *x;
+                    let mut wet = 0.0f32;
+                    for (line, idx, fs) in combs.iter_mut() {
+                        let y = line[*idx];
+                        *fs = y * (1.0 - *damp) + *fs * *damp;
+                        line[*idx] = x0 + *fs * *feedback;
+                        *idx = (*idx + 1) % line.len();
+                        wet += y;
+                    }
+                    for (line, idx) in allpasses.iter_mut() {
+                        let buffered = line[*idx];
+                        let y = -wet + buffered;
+                        line[*idx] = wet + buffered * *g;
+                        *idx = (*idx + 1) % line.len();
+                        wet = y;
+                    }
+                    *x = x0 * (1.0 - *mix) + (wet * *comb_norm) * *mix;
                 }
-                for (buf, idx) in allpasses.iter_mut() {
-                    let buffered = buf[*idx];
-                    let y = -wet + buffered;
-                    buf[*idx] = wet + buffered * *g;
-                    *idx = (*idx + 1) % buf.len();
-                    wet = y;
-                }
-                x0 * (1.0 - *mix) + (wet * *comb_norm) * *mix
             }
             Proc::Modal { modes, mix } => {
-                let mut wet = 0.0f32;
-                for m in modes.iter_mut() {
-                    let y = m.b0 * x0 + m.a1 * m.y1 + m.a2 * m.y2;
-                    m.y2 = m.y1;
-                    m.y1 = y;
-                    wet += y;
+                for x in buf.iter_mut() {
+                    let x0 = *x;
+                    let mut wet = 0.0f32;
+                    for m in modes.iter_mut() {
+                        let y = m.b0 * x0 + m.a1 * m.y1 + m.a2 * m.y2;
+                        m.y2 = m.y1;
+                        m.y1 = y;
+                        wet += y;
+                    }
+                    *x = x0 * (1.0 - *mix) + wet * *mix;
                 }
-                x0 * (1.0 - *mix) + wet * *mix
             }
             Proc::Drive {
                 amount,
@@ -215,13 +281,20 @@ impl Proc {
                 dc_x,
                 dc_y,
             } => {
-                let amt = amount.eval(t).max(0.0);
-                if !*adaa {
-                    drive_curve(amt * x0, *shape)
-                } else {
-                    const EPS: f32 = 1e-5;
-                    const R: f32 = 0.9995;
-                    let xn = amt * x0;
+                // ADAA: the average of the curve over [x[n-1], x[n]] band-limits
+                // the foldback; the midpoint fallback avoids the 0/0 when
+                // consecutive inputs are nearly equal. A ~5 Hz one-pole DC
+                // blocker follows, since the difference quotient leaves a
+                // small DC term on asymmetric input.
+                const EPS: f32 = 1e-5;
+                const R: f32 = 0.9995;
+                for (i, x) in buf.iter_mut().enumerate() {
+                    let amt = amount.eval(t0 + i).max(0.0);
+                    if !*adaa {
+                        *x = drive_curve(amt * *x, *shape);
+                        continue;
+                    }
+                    let xn = amt * *x;
                     let f = drive_antideriv(xn, *shape);
                     let d = xn - *x_prev;
                     let y = if d.abs() > EPS {
@@ -234,22 +307,26 @@ impl Proc {
                     let yb = y - *dc_x + R * *dc_y;
                     *dc_x = y;
                     *dc_y = yb;
-                    yb
+                    *x = yb;
                 }
             }
             Proc::RingMod { phase, freq, srf } => {
-                let out = x0 * dsp::sin(TAU * *phase);
-                *phase += freq.eval(t).max(0.0) * pitch / *srf;
-                *phase -= phase.floor();
-                out
+                for (i, x) in buf.iter_mut().enumerate() {
+                    *x *= dsp::sin(TAU * *phase);
+                    *phase += freq.eval(t0 + i).max(0.0) * pitch[i] / *srf;
+                    *phase -= phase.floor();
+                }
             }
             Proc::Tremolo { rate, depth, srf } => {
-                // Closed form of the absolute sample index — block-size
-                // independent by construction, the offline path's expression.
-                x0 * (1.0 - *depth * (0.5 + 0.5 * dsp::sin(TAU * *rate * t as f32 / *srf)))
+                // Closed form of the absolute sample index: block-size
+                // independent by construction.
+                for (i, x) in buf.iter_mut().enumerate() {
+                    let t = (t0 + i) as f32;
+                    *x *= 1.0 - *depth * (0.5 + 0.5 * dsp::sin(TAU * *rate * t / *srf));
+                }
             }
             Proc::Chorus {
-                buf,
+                buf: line,
                 w,
                 base,
                 swing,
@@ -258,20 +335,23 @@ impl Proc {
                 rate,
                 srf,
             } => {
-                buf[*w] = x0;
-                let lfo = dsp::sin(TAU * *rate * t as f32 / *srf);
-                let delay = *base + *swing * lfo;
-                let read = (*w as f32 - delay).rem_euclid(*max_delay as f32);
-                let i0 = read.floor() as usize % *max_delay;
-                let i1 = (i0 + 1) % *max_delay;
-                let frac = read - read.floor();
-                let wet = buf[i0] * (1.0 - frac) + buf[i1] * frac;
-                let out = x0 * (1.0 - *mix) + wet * *mix;
-                *w = (*w + 1) % *max_delay;
-                out
+                for (i, x) in buf.iter_mut().enumerate() {
+                    let x0 = *x;
+                    line[*w] = x0;
+                    let lfo = dsp::sin(TAU * *rate * (t0 + i) as f32 / *srf);
+                    let delay = *base + *swing * lfo;
+                    // Fractional read via linear interpolation.
+                    let read = (*w as f32 - delay).rem_euclid(*max_delay as f32);
+                    let i0 = read.floor() as usize % *max_delay;
+                    let i1 = (i0 + 1) % *max_delay;
+                    let frac = read - read.floor();
+                    let wet = line[i0] * (1.0 - frac) + line[i1] * frac;
+                    *x = x0 * (1.0 - *mix) + wet * *mix;
+                    *w = (*w + 1) % *max_delay;
+                }
             }
             Proc::Flanger {
-                buf,
+                buf: line,
                 w,
                 base,
                 swing,
@@ -281,16 +361,19 @@ impl Proc {
                 rate,
                 srf,
             } => {
-                let lfo = dsp::sin(TAU * *rate * t as f32 / *srf);
-                let delay = *base + *swing * lfo;
-                let read = (*w as f32 - delay).rem_euclid(*max_delay as f32);
-                let i0 = read.floor() as usize % *max_delay;
-                let i1 = (i0 + 1) % *max_delay;
-                let frac = read - read.floor();
-                let wet = buf[i0] * (1.0 - frac) + buf[i1] * frac;
-                buf[*w] = x0 + wet * *fb;
-                *w = (*w + 1) % *max_delay;
-                x0 * (1.0 - *mix) + wet * *mix
+                for (i, x) in buf.iter_mut().enumerate() {
+                    let x0 = *x;
+                    let lfo = dsp::sin(TAU * *rate * (t0 + i) as f32 / *srf);
+                    let delay = *base + *swing * lfo;
+                    let read = (*w as f32 - delay).rem_euclid(*max_delay as f32);
+                    let i0 = read.floor() as usize % *max_delay;
+                    let i1 = (i0 + 1) % *max_delay;
+                    let frac = read - read.floor();
+                    let wet = line[i0] * (1.0 - frac) + line[i1] * frac;
+                    line[*w] = x0 + wet * *fb;
+                    *w = (*w + 1) % *max_delay;
+                    *x = x0 * (1.0 - *mix) + wet * *mix;
+                }
             }
             Proc::Phaser {
                 x1,
@@ -302,17 +385,21 @@ impl Proc {
                 mix,
                 srf,
             } => {
-                let lfo = 0.5 + 0.5 * dsp::sin(TAU * *rate * t as f32 / *srf);
-                let g = 0.15 + 0.7 * *depth * lfo;
-                let mut s = x0 + *last_wet * *fb;
-                for k in 0..4 {
-                    let y = -g * s + x1[k] + g * y1[k];
-                    x1[k] = s;
-                    y1[k] = y;
-                    s = y;
+                for (i, x) in buf.iter_mut().enumerate() {
+                    let x0 = *x;
+                    // Sweep the all-pass coefficient between ~0.15 and ~0.85.
+                    let lfo = 0.5 + 0.5 * dsp::sin(TAU * *rate * (t0 + i) as f32 / *srf);
+                    let g = 0.15 + 0.7 * *depth * lfo;
+                    let mut s = x0 + *last_wet * *fb;
+                    for k in 0..4 {
+                        let y = -g * s + x1[k] + g * y1[k];
+                        x1[k] = s;
+                        y1[k] = y;
+                        s = y;
+                    }
+                    *last_wet = s;
+                    *x = x0 * (1.0 - *mix) + s * *mix;
                 }
-                *last_wet = s;
-                x0 * (1.0 - *mix) + s * *mix
             }
             Proc::Compress {
                 env,
@@ -322,80 +409,89 @@ impl Proc {
                 ratio,
                 makeup,
             } => {
-                let rect = x0.abs();
-                let coeff = if rect > *env { *at } else { *rt };
-                *env = rect + coeff * (*env - rect);
-                let env_db = 20.0 * dsp::log10(env.max(1e-9));
-                let gain_db = if env_db > *threshold {
-                    -(env_db - *threshold) * (1.0 - 1.0 / *ratio)
-                } else {
-                    0.0
-                };
-                let g = dsp::powf(10.0, gain_db / 20.0);
-                x0 * g * *makeup
+                for x in buf.iter_mut() {
+                    let rect = x.abs();
+                    // Attack when rising, release when falling.
+                    let coeff = if rect > *env { *at } else { *rt };
+                    *env = rect + coeff * (*env - rect);
+                    let env_db = 20.0 * dsp::log10(env.max(1e-9));
+                    let gain_db = if env_db > *threshold {
+                        -(env_db - *threshold) * (1.0 - 1.0 / *ratio)
+                    } else {
+                        0.0
+                    };
+                    let g = dsp::powf(10.0, gain_db / 20.0);
+                    *x = *x * g * *makeup;
+                }
             }
             Proc::Duck {
                 trigger,
+                scratch,
                 env,
                 at,
                 rt,
                 amount,
             } => {
-                let trig = trigger.step(t, pitch);
-                let rect = trig.abs().min(1.0);
-                let coeff = if rect > *env { *at } else { *rt };
-                *env = rect + coeff * (*env - rect);
-                x0 * (1.0 - *amount * *env)
+                // The trigger renders silently; its loudness envelope steers a
+                // gain dip on the chained signal — the sidechain pump.
+                let len = buf.len();
+                let trig = &mut scratch[..len];
+                trigger.process(trig, t0, pitch);
+                for (x, t) in buf.iter_mut().zip(trig.iter()) {
+                    let rect = t.abs().min(1.0);
+                    let coeff = if rect > *env { *at } else { *rt };
+                    *env = rect + coeff * (*env - rect);
+                    *x *= 1.0 - *amount * *env;
+                }
+            }
+            Proc::Convolve { spec, sr, seed, n } => {
+                debug_assert!(
+                    t0 == 0 && buf.len() == *n,
+                    "convolve needs the whole signal"
+                );
+                let out = convolve(buf, *spec, *sr, *seed);
+                buf.copy_from_slice(&out);
+            }
+            Proc::Granular { spec, sr, seed, n } => {
+                debug_assert!(
+                    t0 == 0 && buf.len() == *n,
+                    "granular needs the whole signal"
+                );
+                let out = granular(buf, *spec, *sr, *seed);
+                buf.copy_from_slice(&out);
             }
         }
     }
 
-    /// Recompute a biquad's coefficients for a live cutoff `scale` (1.0 = as
-    /// built), preserving filter state so a sweep is click-free. Only biquad
-    /// filters respond; every other processor ignores it. At `scale == 1.0` the
-    /// coefficients are bit-identical to the baked ones.
+    /// Apply a live cutoff `scale` (1.0 = as built) to a biquad, preserving
+    /// its state so a sweep is click-free; the coefficients follow on the
+    /// next sample. Every other processor ignores it.
     pub(super) fn set_cutoff(&mut self, scale: f32) {
         if let Proc::Biquad {
-            kind,
-            fc,
-            q,
-            sr,
-
-            b0,
-            b1,
-            b2,
-            a1,
-            a2,
-            ..
+            scale: s, prev_f, ..
         } = self
         {
-            let (nb0, nb1, nb2, na1, na2) = biquad_coeffs(*kind, *fc * scale, *q, *sr);
-            *b0 = nb0;
-            *b1 = nb1;
-            *b2 = nb2;
-            *a1 = na1;
-            *a2 = na2;
+            *s = scale;
+            *prev_f = f32::NAN;
         }
     }
 }
 
-/// Build a streaming biquad, keeping its spec so [`Proc::set_cutoff`] can
-/// recompute the coefficients for a live cutoff sweep. The coefficients come
-/// from the offline renderer's own [`biquad_coeffs`] table — one table, both
-/// paths, byte-identical by construction.
-fn biquad(kind: FilterKind, fc: f32, q: f32, sr: u32) -> Proc {
-    let (b0, b1, b2, a1, a2) = biquad_coeffs(kind, fc, q, sr);
+/// A biquad over the authored (possibly modulated) cutoff; the coefficients
+/// are computed on the first sample.
+fn biquad(kind: FilterKind, cutoff: Val, q: f32, sr: u32) -> Proc {
     Proc::Biquad {
         kind,
-        fc,
+        cutoff,
+        scale: 1.0,
         q,
         sr,
-
-        b0,
-        b1,
-        b2,
-        a1,
-        a2,
+        prev_f: f32::NAN,
+        b0: 0.0,
+        b1: 0.0,
+        b2: 0.0,
+        a1: 0.0,
+        a2: 0.0,
         x1: 0.0,
         x2: 0.0,
         y1: 0.0,
@@ -403,9 +499,9 @@ fn biquad(kind: FilterKind, fc: f32, q: f32, sr: u32) -> Proc {
     }
 }
 
-/// A streaming reverb at `sr` with `spread` extra samples per delay line —
-/// the stereo decorrelation the offline mixer gives bus/master reverbs
-/// (left 0, right 23; [`crate::render`]'s `reverb` takes the same spread).
+/// A Schroeder reverb at `sr` with `spread` extra samples per delay line —
+/// the stereo decorrelation the mixer gives bus/master reverbs (left 0,
+/// right 23).
 pub(super) fn reverb_proc(room: f32, mix: f32, sr: u32, spread: usize) -> Proc {
     let (comb_lens, allpass_lens) = crate::dsp::freeverb_lengths(sr, spread);
     Proc::Reverb {
@@ -425,33 +521,29 @@ pub(super) fn reverb_proc(room: f32, mix: f32, sr: u32, spread: usize) -> Proc {
     }
 }
 
-pub(super) fn try_proc(node: &Node, sr: u32, n: usize, path: u64) -> Option<Proc> {
-    let srf = sr as f32;
-    // Filters/EQ only stream with a constant cutoff.
-    let cst = |val: &Value| match val {
-        Value::Const(c) => Some(*c),
-        Value::Note(s) => Some(note_to_hz(s).unwrap_or(440.0)),
-        Value::Modulated(_) => None,
-    };
-    let v = |val: &Value| Val::build(val, sr, n);
+/// Build the processor for `node`, or `None` when the context refuses it: the
+/// whole-buffer effects only exist for the bounce, and a non-processor node
+/// is not a processor.
+pub(super) fn try_proc(node: &Node, ctx: &Ctx, path: u64) -> Option<Proc> {
+    let sr = ctx.sr;
+    let srf = ctx.srf();
+    let v = |val: &crate::dsl::Value| Val::build(val, sr, ctx.n);
     Some(match node {
-        Node::Gain { amount } => Proc::Gain(cst(amount)?),
-        Node::Lowpass { cutoff, q } => biquad(FilterKind::Low, cst(cutoff)?, *q, sr),
-        Node::Highpass { cutoff, q } => biquad(FilterKind::High, cst(cutoff)?, *q, sr),
-        Node::Bandpass { cutoff, q } => biquad(FilterKind::Band, cst(cutoff)?, *q, sr),
-        Node::Notch { cutoff, q } => biquad(FilterKind::Notch, cst(cutoff)?, *q, sr),
-        Node::Peak { cutoff, q, gain_db } => {
-            biquad(FilterKind::Peak(*gain_db), cst(cutoff)?, *q, sr)
-        }
+        Node::Gain { amount } => Proc::Gain(v(amount)),
+        Node::Lowpass { cutoff, q } => biquad(FilterKind::Low, v(cutoff), *q, sr),
+        Node::Highpass { cutoff, q } => biquad(FilterKind::High, v(cutoff), *q, sr),
+        Node::Bandpass { cutoff, q } => biquad(FilterKind::Band, v(cutoff), *q, sr),
+        Node::Notch { cutoff, q } => biquad(FilterKind::Notch, v(cutoff), *q, sr),
+        Node::Peak { cutoff, q, gain_db } => biquad(FilterKind::Peak(*gain_db), v(cutoff), *q, sr),
         Node::Lowshelf { cutoff, gain_db } => {
-            biquad(FilterKind::LowShelf(*gain_db), cst(cutoff)?, 0.707, sr)
+            biquad(FilterKind::LowShelf(*gain_db), v(cutoff), 0.707, sr)
         }
         Node::Highshelf { cutoff, gain_db } => {
-            biquad(FilterKind::HighShelf(*gain_db), cst(cutoff)?, 0.707, sr)
+            biquad(FilterKind::HighShelf(*gain_db), v(cutoff), 0.707, sr)
         }
         Node::Bitcrush { bits } => {
-            // Shared with the offline path: validate() bounds bits to 1..=16,
-            // and the clamped shift can't overflow for unvalidated docs.
+            // validate() bounds bits to 1..=16; the shared clamp keeps an
+            // unvalidated doc from overflowing the shift.
             let levels = crate::dsp::bitcrush_levels(*bits);
             Proc::Bitcrush { half: levels / 2.0 }
         }
@@ -460,8 +552,8 @@ pub(super) fn try_proc(node: &Node, sr: u32, n: usize, path: u64) -> Option<Proc
             held: 0.0,
         },
         Node::Delay { secs, feedback } => {
-            // Shared with the offline path: validate() caps secs at 30 s;
-            // the clamp guards unvalidated docs from an unbounded allocation.
+            // validate() caps secs at 30 s; the shared clamp guards an
+            // unvalidated doc from an unbounded allocation.
             let dn = crate::dsp::delay_line_len(*secs, sr);
             Proc::Delay {
                 buf: vec![0.0; dn],
@@ -492,6 +584,7 @@ pub(super) fn try_proc(node: &Node, sr: u32, n: usize, path: u64) -> Option<Proc
         Node::Drive { amount, shape, aa } => Proc::Drive {
             amount: v(amount),
             shape: *shape,
+            // ADAA is on unless the author selects the pointwise curve.
             adaa: aa.unwrap_or(true),
             x_prev: 0.0,
             f_prev: drive_antideriv(0.0, *shape),
@@ -584,13 +677,51 @@ pub(super) fn try_proc(node: &Node, sr: u32, n: usize, path: u64) -> Option<Proc
         } => {
             let (at, rt) = dsp::follower_coeffs(*attack, *release, srf);
             Proc::Duck {
-                trigger: Box::new(try_src(trigger, sr, n, node_path(path, 0))?),
+                trigger: Box::new(try_src(trigger, ctx, node_path(path, 0))?),
+                scratch: vec![0.0; ctx.cap],
                 env: 0.0,
                 at,
                 rt,
                 amount: *amount,
             }
         }
+        Node::Convolve {
+            decay,
+            size,
+            predelay,
+            damp,
+            mix,
+        } if ctx.offline => Proc::Convolve {
+            spec: ConvolveSpec {
+                decay: *decay,
+                size: *size,
+                predelay: *predelay,
+                damp: *damp,
+                mix: *mix,
+            },
+            sr,
+            // The IR comes from the node's structurally-seeded stream.
+            seed: node_seed(path),
+            n: ctx.n,
+        },
+        Node::Granular {
+            grain_ms,
+            density,
+            pitch,
+            spread,
+            mix,
+        } if ctx.offline => Proc::Granular {
+            spec: GranularSpec {
+                grain_ms: *grain_ms,
+                density: *density,
+                pitch: *pitch,
+                spread: *spread,
+                mix: *mix,
+            },
+            sr,
+            seed: node_seed(path),
+            n: ctx.n,
+        },
         _ => return None,
     })
 }

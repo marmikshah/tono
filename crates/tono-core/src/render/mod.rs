@@ -1,8 +1,8 @@
-//! Deterministic graph → samples renderer.
+//! The bounce: a document rendered to samples by the one block evaluator in
+//! [`crate::streaming`], followed by the whole-buffer output stage (loop
+//! body, normalization, peak limit, stereo treatment).
 //!
-//! Rendering is a pure function of `(graph, seed, sample_rate)`. Each node is
-//! evaluated into a block of `f32` samples; combinators combine those blocks.
-//! Processors transform the signal flowing through a `chain`.
+//! Rendering is a pure function of `(graph, seed, sample_rate)`.
 
 mod effects;
 mod kit;
@@ -11,21 +11,15 @@ mod seq;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use effects::{FilterKind, biquad_coeffs, drive_antideriv, drive_curve};
+pub(crate) use effects::{
+    ConvolveSpec, FilterKind, GranularSpec, biquad_coeffs, convolve, drive_antideriv, drive_curve,
+    granular,
+};
 pub(crate) use osc::{osc, poly_blep, wavetable_frames, wavetable_lookup};
 pub(crate) use seq::seq_to_signal;
 
-use crate::dsl::{Adsr, Node, Playback, Shape, SoundDoc, Value};
-use crate::dsp::{Rng, node_path, node_seed, peak_limit};
-use effects::{
-    CompressSpec, ConvolveSpec, GranularSpec, biquad, chorus, compress, convolve, drive_adaa,
-    flanger, granular, modal_bank, phaser, reverb,
-};
-use osc::{
-    dust_signal, fm_signal, impact_signal, noise_signal, osc_signal, saw_signal, square_signal,
-    super_signal, tri_signal, wavetable_signal,
-};
-use std::f32::consts::TAU;
+use crate::dsl::{Adsr, Playback, SoundDoc, Value};
+use crate::dsp::peak_limit;
 
 /// A block of mono audio samples.
 type Signal = Vec<f32>;
@@ -60,11 +54,10 @@ mod tracks;
 
 use output::normalize_output;
 pub use output::{loop_seam_db, make_loop_buffer, stereoize};
+pub(crate) use tracks::{
+    LaneCursor, MASTER_STREAM, pan_gains, track_native_stereo, track_stream_seed,
+};
 pub use tracks::{LayerStats, Stem, TracksRender, render_stems, render_tracks};
-// Shared with the streaming mixer: one definition of the pan law, the
-// per-track stream seeds, and the automation-lane math keeps the two
-// renderers byte-identical by construction.
-pub(crate) use tracks::{LaneCursor, MASTER_STREAM, pan_gains, track_stream_seed};
 
 /// Render a sound document once, yielding the mono mid plus the stereo bus
 /// for mixer documents. Every consumer that needs both (analysis + the WAV on
@@ -96,18 +89,19 @@ pub fn render(doc: &SoundDoc) -> Signal {
     render_product(doc).mono
 }
 
-/// Raw graph evaluation — [`render_node`] on the root with no output stage (loop
-/// / normalize / peak-limit / stereo). This is the reference the streaming
-/// renderer matches byte-for-byte (used by the streaming byte-identity tests).
+/// Raw graph evaluation — the root in one block with no output stage (loop
+/// / normalize / peak-limit / stereo). The reference the streaming tests
+/// compare chunked fills against.
 #[cfg(test)]
 pub(crate) fn render_graph(doc: &SoundDoc) -> Signal {
-    render_node(&doc.root, doc.frame_count(), doc.sample_rate, doc.seed)
+    crate::streaming::render_graph_offline(&doc.root, doc.sample_rate, doc.frame_count(), doc.seed)
 }
 
 /// The non-mixer render path: one graph, one mono buffer.
 fn render_plain(doc: &SoundDoc) -> Signal {
     let sr = doc.sample_rate;
-    let mut out = render_node(&doc.root, doc.frame_count(), sr, doc.seed);
+    let mut out =
+        crate::streaming::render_graph_offline(&doc.root, sr, doc.frame_count(), doc.seed);
     // A loop is rendered as its seamless body (tail crossfaded onto the head).
     if let Playback::Loop {
         start_secs,
@@ -126,16 +120,18 @@ fn render_plain(doc: &SoundDoc) -> Signal {
     out
 }
 
-/// Evaluate a parameter by looping over the shared per-sample evaluator.
-/// Offline and streaming modulators use the same math.
-fn eval_value(v: &Value, n: usize, sr: u32) -> Vec<f32> {
+/// Evaluate a parameter over `n` samples with the shared per-sample
+/// evaluator — the seq synthesis pre-renders its per-note pitch and duty
+/// buffers this way.
+pub(super) fn eval_value(v: &Value, n: usize, sr: u32) -> Vec<f32> {
     let mut val = crate::streaming::value::Val::build(v, sr, n);
     (0..n).map(|t| val.eval(t)).collect()
 }
 
-/// Edit-stable seed for a [`Modulator::Rand`]: a hash of only the modulator's
-/// own fields, so its walk never shifts when sibling nodes are added or
-/// removed (the random stream is not threaded through graph traversal).
+/// Edit-stable seed for a [`Modulator::Rand`](crate::dsl::Modulator::Rand): a
+/// hash of only the modulator's own fields, so its walk never shifts when
+/// sibling nodes are added or removed (the random stream is not threaded
+/// through graph traversal).
 pub(crate) fn rand_seed(seed: u64, from: f32, to: f32, rate: f32) -> u64 {
     let mut h = seed ^ crate::dsp::GOLDEN_GAMMA;
     for bits in [from.to_bits(), to.to_bits(), rate.to_bits()] {
@@ -144,297 +140,9 @@ pub(crate) fn rand_seed(seed: u64, from: f32, to: f32, rate: f32) -> u64 {
     h
 }
 
-/// Render a graph with structurally seeded randomness for each stochastic leaf.
-fn render_node(node: &Node, n: usize, sr: u32, path: u64) -> Signal {
-    match node {
-        Node::Square { freq, duty } => square_signal(freq, duty, n, sr),
-        Node::Triangle { freq } => tri_signal(freq, n, sr),
-        Node::Sawtooth { freq } => saw_signal(freq, n, sr),
-        Node::Super {
-            wave,
-            freq,
-            voices,
-            detune_cents,
-        } => super_signal(*wave, freq, *voices, *detune_cents, n, sr),
-        Node::Sine { freq } => osc_signal(freq, n, sr, |p| osc(Shape::Sine, p)),
-        Node::Noise { color } => {
-            let mut local = Rng::new(node_seed(path));
-            noise_signal(*color, n, &mut local)
-        }
-        Node::Fm { freq, ratio, index } => fm_signal(freq, *ratio, index, n, sr),
-        Node::Wavetable {
-            wave,
-            freq,
-            position,
-        } => wavetable_signal(*wave, freq, position, n, sr),
-        Node::Seq { .. } => {
-            let mut local = Rng::new(node_seed(path));
-            seq_to_signal(node, n, sr, &mut local)
-        }
-        Node::Impact { hardness, velocity } => impact_signal(*hardness, *velocity, n, sr),
-        Node::Dust { density, decay } => {
-            let mut local = Rng::new(node_seed(path));
-            dust_signal(*density, *decay, n, sr, &mut local)
-        }
-        Node::Env { adsr: env } => adsr(env, n, sr),
-        // Validation rejects nested mixers; render defensively as a plain sum.
-        Node::Tracks { tracks, .. } => {
-            let mut acc = vec![0.0f32; n];
-            for (i, t) in tracks.iter().enumerate() {
-                let sig = render_node(&t.node, n, sr, node_path(path, i));
-                for (o, v) in acc.iter_mut().zip(sig) {
-                    *o += v * t.gain;
-                }
-            }
-            acc
-        }
-        Node::Mix { inputs } => {
-            let mut acc = vec![0.0f32; n];
-            for (i, input) in inputs.iter().enumerate() {
-                let s = render_node(input, n, sr, node_path(path, i));
-                for (o, v) in acc.iter_mut().zip(s) {
-                    *o += v;
-                }
-            }
-            acc
-        }
-        Node::Mul { inputs } => {
-            let mut acc = vec![1.0f32; n];
-            for (i, input) in inputs.iter().enumerate() {
-                let s = render_node(input, n, sr, node_path(path, i));
-                for (o, v) in acc.iter_mut().zip(s) {
-                    *o *= v;
-                }
-            }
-            acc
-        }
-        Node::Chain { stages } => {
-            let mut buf: Option<Signal> = None;
-            for (i, stage) in stages.iter().enumerate() {
-                let cp = node_path(path, i);
-                buf = Some(match (&buf, stage.is_processor()) {
-                    // A processor transforms the running signal.
-                    (Some(input), true) => apply_processor(stage, input, sr, cp),
-                    // A source/combinator as a later stage replaces the signal.
-                    (_, _) => render_node(stage, n, sr, cp),
-                });
-            }
-            buf.unwrap_or_else(|| vec![0.0; n])
-        }
-        // A processor rendered standalone (outside a chain) has no input ⇒ silence.
-        _ if node.is_processor() => vec![0.0; n],
-        // Every non-processor variant is matched above; this fires only if a
-        // new source is added to the DSL without a render arm.
-        _ => unreachable!("unhandled source node in render_node"),
-    }
-}
-
-/// Apply a processor to an incoming signal. `path` seeds any internal side graph.
-fn apply_processor(node: &Node, input: &[f32], sr: u32, path: u64) -> Signal {
-    match node {
-        Node::Duck {
-            trigger,
-            amount,
-            attack,
-            release,
-        } => {
-            // Render the trigger silently; its loudness envelope steers a
-            // gain dip on the chained signal — the sidechain pump.
-            let trig = render_node(trigger, input.len(), sr, node_path(path, 0));
-            let srf = sr as f32;
-            let (at, rt) = crate::dsp::follower_coeffs(*attack, *release, srf);
-            let mut env = 0.0f32;
-            input
-                .iter()
-                .zip(trig)
-                .map(|(&x, t)| {
-                    let rect = t.abs().min(1.0);
-                    let coeff = if rect > env { at } else { rt };
-                    env = rect + coeff * (env - rect);
-                    x * (1.0 - amount * env)
-                })
-                .collect()
-        }
-        Node::Lowpass { cutoff, q } => biquad(input, cutoff, *q, sr, FilterKind::Low),
-        Node::Highpass { cutoff, q } => biquad(input, cutoff, *q, sr, FilterKind::High),
-        Node::Bandpass { cutoff, q } => biquad(input, cutoff, *q, sr, FilterKind::Band),
-        Node::Notch { cutoff, q } => biquad(input, cutoff, *q, sr, FilterKind::Notch),
-        Node::Peak { cutoff, q, gain_db } => {
-            biquad(input, cutoff, *q, sr, FilterKind::Peak(*gain_db))
-        }
-        Node::Lowshelf { cutoff, gain_db } => {
-            biquad(input, cutoff, 0.707, sr, FilterKind::LowShelf(*gain_db))
-        }
-        Node::Highshelf { cutoff, gain_db } => {
-            biquad(input, cutoff, 0.707, sr, FilterKind::HighShelf(*gain_db))
-        }
-        Node::Gain { amount } => {
-            let g = eval_value(amount, input.len(), sr);
-            input.iter().zip(g).map(|(x, k)| x * k).collect()
-        }
-        Node::Bitcrush { bits } => {
-            // validate() bounds bits to 1..=16; the .min(31) keeps a direct
-            // render of an unvalidated doc from overflowing the shift.
-            let levels = (1u32 << (*bits as u32).min(31)) as f32;
-            let half = levels / 2.0;
-            input
-                .iter()
-                .map(|x| (x.clamp(-1.0, 1.0) * half).round() / half)
-                .collect()
-        }
-        Node::Downsample { factor } => {
-            let f = (*factor).max(1) as usize;
-            let mut out = Vec::with_capacity(input.len());
-            let mut held = 0.0;
-            for (i, &x) in input.iter().enumerate() {
-                if i % f == 0 {
-                    held = x;
-                }
-                out.push(held);
-            }
-            out
-        }
-        Node::Delay { secs, feedback } => {
-            // validate() caps secs at 30 s; the shared clamp guards direct
-            // render calls on unvalidated docs from an unbounded allocation.
-            let dn = crate::dsp::delay_line_len(*secs, sr);
-            let mut buf = vec![0.0f32; dn];
-            let mut w = 0usize;
-            let mut out = Vec::with_capacity(input.len());
-            for &x in input {
-                let delayed = buf[w];
-                let y = x + feedback * delayed;
-                buf[w] = y;
-                w = (w + 1) % dn;
-                out.push(y);
-            }
-            out
-        }
-        Node::Reverb { room, mix } => reverb(input, *room, *mix, sr, 0),
-        Node::Modal { modes, mix } => modal_bank(input, modes, *mix, sr),
-        Node::Drive { amount, shape, aa } => {
-            let a = eval_value(amount, input.len(), sr);
-            // ADAA is enabled unless the author selects the pointwise curve.
-            let use_adaa = aa.unwrap_or(true);
-            if use_adaa {
-                drive_adaa(input, &a, *shape)
-            } else {
-                input
-                    .iter()
-                    .zip(a)
-                    .map(|(x, amt)| drive_curve(amt.max(0.0) * x, *shape))
-                    .collect()
-            }
-        }
-        Node::RingMod { freq } => {
-            let f = eval_value(freq, input.len(), sr);
-            let srf = sr as f32;
-            let mut phase = 0.0f32;
-            let mut out = Vec::with_capacity(input.len());
-            for (i, &x) in input.iter().enumerate() {
-                out.push(x * crate::dsp::sin(TAU * phase));
-                phase += f[i].max(0.0) / srf;
-                phase -= phase.floor();
-            }
-            out
-        }
-        Node::Tremolo { rate, depth } => {
-            // Phase derives from each sample's absolute index (t = i/sr),
-            // never an accumulator — the streaming path evaluates the same
-            // closed form at its absolute position, byte-identical at any
-            // block size.
-            let srf = sr as f32;
-            input
-                .iter()
-                .enumerate()
-                .map(|(i, &x)| {
-                    x * (1.0 - *depth * (0.5 + 0.5 * crate::dsp::sin(TAU * *rate * i as f32 / srf)))
-                })
-                .collect()
-        }
-        Node::Chorus { rate, depth, mix } => chorus(input, *rate, *depth, *mix, sr),
-        Node::Flanger {
-            rate,
-            depth,
-            feedback,
-            mix,
-        } => flanger(input, *rate, *depth, *feedback, *mix, sr),
-        Node::Phaser {
-            rate,
-            depth,
-            feedback,
-            mix,
-        } => phaser(input, *rate, *depth, *feedback, *mix, sr),
-        Node::Compress {
-            threshold,
-            ratio,
-            attack,
-            release,
-            makeup,
-        } => compress(
-            input,
-            CompressSpec {
-                threshold: *threshold,
-                ratio: *ratio,
-                attack: *attack,
-                release: *release,
-                makeup: *makeup,
-            },
-            sr,
-        ),
-        Node::Convolve {
-            decay,
-            size,
-            predelay,
-            damp,
-            mix,
-        } => {
-            // The IR comes from the node's structurally-seeded stream — stable
-            // per graph position, no draws from the shared render stream.
-            convolve(
-                input,
-                ConvolveSpec {
-                    decay: *decay,
-                    size: *size,
-                    predelay: *predelay,
-                    damp: *damp,
-                    mix: *mix,
-                },
-                sr,
-                node_seed(path),
-            )
-        }
-        Node::Granular {
-            grain_ms,
-            density,
-            pitch,
-            spread,
-            mix,
-        } => {
-            // The grain schedule is drawn from the node's structurally-seeded
-            // stream — stable per graph position.
-            granular(
-                input,
-                GranularSpec {
-                    grain_ms: *grain_ms,
-                    density: *density,
-                    pitch: *pitch,
-                    spread: *spread,
-                    mix: *mix,
-                },
-                sr,
-                node_seed(path),
-            )
-        }
-        // Every processor variant is matched above; this fires only if a new
-        // processor is added to the DSL without a render arm (the same guard
-        // render_node keeps for sources) — loud, never a silent identity.
-        _ => unreachable!("unhandled processor node in apply_processor"),
-    }
-}
-
-/// ADSR envelope with an sfxr-style punch boost on the initial transient.
-fn adsr(env: &Adsr, n: usize, sr: u32) -> Signal {
+/// ADSR envelope with an sfxr-style punch boost on the initial transient,
+/// over `n` samples — the seq synthesis's per-note amplitude envelope.
+pub(super) fn adsr(env: &Adsr, n: usize, sr: u32) -> Signal {
     let Adsr { a, d, s, r, punch } = *env;
     let srf = sr as f32;
     let rel_start = (n as f32 / srf - r).max(0.0);

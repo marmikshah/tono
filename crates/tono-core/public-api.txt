@@ -4120,7 +4120,6 @@ pub fn tono_core::speaker::play_doc_once(&tono_core::dsl::SoundDoc, f32) -> anyh
 pub mod tono_core::streaming
 pub enum tono_core::streaming::StreamBlocker
 pub tono_core::streaming::StreamBlocker::LoopPlayback
-pub tono_core::streaming::StreamBlocker::ModulatedFilter
 pub tono_core::streaming::StreamBlocker::NestedMixer
 pub tono_core::streaming::StreamBlocker::Normalize
 pub tono_core::streaming::StreamBlocker::OfflineEffect

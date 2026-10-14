@@ -30,6 +30,7 @@ checks. The 1.x line may break in minor releases; every break is listed here.
   `vary::humanize`, `music::Voicing`, the `ids` module, the `units` newtypes
   (`Bars`, `Decibels`, `Hertz`, `Samples`), and the `Serialize` derives on
   `Recipe` and `Composition`.
+- `StreamBlocker::ModulatedFilter` (diagnostic T1507) is gone: modulated filters and gains stream. Code matching on the enum must drop that arm.
 - Program format 3: `Program` no longer duplicates `schema_version`,
   `engine_version` and `warnings`, and `ProgramMeta`/`TrackMeta` drop the
   fields now derived from the document. Bundles compiled by 1.10 must be
@@ -58,6 +59,7 @@ checks. The 1.x line may break in minor releases; every break is listed here.
 - GitHub Releases attach CLI binaries for Linux x86_64, macOS (Apple silicon and Intel) and Windows x86_64, built with default features. Python wheels are still built for Linux x86_64 only.
 - The SoundDoc reference shows the external tagging of modulators and the object form of the `stereo` field.
 - `Node::PROCESSOR_KINDS` lists the processor node tags; the Python bindings validate bus effects against it instead of a private copy, and their typed-song module is split into `convert`, `instruments`, `pattern`, `song` and `program`.
+- One DSP evaluator: the offline bounce now runs the same block-based kernels as the streaming renderer (one block as long as the document instead of per-sample recursion), so the two can no longer drift; every golden hash is unchanged. The mixer captures layer stats and stems in the same pass. Filters, EQ and `gain` with a modulated cutoff or amount stream natively (the coefficients follow the modulator per sample), so they no longer block streaming.
 
 ### Fixed
 - Program load and scheduled swaps verify the current bundle revision, integrity hash, and resolved document.
