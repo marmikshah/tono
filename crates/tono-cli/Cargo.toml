@@ -21,17 +21,28 @@ all-features = true
 # crate: the CLI re-exports + uses the analysis surface and checks .sf2 paths.
 tono-core = { workspace = true, features = ["analysis", "sampler"] }
 anyhow = { workspace = true }
-flacenc = { workspace = true }
 hound = { workspace = true }
-midly = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-vorbis_rs = { workspace = true }
-# Optional: speaker playback for `tono play` (`cargo install tono --features play`).
+# Optional, each behind the feature of the same purpose (see [features]).
 cpal = { workspace = true, optional = true }
+flacenc = { workspace = true, optional = true }
+midly = { workspace = true, optional = true }
+vorbis_rs = { workspace = true, optional = true }
 
+# Features. All are off by default, so a plain `cargo install tono` builds the
+# WAV-only CLI without a C toolchain or an audio backend:
+#   encode  `--format flac|ogg` on every rendering command: FLAC through the
+#           pure-Rust `flacenc`, OGG Vorbis through `vorbis_rs` (compiles
+#           libvorbis with cc). WAV output needs no feature.
+#   midi    `tono midi` (SoundDoc/Song -> Standard MIDI File) and
+#           `tono import` (SMF -> SoundDoc/Song), through `midly`.
+#   play    `tono play`: audition a document through the speakers via `cpal`.
+# Enable them at install time: `cargo install tono --features midi,encode`.
 [features]
+encode = ["dep:flacenc", "dep:vorbis_rs"]
+midi = ["dep:midly"]
 play = ["dep:cpal"]
 
 [dev-dependencies]
