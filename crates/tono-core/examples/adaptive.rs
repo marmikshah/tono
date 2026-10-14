@@ -1,6 +1,6 @@
 //! Adaptive game music: stems fade in as the action heats up, plus a stinger.
 //!
-//!     cargo run -p tono-play --example adaptive
+//!     cargo run -p tono-core --features cpal --example adaptive
 //!
 //! Three looping stems on one intensity knob — drums always play, bass joins at
 //! mid intensity, the lead swells in at high intensity — with a one-shot stinger
@@ -12,7 +12,7 @@ use std::time::Duration;
 use tono_core::adaptive::AdaptiveMusic;
 use tono_core::dsl::{Adsr, SeqWave, SoundDoc};
 use tono_core::song::{Song, note};
-use tono_play::{Speaker, device_sample_rate};
+use tono_core::speaker::{Speaker, device_sample_rate};
 
 /// Compile a one-bar song to a doc rendered at the device sample rate.
 fn stem_doc(song: &Song, sr: u32) -> SoundDoc {

@@ -17,10 +17,10 @@ test = false
 crate-type = ["cdylib"]
 
 [dependencies]
-# Explicit features: the bindings use the analysis surface and check .sf2
-# paths, so a change to core's defaults can't silently unbuild this crate.
-tono-core = { workspace = true, features = ["analysis", "sampler"] }
-tono-play = { path = "../tono-play" }
+# Explicit features: the bindings use the analysis surface, check .sf2 paths
+# and stream through core's cpal speaker, so a change to core's defaults
+# can't silently unbuild this crate.
+tono-core = { workspace = true, features = ["analysis", "sampler", "cpal"] }
 serde_json = { workspace = true }
 # abi3-py39: one wheel per platform covers every CPython 3.9+. `extension-module`
 # is enabled only for the wheel build (see pyproject [tool.maturin].features), so

@@ -18,6 +18,7 @@ all-features = true
 
 [dependencies]
 anyhow = { workspace = true }
+cpal = { workspace = true, optional = true }
 image = { workspace = true, optional = true }
 rustfft = { workspace = true, optional = true }
 rustysynth = { workspace = true, optional = true }
@@ -35,9 +36,34 @@ rustfft = { workspace = true }
 name = "render"
 harness = false
 
+# The speaker examples need an output device; the three headless ones
+# (compose, play_instrument, runtime_mixer) build with the default features.
+[[example]]
+name = "adaptive"
+required-features = ["cpal"]
+
+[[example]]
+name = "buses"
+required-features = ["cpal"]
+
+[[example]]
+name = "live_band"
+required-features = ["cpal"]
+
+[[example]]
+name = "lofi"
+required-features = ["cpal"]
+
+[[example]]
+name = "playground"
+required-features = ["cpal"]
+
 [features]
 default = ["analysis", "sampler"]
 # Spectral analysis + spectrogram/waveform PNGs (the authoring/critique surface).
 analysis = ["dep:image", "dep:rustfft"]
 # SoundFont (.sf2) sampler instrument — pulls in rustysynth + file I/O.
 sampler = ["dep:rustysynth"]
+# Native speaker output (`speaker` module): the cpal adapter the CLI's `play`
+# feature, the Python bindings and the examples share. Needs ALSA on Linux.
+cpal = ["dep:cpal"]

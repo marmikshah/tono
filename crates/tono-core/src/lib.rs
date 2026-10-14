@@ -45,11 +45,12 @@
 //!
 //! # Features and the shell
 //!
-//! The lean build uses serde and a fixed-order FFT. Optional features (both
-//! enabled by default): `analysis` adds image and rustfft for feedback PNGs
-//! and statistics; `sampler` adds rustysynth and SoundFont file loading.
-//! Audio devices belong to the native adapters. The `tono` CLI supplies
-//! audio-file encoders and MIDI import/export.
+//! The lean build uses serde and a fixed-order FFT. Optional features:
+//! `analysis` adds image and rustfft for feedback PNGs and statistics;
+//! `sampler` adds rustysynth and SoundFont file loading (both enabled by
+//! default); `cpal` (off by default) adds the [`speaker`] module, the native
+//! output adapter that plays any [`runtime::AudioSource`] through the default
+//! device. The `tono` CLI supplies audio-file encoders and MIDI import/export.
 //!
 //! See the [sound-effects guide] for graphs and recipes, and the [live guide]
 //! for composing an audio runtime.
@@ -81,6 +82,8 @@ pub mod render;
 pub mod review;
 pub mod runtime;
 pub mod song;
+#[cfg(feature = "cpal")]
+pub mod speaker;
 pub mod streaming;
 pub mod units;
 pub mod vary;
