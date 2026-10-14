@@ -1,8 +1,8 @@
 # Determinism and streaming
 
 A render depends on the graph, seed and sample rate. The current engine uses
-fixed f64 transcendental kernels and a fixed-order convolution FFT, so the
-same supported document produces byte-identical samples across platforms.
+fixed f64 transcendental kernels, so the same supported document produces
+byte-identical samples across platforms.
 
 ## Current formats
 
@@ -23,11 +23,10 @@ their random draws. Save the source JSON and seed with exported audio.
 | Streams natively | Uses the buffer-backed Player |
 |---|---|
 | Source nodes and their modulators, including noise, dust and sequences | SoundFont sampler sequences |
-| Filters/EQ with constant cutoffs and gain with constant amounts | Modulated filter/EQ cutoffs or gain amounts |
-| Tremolo | Convolution and granular effects |
-| A tracks root with sidechains, buses and automation | Nested mixers |
-| Causal effects | Whole-buffer normalization, loop playback, Haas/Wide stereo treatment |
+| Every processor, including modulated filter/EQ cutoffs and gain amounts | Nested mixers |
+| A tracks root with sidechains, buses and automation | Whole-buffer normalization, loop playback, Haas/Wide stereo treatment |
 
-Supported streaming graphs match the offline render at every block size.
+The bounce and a stream run the same evaluator, so a supported streaming
+graph matches the offline render at every block size.
 For live compilation, `CompileTarget::Runtime` rejects streaming blockers
 instead of accepting a buffer-backed program.

@@ -114,8 +114,6 @@ pub(crate) const FREEVERB_DAMP: f32 = 0.2;
 /// Modulated-delay effect tunings shared by both renderers.
 pub(crate) const CHORUS_BASE_SECS: f32 = 0.015;
 pub(crate) const CHORUS_SWING_SECS: f32 = 0.010;
-pub(crate) const FLANGER_BASE_SECS: f32 = 0.0025;
-pub(crate) const FLANGER_SWING_SECS: f32 = 0.002;
 
 /// Deterministic sine.
 #[inline]
@@ -452,12 +450,6 @@ pub(crate) fn modal_coeffs(freq: f32, decay: f32, gain: f32, sr: u32) -> (f32, f
 /// offline and streaming paths.
 pub(crate) fn delay_line_len(secs: f32, sr: u32) -> usize {
     ((secs.min(30.0) * sr as f32) as usize).max(1)
-}
-
-/// The quantization levels of a bitcrush: `1 << bits`, with the shift clamped
-/// so an unvalidated `bits >= 32` can't overflow on either path.
-pub(crate) fn bitcrush_levels(bits: u8) -> f32 {
-    (1u32 << (bits as u32).min(31)) as f32
 }
 
 /// The Freeverb delay-line lengths in samples at `sr` — `(comb, allpass)`,

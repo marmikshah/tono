@@ -42,14 +42,6 @@ fn main() -> Result<(), String> {
         "wave":"piano", "env":{"a":0.002, "d":0.01, "s":0.3, "r":0.02},
         "notes":[{"step":0, "len":1, "pitch":"C4"}, {"step":0, "len":1, "pitch":"G4"}]}}),
     );
-    cases.push(
-        json!({"name":"convolve", "duration":0.06, "seed":12, "root":{"type":"chain", "stages":[
-            {"type":"noise"}, {"type":"convolve", "decay":0.03, "mix":0.5}
-        ]}}),
-    );
-    cases.push(json!({"name":"granular", "duration":0.06, "seed":12, "root":{"type":"chain", "stages":[
-        {"type":"sawtooth", "freq":220}, {"type":"granular", "grain_ms":10, "density":120, "pitch":1.1, "mix":0.5}
-    ]}}));
     let references: Vec<_> = cases
         .into_iter()
         .map(|document| {

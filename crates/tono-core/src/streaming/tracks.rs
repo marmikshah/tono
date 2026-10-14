@@ -63,8 +63,8 @@ struct TrackStream {
 }
 
 /// A resolved sidechain link: one follower's duck envelope, driven by the
-/// source track's positioned post-fader signal (the `duck` node's exact
-/// attack/release recurrence).
+/// source track's positioned post-fader signal through an attack/release
+/// follower.
 struct DuckLink {
     follower: usize,
     source: usize,
@@ -82,13 +82,10 @@ struct DuckLink {
 /// instances of a seeded insert reproduce the same draws per channel.
 struct StereoChain {
     fx: Vec<(Proc, Proc)>,
-    /// A block of 1.0 pitch multipliers: insert chains are never pitched.
-    ones: Vec<f32>,
 }
 
 impl StereoChain {
-    /// `path` is the bus's (or master's) stream seed, handed to every insert
-    /// so e.g. a `duck`'s trigger or a `convolve`'s IR seeds per chain.
+    /// `path` is the bus's (or master's) stream seed, handed to every insert.
     fn build(nodes: &[Node], ctx: &Ctx, path: u64) -> Option<Self> {
         let fx = nodes
             .iter()
@@ -103,17 +100,13 @@ impl StereoChain {
                 }
             })
             .collect::<Option<_>>()?;
-        Some(StereoChain {
-            fx,
-            ones: vec![1.0; ctx.cap],
-        })
+        Some(StereoChain { fx })
     }
 
     fn process(&mut self, l: &mut [f32], r: &mut [f32], t0: usize) {
-        let ones = &self.ones[..l.len()];
         for (pl, pr) in self.fx.iter_mut() {
-            pl.process(l, t0, ones);
-            pr.process(r, t0, ones);
+            pl.process(l, t0);
+            pr.process(r, t0);
         }
     }
 

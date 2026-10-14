@@ -230,11 +230,10 @@ fn note_names_round_trip_and_convert() {
 
 #[test]
 fn transpose_scales_all_pitched_nodes() {
-    // Regression: modal mode freqs and the ring-mod carrier must transpose too.
+    // Regression: modal mode freqs must transpose too.
     let mut doc: SoundDoc = serde_json::from_str(
         r#"{ "name":"b", "duration":0.1, "root": { "type":"chain", "stages": [
             { "type":"sawtooth", "freq":100 },
-            { "type":"ringmod", "freq":200 },
             { "type":"modal", "modes":[{ "freq":300, "decay":0.3, "gain":1.0 }], "mix":0.5 } ] } }"#,
     )
     .unwrap();
@@ -242,8 +241,7 @@ fn transpose_scales_all_pitched_nodes() {
     let v = serde_json::to_value(&doc).unwrap();
     let stages = &v["root"]["stages"];
     assert_eq!(stages[0]["freq"], 200.0);
-    assert_eq!(stages[1]["freq"], 400.0);
-    assert_eq!(stages[2]["modes"][0]["freq"], 600.0);
+    assert_eq!(stages[1]["modes"][0]["freq"], 600.0);
 }
 
 #[test]

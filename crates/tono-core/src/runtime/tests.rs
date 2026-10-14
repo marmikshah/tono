@@ -374,8 +374,8 @@ fn stream_source_matches_the_bounce_including_its_peak_limit() {
 #[test]
 fn stream_source_rejects_non_streamable() {
     let d: SoundDoc = serde_json::from_str(
-        r#"{ "name":"n", "duration":0.05, "root": { "type":"chain", "stages":[
-          {"type":"noise", "color":"white"}, {"type":"convolve"}] } }"#,
+        r#"{ "name":"n", "duration":0.05, "normalize": { "ceiling_dbtp": -1.0 },
+          "root": { "type":"noise", "color":"white" } }"#,
     )
     .unwrap();
     assert!(StreamSource::from_doc(&d).is_none());

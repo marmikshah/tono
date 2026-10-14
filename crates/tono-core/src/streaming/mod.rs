@@ -7,9 +7,9 @@
 //! RNG streams, automation, offsets, sidechains and stereo bus/master chains.
 //!
 //! Whole-buffer stages — normalization, loop extraction, Haas/Wide stereo
-//! treatment, convolution, the granular texture, the SoundFont sampler — only
-//! run in the bounce; [`StreamGraph::blockers`] names each one that keeps a
-//! document from streaming, and the runtime then plays the buffer-backed
+//! treatment, the SoundFont sampler — only run in the bounce;
+//! [`StreamGraph::blockers`] names each one that keeps a document from
+//! streaming, and the runtime then plays the buffer-backed
 //! [`crate::player::Player`] instead.
 
 mod proc;
@@ -34,7 +34,7 @@ pub(crate) const CHUNK: usize = 256;
 
 /// What a graph is built for: the sample rate, the document length (the
 /// closed-form envelopes key on it), the largest block `process` will see
-/// (the scratch size), and whether whole-buffer stages may be built (the
+/// (the scratch size), and whether bounce-only nodes may be built (the
 /// bounce evaluates the whole document as one block).
 #[derive(Clone, Copy)]
 pub(crate) struct Ctx {
@@ -61,7 +61,7 @@ impl Ctx {
         }
     }
 
-    /// Streaming in [`CHUNK`]-sized blocks; whole-buffer nodes are refused.
+    /// Streaming in [`CHUNK`]-sized blocks; bounce-only nodes are refused.
     pub(crate) fn stream(sr: u32, n: usize) -> Self {
         Ctx {
             sr: sr.min(MAX_BUILD_RATE),
@@ -117,13 +117,6 @@ pub enum StreamBlocker {
     },
     /// The SoundFont sampler seq is an external stateful voice.
     Sampler,
-    /// An offline-only effect: convolution needs the whole input buffer at
-    /// once, and the granular texture reads it out of order — neither can be
-    /// evaluated per-sample.
-    OfflineEffect {
-        /// The node's `type` name (`convolve`, `granular`).
-        name: &'static str,
-    },
 }
 
 impl fmt::Display for StreamBlocker {
@@ -150,10 +143,6 @@ impl fmt::Display for StreamBlocker {
                 f,
                 "the SoundFont sampler seq is an external stateful voice — bounce the part offline, or voice it with the built-in waves"
             ),
-            StreamBlocker::OfflineEffect { name } => write!(
-                f,
-                "{name} is an offline effect — it needs the whole input buffer; bounce it offline / apply it at bounce time and keep the streamed graph causal"
-            ),
         }
     }
 }
@@ -169,14 +158,6 @@ fn node_blockers(node: &Node, push: &mut impl FnMut(StreamBlocker)) {
             wave: SeqWave::Sampler,
             ..
         } => push(StreamBlocker::Sampler),
-        // Offline-only whole-buffer effects (FFT convolution; out-of-order
-        // granular reads) — no per-sample streaming form exists.
-        Node::Convolve { .. } => {
-            push(StreamBlocker::OfflineEffect { name: "convolve" });
-        }
-        Node::Granular { .. } => {
-            push(StreamBlocker::OfflineEffect { name: "granular" });
-        }
         _ => {}
     }
 }
@@ -426,8 +407,6 @@ impl StreamGraph {
 pub struct EffectChain {
     procs: Vec<Proc>,
     pos: usize,
-    /// A block of 1.0 pitch multipliers: a bus is never pitched.
-    ones: Vec<f32>,
 }
 
 impl EffectChain {
@@ -439,21 +418,16 @@ impl EffectChain {
             .enumerate()
             .map(|(i, node)| try_proc(node, &ctx, node_path(0, i)))
             .collect::<Option<_>>()?;
-        Some(EffectChain {
-            procs,
-            pos: 0,
-            ones: vec![1.0; CHUNK],
-        })
+        Some(EffectChain { procs, pos: 0 })
     }
 
     /// Process a mono block in place.
     pub fn process(&mut self, block: &mut [f32]) {
         for chunk in block.chunks_mut(CHUNK) {
-            let len = chunk.len();
             for p in self.procs.iter_mut() {
-                p.process(chunk, self.pos, &self.ones[..len]);
+                p.process(chunk, self.pos);
             }
-            self.pos += len;
+            self.pos += chunk.len();
         }
     }
 }

@@ -169,16 +169,7 @@ fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
             // Clamped to the validation cap (10 octaves) — jitter runs to ×2.
             *detune_cents = jitter(*detune_cents, amount, rng, 0.0).min(12_000.0);
         }
-        Node::Wavetable { freq, position, .. } => {
-            mutate_freq(freq, amount, rng);
-            // Jitter a constant morph position (unit-clamped); a modulated
-            // position is musical motion — leave it alone, like note names.
-            if let Value::Const(c) = position {
-                *c = jitter_unit(*c, amount, rng);
-            }
-        }
         Node::Gain { amount: amt } => mutate_value(amt, amount, rng),
-        Node::Bitcrush { .. } | Node::Downsample { .. } => {}
         Node::Delay { secs, feedback } => {
             // .min(30.0): the validation cap on the delay-line allocation.
             *secs = jitter(*secs, amount, rng, 0.001).min(30.0);
@@ -205,7 +196,6 @@ fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
             *density = jitter(*density, amount, rng, 1.0);
             *decay = jitter(*decay, amount, rng, 0.0);
         }
-        Node::RingMod { freq } => mutate_freq(freq, amount, rng),
         Node::Tremolo { rate, depth } => {
             // .min(40.0): the validation cap on the LFO rate.
             *rate = jitter(*rate, amount, rng, 0.01).min(40.0);
@@ -216,55 +206,7 @@ fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
             *depth = jitter_unit(*depth, amount, rng);
             *mix = jitter_unit(*mix, amount, rng);
         }
-        Node::Flanger {
-            rate,
-            depth,
-            feedback,
-            mix,
-        }
-        | Node::Phaser {
-            rate,
-            depth,
-            feedback,
-            mix,
-        } => {
-            *rate = jitter(*rate, amount, rng, 0.01);
-            *depth = jitter_unit(*depth, amount, rng);
-            *feedback = jitter_unit(*feedback, amount, rng);
-            *mix = jitter_unit(*mix, amount, rng);
-        }
         Node::Compress { .. } => {}
-        Node::Duck { amount: amt, .. } => {
-            *amt = jitter_unit(*amt, amount, rng);
-        }
-        Node::Convolve {
-            decay,
-            size,
-            predelay,
-            damp,
-            mix,
-        } => {
-            // .min(30.0): the validation caps on the IR allocation.
-            *decay = jitter(*decay, amount, rng, 0.001).min(30.0);
-            // 0 means "follow decay" — keep it non-negative.
-            *size = jitter(*size, amount, rng, 0.0).min(30.0);
-            *predelay = jitter(*predelay, amount, rng, 0.0).min(30.0);
-            *damp = jitter_unit(*damp, amount, rng);
-            *mix = jitter_unit(*mix, amount, rng);
-        }
-        Node::Granular {
-            grain_ms,
-            density,
-            pitch,
-            spread,
-            mix,
-        } => {
-            *grain_ms = jitter(*grain_ms, amount, rng, 5.0).min(500.0);
-            *density = jitter(*density, amount, rng, 0.1).min(200.0);
-            *pitch = jitter(*pitch, amount, rng, 0.25).min(4.0);
-            *spread = jitter_unit(*spread, amount, rng);
-            *mix = jitter_unit(*mix, amount, rng);
-        }
         // Combinators carry no knobs of their own; the shared traversal below
         // recurses into them. (Named explicitly — no `_`, so a new variant
         // still forces a mutation decision here.)
@@ -347,26 +289,6 @@ mod tests {
             r#"{ "name": "t", "duration": 0.3, "root": { "type": "chain", "stages": [
                 { "type": "sine", "freq": 220 },
                 { "type": "tremolo", "rate": 38.0, "depth": 0.9 }
-            ] } }"#,
-        )
-        .unwrap();
-        for seed in 0..50 {
-            let m = mutate(&d, 1.0, seed);
-            m.validate().unwrap_or_else(|e| panic!("seed {seed}: {e}"));
-        }
-    }
-
-    #[test]
-    fn mutate_stays_valid_with_convolve_and_granular() {
-        // Near-cap knobs exercise the validation-bound clamps (30 s IR times,
-        // grain/density/pitch ranges).
-        let d: SoundDoc = serde_json::from_str(
-            r#"{ "name": "d", "duration": 0.3, "root": { "type": "chain", "stages": [
-                { "type": "noise" },
-                { "type": "convolve", "decay": 28.0, "size": 29.0, "predelay": 0.02,
-                  "damp": 0.9, "mix": 0.4 },
-                { "type": "granular", "grain_ms": 480.0, "density": 190.0, "pitch": 3.9,
-                  "spread": 0.9, "mix": 0.6 }
             ] } }"#,
         )
         .unwrap();

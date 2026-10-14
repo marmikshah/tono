@@ -24,8 +24,8 @@ follows from that promise.
 4. **Musical time is exact.** Beats are rationals, converted to frames once by
    the shared tempo-map walk. Do not introduce float beat arithmetic (ADR 0002).
 5. **Determinism survives platforms.** Use `det.rs` kernels for transcendental
-   math and the fixed-order FFT; never call platform `libm` functions from DSP
-   code. RNG streams are seeded by node position and track name.
+   math; never call platform `libm` functions from DSP code. RNG streams are
+   seeded by node position and track name.
 
 Design records live in `docs/adr/`. Amend an ADR when a policy changes.
 

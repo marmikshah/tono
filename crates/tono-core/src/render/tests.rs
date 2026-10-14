@@ -390,25 +390,6 @@ fn tremolo_at_zero_depth_is_a_transparent_passthrough() {
 }
 
 #[test]
-fn bitcrush_quantizes_amplitude() {
-    // The gain stage keeps the crushed peak under the output ceiling so the
-    // safety limit stays out of the way and the levels survive untouched.
-    let d = doc(
-        r#"{ "name": "n", "duration": 0.05, "root": { "type": "chain", "stages": [
-                { "type": "sine", "freq": 100 },
-                { "type": "gain", "amount": 0.5 },
-                { "type": "bitcrush", "bits": 2 }
-            ] } }"#,
-    );
-    let s = render(&d);
-    // 2 bits ⇒ amplitudes land on multiples of 0.5.
-    for x in &s {
-        let nearest = (x / 0.5).round() * 0.5;
-        assert!((x - nearest).abs() < 1e-4, "{x} not on a 2-bit level");
-    }
-}
-
-#[test]
 fn drive_hard_clips_to_unit_range() {
     let d = doc(
         r#"{ "name": "n", "duration": 0.05, "root": { "type": "chain", "stages": [
@@ -484,7 +465,6 @@ fn adaa_can_be_disabled_explicitly() {
     );
 }
 
-#[cfg(feature = "analysis")]
 #[test]
 fn adaa_lowers_off_harmonic_energy_for_a_folded_tone() {
     let mk = |aa: bool| {
@@ -1026,18 +1006,6 @@ fn tracks_master_reverb_decorrelates_the_channels() {
     let tr = render_tracks(&d).unwrap();
     let (l, r) = (tr.left, tr.right);
     assert_ne!(l, r, "spread reverb gives each side its own tail");
-    // And with a duck in the master, both channels stay deterministic.
-    let d2 = doc(
-        r#"{ "name": "n", "duration": 0.5, "seed": 3, "root": { "type": "tracks",
-                 "tracks": [ { "node": { "type": "noise" } } ],
-                 "master": [ { "type": "duck", "amount": 0.7,
-                   "trigger": { "type": "seq", "bpm": 120, "steps_per_beat": 1,
-                     "wave": "kit", "env": { "s": 1 },
-                     "notes": [ { "step": 0, "len": 1, "pitch": "midi:36" } ] } } ] } }"#,
-    );
-    let a = render_tracks(&d2).unwrap();
-    let b = render_tracks(&d2).unwrap();
-    assert_eq!(a, b, "stereo master bus renders are byte-stable");
 }
 
 #[test]
@@ -1102,31 +1070,6 @@ fn sampler_renders_real_instruments_deterministically() {
                  "notes": [ {{ "step": 0, "len": 2, "pitch": "midi:36" }} ] }} }}"#
     ));
     assert!(rms(&render(&k)[..8820]) > 0.01, "sampled kick audible");
-}
-
-#[test]
-fn duck_pumps_a_pad_under_its_trigger() {
-    // A steady pad ducked by a kick pattern: rms right after each kick is
-    // lower than between kicks.
-    let d = doc(
-        r#"{ "name": "n", "duration": 1.0, "root": { "type": "chain", "stages": [
-                { "type": "sine", "freq": 220 },
-                { "type": "duck", "amount": 0.9, "release": 0.2,
-                  "trigger": { "type": "seq", "bpm": 120, "steps_per_beat": 1,
-                    "wave": "kit", "env": { "s": 1 },
-                    "notes": [ { "step": 0, "len": 1, "pitch": "midi:36" },
-                               { "step": 1, "len": 1, "pitch": "midi:36" } ] } }
-            ] } }"#,
-    );
-    let s = render(&d);
-    let sr = 44_100;
-    // 60 ms right after the kick at t=0 vs the recovered region ~0.4 s.
-    let after_kick = rms(&s[..sr * 6 / 100]);
-    let recovered = rms(&s[sr * 2 / 5..sr * 45 / 100]);
-    assert!(
-        after_kick < recovered * 0.65,
-        "pumped {after_kick} vs recovered {recovered}"
-    );
 }
 
 #[test]
@@ -1240,7 +1183,7 @@ fn unvalidated_docs_render_without_panicking() {
 
     let d = doc(
         r#"{ "name": "n", "duration": 0.05, "root": { "type": "chain",
-                 "stages": [ { "type": "noise" }, { "type": "bitcrush", "bits": 32 } ] } }"#,
+                 "stages": [ { "type": "noise" }, { "type": "delay", "secs": 1e9 } ] } }"#,
     );
     assert!(d.validate().is_err());
     let s = render(&d);
@@ -1299,55 +1242,6 @@ fn loudness_gated_tolerates_mismatched_channel_lengths() {
     let b = [0.5f32; 2205];
     let l = crate::dsp::loudness_lufs_gated(&[&a, &b], 44_100);
     assert!(l.is_finite());
-}
-
-#[cfg(feature = "analysis")]
-#[test]
-fn wavetable_position_morphs_the_spectrum() {
-    let at = |pos: &str| {
-        doc(&format!(
-            r#"{{ "name": "w", "duration": 0.5, "root": {{ "type": "wavetable",
-                     "wave": "basic", "freq": 220, "position": {pos} }} }}"#
-        ))
-    };
-    let centroid = |d: SoundDoc| {
-        let s = render_graph(&d);
-        crate::analysis::stats(&s, 44_100).spectral_centroid_hz
-    };
-    let dark = centroid(at("0.0")); // the sine frame
-    let bright = centroid(at("1.0")); // the saw frame
-    assert!(
-        dark < bright,
-        "basic at 0.0 ({dark} Hz) should be darker than at 1.0 ({bright} Hz)"
-    );
-}
-
-#[test]
-fn wavetable_is_deterministic_and_finite_at_extremes() {
-    // Determinism: the same doc (modulated morph, note-name freq) renders
-    // bit-equal twice.
-    let d = doc(r#"{ "name": "w", "duration": 0.1, "seed": 3, "root":
-             { "type": "wavetable", "wave": "formant", "freq": "A3",
-               "position": { "lfo": { "shape": "sine", "rate": 5, "depth": 0.5, "center": 0.5 } } } }"#);
-    let a = render_graph(&d);
-    let b = render_graph(&d);
-    let bits = |s: &[f32]| s.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
-    assert_eq!(bits(&a), bits(&b), "same doc renders bit-identically");
-
-    // Extreme frequencies and positions stay finite on every table.
-    for wave in ["basic", "harmonics", "formant", "metallic"] {
-        for (freq, pos) in [("1.0", "0.0"), ("20000.0", "1.0"), ("100000.0", "0.5")] {
-            let d = doc(&format!(
-                r#"{{ "name": "w", "duration": 0.02, "root": {{ "type": "wavetable",
-                         "wave": "{wave}", "freq": {freq}, "position": {pos} }} }}"#
-            ));
-            let s = render_graph(&d);
-            assert!(
-                s.iter().all(|x| x.is_finite()),
-                "{wave} at {freq} Hz / position {pos}: non-finite sample"
-            );
-        }
-    }
 }
 
 /// Tracks-level sidechain: the pad (hard right, so the right channel is the
@@ -1435,202 +1329,6 @@ fn tracks_sidechain_is_deterministic() {
     let a = render_tracks(&d).unwrap();
     let b = render_tracks(&d).unwrap();
     assert_eq!(a, b, "two renders are bit-identical");
-}
-
-// --- convolve (offline-only FFT convolution reverb) ---
-
-/// A click through convolve rings: the bare impact is dead within a few ms,
-/// but the convolved tail is clearly audible well past 50 ms and decays.
-#[test]
-fn convolve_adds_a_decaying_tail_to_a_click() {
-    let wet = doc(r#"{ "name": "c", "duration": 1.0, "seed": 9,
-            "root": { "type": "chain", "stages": [
-                { "type": "impact", "hardness": 0.9, "velocity": 1.0 },
-                { "type": "convolve", "decay": 0.6, "mix": 1.0 }
-            ] } }"#);
-    let dry = doc(r#"{ "name": "c", "duration": 1.0, "seed": 9,
-            "root": { "type": "impact", "hardness": 0.9, "velocity": 1.0 } }"#);
-    let (w, d) = (render_graph(&wet), render_graph(&dry));
-    let sr = 44_100usize;
-    // The tail window: well after the strike, well inside the decay.
-    let (a, b) = ((0.05 * sr as f32) as usize, (0.4 * sr as f32) as usize);
-    let (tail_w, tail_d) = (rms(&w[a..b]), rms(&d[a..b]));
-    assert!(
-        tail_d < 1e-4,
-        "bare impact is silent after 50 ms, got {tail_d}"
-    );
-    assert!(
-        tail_w > 10.0 * tail_d && tail_w > 1e-4,
-        "convolve tail rings: wet {tail_w} vs dry {tail_d}"
-    );
-    // And the tail decays: the later window is quieter than the earlier one.
-    let late = rms(&w[(0.5 * sr as f32) as usize..(0.9 * sr as f32) as usize]);
-    assert!(late < tail_w, "tail decays: early {tail_w}, late {late}");
-}
-
-/// mix 0 is a transparent passthrough: bit-identical to the same chain
-/// without the convolve stage.
-#[test]
-fn convolve_mix_zero_is_bit_identical_passthrough() {
-    let with = doc(r#"{ "name": "c", "duration": 0.3, "seed": 4,
-            "root": { "type": "chain", "stages": [
-                { "type": "impact", "hardness": 0.7 },
-                { "type": "convolve", "decay": 1.0, "damp": 0.6, "mix": 0.0 }
-            ] } }"#);
-    let without = doc(r#"{ "name": "c", "duration": 0.3, "seed": 4,
-            "root": { "type": "impact", "hardness": 0.7 } }"#);
-    let bits = |s: &[f32]| s.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
-    assert_eq!(
-        bits(&render_graph(&with)),
-        bits(&render_graph(&without)),
-        "mix 0 passes the input through untouched"
-    );
-}
-
-/// Two renders of the same document are bit-identical — the synthesized IR is
-/// stable per graph position (drawn from the node's structural seed).
-#[test]
-fn convolve_is_deterministic_per_graph_position() {
-    let d = doc(r#"{ "name": "c", "duration": 0.5, "seed": 7,
-            "root": { "type": "chain", "stages": [
-                { "type": "noise", "color": "pink" },
-                { "type": "convolve", "decay": 0.4, "predelay": 0.02, "mix": 0.5 }
-            ] } }"#);
-    let bits = |s: &[f32]| s.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
-    assert_eq!(bits(&render_graph(&d)), bits(&render_graph(&d)));
-}
-
-/// The IR is seeded from the document's seed (via the structural path), so a
-/// different doc seed gives a different room; the same seed always the same.
-#[test]
-fn convolve_ir_tracks_the_doc_seed() {
-    let mk = |seed: u64| {
-        doc(&format!(
-            r#"{{ "name": "c", "duration": 0.5, "seed": {seed},
-                "root": {{ "type": "chain", "stages": [
-                    {{ "type": "impact", "hardness": 0.8 }},
-                    {{ "type": "convolve", "decay": 0.5, "mix": 1.0 }}
-                ] }} }}"#
-        ))
-    };
-    let (a, b) = (render_graph(&mk(1)), render_graph(&mk(2)));
-    assert_ne!(a, b, "a different seed builds a different IR");
-}
-
-/// The wet tail folds into the document length (like reverb) — the render
-/// never extends past the document, and stays finite at the extremes.
-#[test]
-fn convolve_output_is_bounded_and_finite() {
-    let d = doc(r#"{ "name": "c", "duration": 0.2, "seed": 3,
-            "root": { "type": "chain", "stages": [
-                { "type": "noise" },
-                { "type": "convolve", "decay": 30.0, "predelay": 0.05, "damp": 1.0, "mix": 0.9 }
-            ] } }"#);
-    let out = render_graph(&d);
-    assert_eq!(out.len(), (0.2f32 * 44_100.0).ceil() as usize);
-    assert!(out.iter().all(|x| x.is_finite()));
-}
-
-// --- granular (offline-only granular texture) ---
-
-/// mix 0 is a transparent passthrough, bit-identical to the bare source.
-#[test]
-fn granular_mix_zero_is_bit_identical_passthrough() {
-    let with = doc(r#"{ "name": "g", "duration": 0.3, "seed": 5,
-            "root": { "type": "chain", "stages": [
-                { "type": "sine", "freq": 220 },
-                { "type": "granular", "grain_ms": 60, "density": 40, "pitch": 2.0,
-                  "spread": 0.7, "mix": 0.0 }
-            ] } }"#);
-    let without = doc(r#"{ "name": "g", "duration": 0.3, "seed": 5,
-            "root": { "type": "sine", "freq": 220 } }"#);
-    let bits = |s: &[f32]| s.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
-    assert_eq!(bits(&render_graph(&with)), bits(&render_graph(&without)));
-}
-
-/// The grain schedule is drawn up front from the node's structural seed, in a
-/// fixed order — two renders of the same doc are bit-identical, and a doc
-/// with no randomization (spread 0) still renders sanely at minimal density.
-#[test]
-fn granular_is_deterministic_and_sane_at_low_density() {
-    let d = doc(r#"{ "name": "g", "duration": 1.0, "seed": 8,
-            "root": { "type": "chain", "stages": [
-                { "type": "sine", "freq": 330 },
-                { "type": "granular", "grain_ms": 100, "density": 0.1, "mix": 0.5 }
-            ] } }"#);
-    let bits = |s: &[f32]| s.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
-    let (a, b) = (render_graph(&d), render_graph(&d));
-    assert_eq!(bits(&a), bits(&b), "two renders are bit-identical");
-    assert!(a.iter().all(|x| x.is_finite()));
-    // Density 0.1: barely any grains land in the window, so the output is
-    // dominated by the dry half of the crossfade — never silent, never loud.
-    let level = rms(&a);
-    assert!(level > 1e-3 && level < 2.0, "sane level {level}");
-}
-
-/// Every knob at its validation extreme still renders finite audio.
-#[test]
-fn granular_stays_finite_at_extreme_params() {
-    let d = doc(r#"{ "name": "g", "duration": 0.5, "seed": 12,
-            "root": { "type": "chain", "stages": [
-                { "type": "noise", "color": "white" },
-                { "type": "granular", "grain_ms": 500, "density": 200, "pitch": 4.0,
-                  "spread": 1.0, "mix": 1.0 }
-            ] } }"#);
-    let out = render_graph(&d);
-    assert!(out.iter().all(|x| x.is_finite()));
-    let d = doc(r#"{ "name": "g", "duration": 0.5, "seed": 12,
-            "root": { "type": "chain", "stages": [
-                { "type": "noise", "color": "white" },
-                { "type": "granular", "grain_ms": 5, "density": 0.1, "pitch": 0.25,
-                  "spread": 0.0, "mix": 1.0 }
-            ] } }"#);
-    assert!(render_graph(&d).iter().all(|x| x.is_finite()));
-}
-
-/// A pitch-2 granular texture moves the energy up an octave: the peak of the
-/// magnitude spectrum moves from the source's 220 Hz to ~440 Hz.
-#[test]
-fn granular_pitch_two_shifts_the_spectrum_up() {
-    let mk = |pitch: f32| {
-        doc(&format!(
-            r#"{{ "name": "g", "duration": 1.0, "seed": 6,
-                "root": {{ "type": "chain", "stages": [
-                    {{ "type": "sine", "freq": 220 }},
-                    {{ "type": "granular", "grain_ms": 80, "density": 50,
-                        "pitch": {pitch}, "spread": 0.0, "mix": 1.0 }}
-                ] }} }}"#
-        ))
-    };
-    let peak_hz = |s: &[f32]| {
-        // Middle of the buffer (skip the overlap-faded edges).
-        let n = 8192usize;
-        let start = 44_100 / 2 - n / 2;
-        let mut planner = rustfft::FftPlanner::<f32>::new();
-        let fft = planner.plan_fft_forward(n);
-        let mut buf: Vec<rustfft::num_complex::Complex<f32>> = s[start..start + n]
-            .iter()
-            .map(|&x| rustfft::num_complex::Complex::new(x, 0.0))
-            .collect();
-        fft.process(&mut buf);
-        let peak = buf[..n / 2]
-            .iter()
-            .enumerate()
-            .max_by(|a, b| a.1.norm().total_cmp(&b.1.norm()))
-            .map(|(k, _)| k)
-            .unwrap();
-        peak as f32 * 44_100.0 / n as f32
-    };
-    let one = peak_hz(&render_graph(&mk(1.0)));
-    let two = peak_hz(&render_graph(&mk(2.0)));
-    assert!(
-        (one - 220.0).abs() < 20.0,
-        "pitch 1 stays at the source: {one} Hz"
-    );
-    assert!(
-        (two - 440.0).abs() < 40.0,
-        "pitch 2 shifts the peak up an octave: {two} Hz"
-    );
 }
 
 /// A track routed to a bus reaches the master through the bus's return:

@@ -104,10 +104,10 @@ fn default_send_amount() -> f32 {
 }
 
 /// A tracks-level sidechain link: the follower's post-fader signal is
-/// multiplied by a gain envelope driven by the `source` track's signal, with
-/// the same attack/release follower the `duck` node uses (so the pump
-/// character matches). A source must be a plain track — follower-of-follower
-/// chains are rejected by validation (duck directly to the source's source).
+/// multiplied by a gain envelope driven by the `source` track's signal
+/// through an attack/release follower. A source must be a plain track —
+/// follower-of-follower chains are rejected by validation (duck directly to
+/// the source's source).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct Sidechain {
     /// The id of the track whose signal drives the ducking (e.g. `"kick"`).
@@ -123,8 +123,7 @@ pub struct Sidechain {
     pub release: f32,
 }
 
-// The defaults mirror the `duck` node's, so moving a pump from inside a node
-// tree to the mixer keeps the same feel.
+// A deep, fast-attack, quarter-second pump: the classic kick-to-bass feel.
 fn default_sidechain_amount() -> f32 {
     0.8
 }

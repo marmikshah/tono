@@ -299,10 +299,9 @@
       filter, and mixer state between blocks. <code>render/</code> is the bounce: it runs that
       evaluator as one block as long as the document and adds the output stage, so a stream at
       any block size is byte-identical to the offline output by construction. The tracks mixer
-      handles lanes, duck envelopes, buses, and insert chains. Whole-buffer or unsupported
-      combinations — including normalization, loop playback, wide stereo treatments,
-      sampler, convolution, granular synthesis, and some modulated processors — use a
-      pre-rendered <code>Player</code> fallback. <code>StreamGraph::blockers</code> reports
+      handles lanes, sidechain duck envelopes, buses, and insert chains. Whole-buffer or
+      unsupported combinations — normalization, loop playback, wide stereo treatments and
+      the SoundFont sampler — use a pre-rendered <code>Player</code> fallback. <code>StreamGraph::blockers</code> reports
       the exact blockers for a document.</p>
       <div class="in-code"><b>in the code:</b> render/mod.rs::render_product · streaming/{value,source,proc,tracks}.rs · streaming/tests.rs::fuzz_streamed_matches_offline_byte_for_byte</div>
     </li>

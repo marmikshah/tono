@@ -30,7 +30,6 @@ const MAX_FRAME_WORK: u64 = 32_000_000;
 // scratch together. Keep full-window memory/graph bounds separate from that
 // accumulated CPU work; the authored BGM catalog fits this explicit budget.
 const MAX_NOTE_FRAME_WORK: u64 = 64_000_000;
-const MAX_CONVOLUTION_FFT: u64 = 1 << 20;
 
 /// Stereo floating-point audio ready for Web Audio.
 #[derive(Debug)]
@@ -156,29 +155,6 @@ fn check_graph_with_notes(
                     "browser note render-work limit exceeded ({note_work} > {MAX_NOTE_FRAME_WORK}); shorten held notes or reduce overlapping voices"
                 ));
             }
-            1
-        }
-        Node::Granular {
-            density, grain_ms, ..
-        } => ((*density * *grain_ms / 1000.0).ceil() as u64).max(1),
-        Node::Convolve {
-            decay,
-            size,
-            predelay,
-            mix,
-            ..
-        } if *mix > 0.0 => {
-            let ir_seconds = if *size > 0.0 { *size } else { *decay };
-            let ir_frames = ((ir_seconds + *predelay) * sample_rate as f32).ceil() as u64;
-            let fft = frames
-                .saturating_add(ir_frames)
-                .saturating_sub(1)
-                .next_power_of_two();
-            if fft > MAX_CONVOLUTION_FFT {
-                return Err("browser convolution workspace limit exceeded".into());
-            }
-            // Three complex FFT buffers dominate the convolution workspace.
-            *work = work.saturating_add(fft.saturating_mul(12));
             1
         }
         _ => 1,
@@ -502,15 +478,6 @@ mod tests {
             render_json(&serde_json::to_vec(&deep).unwrap())
                 .unwrap_err()
                 .contains("graph limit")
-        );
-        let convolution = json!({"name":"large-fft", "duration":1,
-        "root":{"type":"chain", "stages":[
-            {"type":"noise"}, {"type":"convolve", "decay":30, "predelay":30, "mix":1}
-        ]}});
-        assert!(
-            render_json(&serde_json::to_vec(&convolution).unwrap())
-                .unwrap_err()
-                .contains("convolution workspace")
         );
     }
 

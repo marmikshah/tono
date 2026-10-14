@@ -158,44 +158,12 @@ const CORPUS: &[Case] = &[
         pins: (0x89befc4020ed7df2, None),
     },
     Case {
-        name: "wavetable-basic",
-        json: r#"{ "name": "wavetable-basic", "duration": 0.25, "version": 2, "engine": 5,
-            "root": { "type": "wavetable", "wave": "basic", "freq": 220, "position": 0.5 } }"#,
-        pins: (0x898b1435864fab55, None),
-    },
-    Case {
-        name: "wavetable-morph",
-        json: r#"{ "name": "wavetable-morph", "duration": 0.3, "version": 2, "engine": 5,
-            "root": { "type": "wavetable", "wave": "harmonics", "freq": 110,
-                "position": { "lfo": { "rate": 2, "depth": 0.5, "center": 0.5 } } } }"#,
-        pins: (0x09d7752a7fde544d, None),
-    },
-    Case {
         name: "tremolo-wobble",
         json: r#"{ "name": "tremolo-wobble", "duration": 0.3, "version": 2, "engine": 5,
             "root": { "type": "chain", "stages": [
                 { "type": "sine", "freq": 440 },
                 { "type": "tremolo", "rate": 6, "depth": 0.8 } ] } }"#,
         pins: (0x7659f9d636e19dcf, None),
-    },
-    Case {
-        name: "convolve-space",
-        json: r#"{ "name": "convolve-space", "duration": 0.5, "seed": 4, "version": 2, "engine": 5,
-            "root": { "type": "chain", "stages": [
-                { "type": "mul", "inputs": [
-                    { "type": "noise", "color": "white" },
-                    { "type": "env", "a": 0.001, "d": 0.02, "s": 0.0, "r": 0.01 } ] },
-                { "type": "convolve", "decay": 0.25, "predelay": 0.01, "damp": 0.5, "mix": 0.45 } ] } }"#,
-        pins: (0x870954514442334e, None),
-    },
-    Case {
-        name: "granular-cloud",
-        json: r#"{ "name": "granular-cloud", "duration": 0.4, "seed": 8, "version": 2, "engine": 5,
-            "root": { "type": "chain", "stages": [
-                { "type": "sine", "freq": 220 },
-                { "type": "granular", "grain_ms": 40, "density": 25, "pitch": 2.0,
-                    "spread": 0.3, "mix": 0.7 } ] } }"#,
-        pins: (0xc67f6bf629bd6010, None),
     },
     Case {
         name: "tracks-sidechain",

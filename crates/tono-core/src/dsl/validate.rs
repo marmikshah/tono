@@ -752,12 +752,6 @@ fn validate_node_at(node: &Node, depth: usize) -> Result<(), String> {
             }
             validate_value(index, "fm.index")
         }
-        Node::Wavetable { freq, position, .. } => {
-            validate_freq_value(freq, "wavetable.freq")?;
-            // Const positions are bounded here; modulated ones clamp at render
-            // time (same policy as square.duty).
-            validate_unit_value(position, "wavetable.position")
-        }
         // Bound exhaustively (no `..`): the compiler then forces a validation
         // decision for every knob this variant grows.
         Node::Seq {
@@ -882,18 +876,6 @@ fn validate_node_at(node: &Node, depth: usize) -> Result<(), String> {
             Ok(())
         }
         Node::Gain { amount } => validate_value(amount, "gain.amount"),
-        Node::Bitcrush { bits } => {
-            if !(1..=16).contains(bits) {
-                return Err(format!("bitcrush.bits must be in [1, 16], got {bits}"));
-            }
-            Ok(())
-        }
-        Node::Downsample { factor } => {
-            if *factor < 1 {
-                return Err("downsample.factor must be >= 1".into());
-            }
-            Ok(())
-        }
         Node::Delay { secs, feedback } => {
             // The upper bound caps the delay-line allocation: an unbounded
             // `secs` would let a validated document request a buffer of
@@ -926,7 +908,6 @@ fn validate_node_at(node: &Node, depth: usize) -> Result<(), String> {
             in_unit("modal.mix", *mix)
         }
         Node::Drive { amount, .. } => validate_value(amount, "drive.amount"),
-        Node::RingMod { freq } => validate_freq_value(freq, "ringmod.freq"),
         Node::Tremolo { rate, depth } => {
             finite("tremolo.rate", *rate)?;
             // 40 Hz is already fast enough to read as a tone, not a tremolo.
@@ -939,34 +920,6 @@ fn validate_node_at(node: &Node, depth: usize) -> Result<(), String> {
             positive("chorus.rate", *rate)?;
             in_unit("chorus.depth", *depth)?;
             in_unit("chorus.mix", *mix)
-        }
-        Node::Flanger {
-            rate,
-            depth,
-            feedback,
-            mix,
-        }
-        | Node::Phaser {
-            rate,
-            depth,
-            feedback,
-            mix,
-        } => {
-            positive("flanger/phaser.rate", *rate)?;
-            in_unit("flanger/phaser.depth", *depth)?;
-            in_unit("flanger/phaser.feedback", *feedback)?;
-            in_unit("flanger/phaser.mix", *mix)
-        }
-        Node::Duck {
-            trigger,
-            amount,
-            attack,
-            release,
-        } => {
-            in_unit("duck.amount", *amount)?;
-            non_negative("duck.attack", *attack)?;
-            non_negative("duck.release", *release)?;
-            validate_node_at(trigger, depth + 1)
         }
         Node::Compress {
             threshold,
@@ -985,84 +938,5 @@ fn validate_node_at(node: &Node, depth: usize) -> Result<(), String> {
             non_negative("compress.release", *release)?;
             finite("compress.makeup", *makeup)
         }
-        Node::Convolve {
-            decay,
-            size,
-            predelay,
-            damp,
-            mix,
-        } => validate_convolve(*decay, *size, *predelay, *damp, *mix),
-        Node::Granular {
-            grain_ms,
-            density,
-            pitch,
-            spread,
-            mix,
-        } => validate_granular(*grain_ms, *density, *pitch, *spread, *mix),
     }
-}
-
-/// `convolve` bounds. Kept out of `validate_node_at`'s body (like the seq
-/// knob impls) so the recursion's stack frame stays lean — the depth-cap test
-/// recurses 256 levels on a 2 MiB test-thread stack.
-fn validate_convolve(
-    decay: f32,
-    size: f32,
-    predelay: f32,
-    damp: f32,
-    mix: f32,
-) -> Result<(), String> {
-    // The 30 s caps mirror delay.secs: they bound the IR allocation so
-    // a validated document can't request a buffer of arbitrary size.
-    positive("convolve.decay", decay)?;
-    if decay > 30.0 {
-        return Err(format!(
-            "convolve.decay must be in (0, 30] seconds, got {decay}"
-        ));
-    }
-    finite("convolve.size", size)?;
-    // 0 = follow `decay` (the serde default); a real cap must be positive
-    // and bounded like `decay`.
-    if !(0.0..=30.0).contains(&size) {
-        return Err(format!(
-            "convolve.size must be 0 (= decay) or in (0, 30] seconds, got {size}"
-        ));
-    }
-    non_negative("convolve.predelay", predelay)?;
-    if predelay > 30.0 {
-        return Err(format!(
-            "convolve.predelay must be in [0, 30] seconds, got {predelay}"
-        ));
-    }
-    in_unit("convolve.damp", damp)?;
-    in_unit("convolve.mix", mix)
-}
-
-/// `granular` bounds (out of `validate_node_at` for the same frame-size
-/// reason as [`validate_convolve`]).
-fn validate_granular(
-    grain_ms: f32,
-    density: f32,
-    pitch: f32,
-    spread: f32,
-    mix: f32,
-) -> Result<(), String> {
-    finite("granular.grain_ms", grain_ms)?;
-    if !(5.0..=500.0).contains(&grain_ms) {
-        return Err(format!(
-            "granular.grain_ms must be in [5, 500] ms, got {grain_ms}"
-        ));
-    }
-    finite("granular.density", density)?;
-    if !(0.1..=200.0).contains(&density) {
-        return Err(format!(
-            "granular.density must be in [0.1, 200] grains/sec, got {density}"
-        ));
-    }
-    finite("granular.pitch", pitch)?;
-    if !(0.25..=4.0).contains(&pitch) {
-        return Err(format!("granular.pitch must be in [0.25, 4], got {pitch}"));
-    }
-    in_unit("granular.spread", spread)?;
-    in_unit("granular.mix", mix)
 }
