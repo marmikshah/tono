@@ -37,7 +37,7 @@ crates/tono-content curated sound library + BGM themes (unpublished); feeds
                     the docs site through its site_samples example
 crates/tono-py      PyO3 bindings, stubs in python/tono/*.pyi (stubtest-checked)
 crates/tono-web     WASM C-ABI adapter used by the docs site
-docs/               VitePress site; docs/adr/ and docs/project/ are process docs
+docs/               VitePress site; docs/adr/ holds the design records
 scripts/           release.py (version check/packaging), wheel_test.py, site tests
 ```
 

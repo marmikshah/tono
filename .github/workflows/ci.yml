@@ -128,12 +128,13 @@ jobs:
             exit 1
           fi
   semver:
-    # Informational until 2.0.0 is tagged: the planned 2.0 breaks the API on
-    # purpose, so this reports against the latest crates.io release as a
-    # warning instead of failing the job (a job-level continue-on-error would
-    # still show a red cross on every PR). Once v2.0.0 is published, drop the
-    # step-level continue-on-error and the warning step, and add this job to
-    # the status aggregator's needs.
+    # Informational: every release below 2.0 may break the API (see the README
+    # versioning policy), so this reports against the latest crates.io release
+    # as a warning instead of failing the job (a job-level continue-on-error
+    # would still show a red cross on every PR). Each reported break must have
+    # a "Breaking" changelog line. To make it blocking, drop the step-level
+    # continue-on-error and the warning step, and add this job to the status
+    # aggregator's needs.
     if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -150,7 +151,7 @@ jobs:
           package: tono-core,tono
       - name: Report the result without failing
         if: steps.check.outcome == 'failure'
-        run: echo "::warning title=semver-checks::The API differs from the latest crates.io release at a semver-major level. Expected until v2.0.0 ships; see the step above for the report."
+        run: echo "::warning title=semver-checks::The API differs from the latest crates.io release at a semver-major level. Allowed below 2.0 when the changelog lists the break; see the step above for the report."
   dependencies:
     if: github.event_name != 'workflow_dispatch' || !inputs.bench
     runs-on: ubuntu-latest
