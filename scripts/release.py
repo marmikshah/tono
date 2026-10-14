@@ -37,10 +37,23 @@ def checksums(directory):
         print(sidecar)
 
 
-def package_cli(target_dir, out):
-    source = target_dir / "x86_64-unknown-linux-gnu" / "release" / "tono"
+ARTIFACTS = {
+    "x86_64-unknown-linux-gnu": "tono-linux-x86_64",
+    "aarch64-apple-darwin": "tono-macos-aarch64",
+    "x86_64-apple-darwin": "tono-macos-x86_64",
+    "x86_64-pc-windows-msvc": "tono-windows-x86_64.exe",
+}
+
+
+def package_cli(target_dir, out, target):
+    try:
+        name = ARTIFACTS[target]
+    except KeyError:
+        raise ValueError(f"unknown target {target}; known: {', '.join(ARTIFACTS)}") from None
+    binary = "tono.exe" if name.endswith(".exe") else "tono"
+    source = target_dir / target / "release" / binary
     out.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, out / "tono-linux-x86_64")
+    shutil.copy2(source, out / name)
     checksums(out)
 
 
@@ -49,7 +62,8 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     version = commands.add_parser("check-version", help="validate Cargo versions and an optional tag")
     version.add_argument("tag", nargs="?", help="release tag, such as v1.11.0")
-    package = commands.add_parser("package-cli", help="package the Linux x86_64 CLI binary with its SHA-256 sidecar")
+    package = commands.add_parser("package-cli", help="copy a built CLI binary into dist with its SHA-256 sidecar")
+    package.add_argument("--target", default="x86_64-unknown-linux-gnu", help="Rust target triple the binary was built for")
     package.add_argument("--target-dir", type=Path, default=ROOT / "target")
     package.add_argument("--out", type=Path, default=ROOT / "dist")
     checksum = commands.add_parser("checksums", help="write SHA-256 sidecars for files in a directory")
@@ -59,7 +73,7 @@ def main():
         if args.command == "check-version":
             check_version(args.tag)
         elif args.command == "package-cli":
-            package_cli(args.target_dir, args.out)
+            package_cli(args.target_dir, args.out, args.target)
         else:
             checksums(args.directory)
     except (OSError, ValueError, KeyError) as error:
