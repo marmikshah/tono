@@ -16,7 +16,7 @@ entirely by transform derivation.
 
 Run with an installed tono wheel (or `maturin develop` in crates/tono-py):
 
-    python3 examples/puzzle_menu.py
+    python3 crates/tono-content/examples/python/puzzle_menu.py
 
 It compiles the song, renders the mix, and writes `puzzle_menu.wav`
 (16-bit stereo) into the current directory — that's the track to listen to.

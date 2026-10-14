@@ -26,8 +26,6 @@
 //! (templates with named parameters) · [`edit`] (path-addressed edits) ·
 //! [`vary`] (deterministic variations).
 //! [`generate`] supplies authored game SFX starters without an input graph.
-//! [`library`] adds a curated collection of editable sound designs and voicings,
-//! and [`bgm`] a set of composed four-bar themes.
 //!
 //! Rendering: [`render`] (the offline bounce) · [`streaming`] (real-time,
 //! byte-identical to the bounce) · [`dsp`] (RNG, loudness, limiting) ·
@@ -64,7 +62,6 @@
 pub mod adaptive;
 #[cfg(feature = "analysis")]
 pub mod analysis;
-pub mod bgm;
 pub mod catalog;
 pub(crate) mod det;
 pub mod diag;
@@ -74,7 +71,6 @@ pub mod dsp;
 pub mod edit;
 pub mod generate;
 pub mod instrument;
-pub mod library;
 pub mod music;
 pub mod patch;
 pub mod player;

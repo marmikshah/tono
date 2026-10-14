@@ -16,7 +16,7 @@ map — it loops sweetly back to the top.
 
 Run with an installed tono wheel (or `maturin develop` in crates/tono-py):
 
-    python3 examples/emerald_vale.py
+    python3 crates/tono-content/examples/python/emerald_vale.py
 
 It compiles the song, renders the mix, and writes `emerald_vale.wav`
 (16-bit stereo) into the current directory — that's the track to listen to.

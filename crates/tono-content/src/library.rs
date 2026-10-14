@@ -6,7 +6,7 @@
 //! required. Save the returned document to preserve an exact sound.
 //!
 //! ```
-//! use tono_core::library::{LibrarySpec, LibraryVariant, generate};
+//! use tono_content::library::{LibrarySpec, LibraryVariant, generate};
 //! let spec = LibrarySpec::new("metal-clang", LibraryVariant::Soft, 42);
 //! let doc = generate(&spec)?;
 //! assert!(tono_core::render::render(&doc).iter().any(|x| x.abs() > 0.01));
@@ -16,10 +16,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::dsl::{
+use tono_core::dsl::{
     Adsr, Curve, Mode, Modulator, Node, NoiseColor, Playback, SoundDoc, Track, Value,
 };
-use crate::dsp::Rng;
+use tono_core::dsp::Rng;
 
 /// Revision of the curated recipes and their voicings.
 pub const LIBRARY_VERSION: u32 = 1;
@@ -1305,7 +1305,7 @@ pub fn generate(spec: &LibrarySpec) -> anyhow::Result<SoundDoc> {
     spec.validate()?;
     let recipe = recipe(&spec.recipe).expect("validated recipe");
     let mut rng = Rng::new(spec.seed ^ 0xA24B_AED4_963E_E407);
-    let pitch = crate::dsp::powf(
+    let pitch = tono_core::dsp::powf(
         2.0,
         (spec.pitch_semitones + rng.bi() * spec.variation * 1.5) / 12.0,
     );

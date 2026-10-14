@@ -10,15 +10,17 @@ use std::{
 };
 
 use serde_json::{Value, json};
-use tono_core::{
+use tono_content::{
     bgm::{BgmSpec, COMPOSITIONS, VARIANTS as BGM_VARIANTS},
+    library::{LibrarySpec, RECIPES, VARIANTS},
+};
+use tono_core::{
     dsl::SoundDoc,
     generate::{SfxSpec, SfxTemplate, generate_sfx},
-    library::{LibrarySpec, RECIPES, VARIANTS},
 };
 
 fn main() -> anyhow::Result<()> {
-    const USAGE: &str = "Generate the site's editable sound recipes and waveform manifests (no audio files).\n\nUsage: cargo run --locked --release -p tono --example site_samples -- OUTPUT_DIRECTORY";
+    const USAGE: &str = "Generate the site's editable sound recipes and waveform manifests (no audio files).\n\nUsage: cargo run --locked --release -p tono-content --example site_samples -- OUTPUT_DIRECTORY";
     let args: Vec<_> = std::env::args().skip(1).collect();
     let out = match args.as_slice() {
         [help] if help == "--help" || help == "-h" => {
@@ -61,7 +63,7 @@ fn main() -> anyhow::Result<()> {
         let mut variants = Vec::new();
         for variant in VARIANTS {
             let spec = LibrarySpec::new(recipe.id, variant, 42);
-            let doc = tono_core::library::generate(&spec)?;
+            let doc = tono_content::library::generate(&spec)?;
             let stem = format!("{}-{}", recipe.id, variant.id());
             let exported = export_doc(&out, &stem, &doc)?;
             variants.push(json!({
@@ -93,13 +95,13 @@ fn main() -> anyhow::Result<()> {
         let mut variants = Vec::new();
         for variant in BGM_VARIANTS {
             let spec = BgmSpec::new(composition.id, variant, 42);
-            let doc = tono_core::bgm::generate(&spec)?;
+            let doc = tono_content::bgm::generate(&spec)?;
             let stem = format!("bgm-{}-{}", composition.id, variant.id());
             let exported = export_doc(&out, &stem, &doc)?;
             let score = format!("{stem}.song.json");
             fs::write(
                 out.join(&score),
-                serde_json::to_string(&tono_core::bgm::score(&spec)?)?,
+                serde_json::to_string(&tono_content::bgm::score(&spec)?)?,
             )?;
             variants.push(json!({
                 "id": variant.id(),

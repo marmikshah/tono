@@ -4,6 +4,7 @@
 resolver = "3"
 members = [
     "crates/tono-cli",
+    "crates/tono-content",
     "crates/tono-core",
     "crates/tono-play",
     "crates/tono-py",
