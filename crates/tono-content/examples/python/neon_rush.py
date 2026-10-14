@@ -16,7 +16,7 @@ a "hook" marker.
 
 Run with an installed tono wheel (or `maturin develop` in crates/tono-py):
 
-    python3 examples/neon_rush.py
+    python3 crates/tono-content/examples/python/neon_rush.py
 
 It compiles the song, renders the mix, and writes `neon_rush.wav` (16-bit
 stereo) into the current directory — that's the track to listen to.

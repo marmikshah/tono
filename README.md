@@ -59,6 +59,7 @@ from source (see below); they are not on PyPI yet.
 crates/
 ├── tono-core/     Graphs, DSP, song compiler, streaming, runtime and analysis
 │   └── tests/     Regression/property tests and current JSON fixtures
+├── tono-content/  Authored sound library, BGM themes, site exporter and Python scores
 ├── tono-web/      Lean WebAssembly adapter using the same core DSP
 ├── tono-cli/      Audio/MIDI files, feedback images and the tono command
 ├── tono-play/     Shared cpal speaker adapter and runnable Rust examples
@@ -110,7 +111,8 @@ npm run docs:test
 The [sound library](https://marmikshah.github.io/tono/sounds) contains 64
 procedural designs with six voicings each. The site serves editable recipes
 and renders previews and WAV downloads locally through WebAssembly. The
-Rust API is `tono_core::library`; original game starters remain in `generate`.
+Rust API is `tono_content::library` in the unpublished `tono-content` crate;
+original game starters remain in `tono_core::generate`.
 The [background music library](https://marmikshah.github.io/tono/bgm) adds 12
 original themes in three arrangements each, with editable Song scores.
 Use the [Sound Studio](https://marmikshah.github.io/tono/create) to add instrument

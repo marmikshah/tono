@@ -185,5 +185,5 @@ export const musicUrl = (track: MusicTrack) =>
   withBase(`/audio/${track.id}.mp4`);
 export const scoreUrl = (track: MusicTrack) =>
   track.source
-    ? `https://github.com/marmikshah/tono/blob/master/crates/tono-py/examples/${track.source}`
+    ? `https://github.com/marmikshah/tono/blob/master/crates/tono-content/examples/python/${track.source}`
     : withBase("/guides/songs");

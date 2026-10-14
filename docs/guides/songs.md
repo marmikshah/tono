@@ -140,4 +140,4 @@ in their bus return.
 
 More: [instrument and note reference](/reference/sounddoc),
 [Rust Song API](https://docs.rs/tono-core/latest/tono_core/song/struct.Song.html),
-and [complete Python compositions](https://github.com/marmikshah/tono/tree/master/crates/tono-py/examples).
+and [complete Python compositions](https://github.com/marmikshah/tono/tree/master/crates/tono-content/examples/python).

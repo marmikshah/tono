@@ -165,9 +165,11 @@ pub(crate) fn ln_1p(x: f32) -> f32 {
     crate::det::lnf(1.0 + x)
 }
 
-/// Deterministic power.
+/// Deterministic power: `x` raised to `y`, byte-identical on every platform.
+/// Authored content pitches its recipes through this rather than `f32::powf`
+/// so a generated document never depends on the host's libm.
 #[inline]
-pub(crate) fn powf(x: f32, y: f32) -> f32 {
+pub fn powf(x: f32, y: f32) -> f32 {
     crate::det::powff(x, y)
 }
 

@@ -124,6 +124,24 @@ pub struct Voice {
 }
 
 impl Voice {
+    /// A voice from scratch: `wave` shaped by `env`, at unity gain, centered,
+    /// dry, following the song's swing and humanize, with default
+    /// [`VoiceParams`]. The catalog's own instruments start from this; set
+    /// [`Voice::voice`] afterwards for synthesis parameters.
+    pub fn new(name: impl Into<String>, wave: SeqWave, env: Adsr) -> Self {
+        Voice {
+            name: name.into(),
+            wave,
+            env,
+            gain: 1.0,
+            pan: 0.0,
+            reverb: 0.0,
+            swing: None,
+            humanize: None,
+            voice: VoiceParams::default(),
+        }
+    }
+
     /// Rename the instrument (the track / layer id). Handy when a song has two
     /// of the same instrument.
     pub fn named(mut self, name: impl Into<String>) -> Self {
@@ -164,17 +182,7 @@ impl Voice {
 
 /// A short constructor: an instrument with unity gain, centered, no voice params.
 fn voice(name: &str, wave: SeqWave, env: Adsr) -> Voice {
-    Voice {
-        name: name.to_string(),
-        wave,
-        env,
-        gain: 1.0,
-        pan: 0.0,
-        reverb: 0.0,
-        swing: None,
-        humanize: None,
-        voice: VoiceParams::default(),
-    }
+    Voice::new(name, wave, env)
 }
 
 /// The piano envelope hint from the `Piano` voice: instant attack, full sustain

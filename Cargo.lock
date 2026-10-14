@@ -1700,6 +1700,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tono-content"
+version = "1.11.0"
+dependencies = [
+ "anyhow",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tono-core",
+ "tono-web",
+]
+
+[[package]]
 name = "tono-core"
 version = "1.11.0"
 dependencies = [

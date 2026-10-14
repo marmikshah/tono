@@ -6,7 +6,7 @@
 //! No recordings or soundfonts are required.
 //!
 //! ```
-//! use tono_core::bgm::{BgmSpec, BgmVariant, generate, score};
+//! use tono_content::bgm::{BgmSpec, BgmVariant, generate, score};
 //! let spec = BgmSpec::new("lantern-trail", BgmVariant::Calm, 42);
 //! let song = score(&spec)?;
 //! let loop_doc = generate(&spec)?;
@@ -17,7 +17,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{
+use tono_core::{
     catalog::{Bass, Drums, ElectricPiano, Flute, GrandPiano, Guitar, Mallets, Voice, VoiceParams},
     dsl::{Adsr, Node, Playback, SeqNote, SeqWave, SoundDoc, Value},
     dsp::Rng,
@@ -869,20 +869,14 @@ fn instrument(kind: Instrument, variant: BgmVariant) -> Voice {
             voice.voice.fm_strike = Some(0.4);
             voice
         }
-        Pulse | Fm => Voice {
-            name: "synth".into(),
-            wave: if matches!(kind, Pulse) && !calm {
+        Pulse | Fm => {
+            let wave = if matches!(kind, Pulse) && !calm {
                 SeqWave::Square
             } else {
                 SeqWave::Fm
-            },
-            env,
-            gain: 1.0,
-            pan: 0.0,
-            reverb: 0.0,
-            swing: None,
-            humanize: None,
-            voice: VoiceParams {
+            };
+            let mut voice = Voice::new("synth", wave, env);
+            voice.voice = VoiceParams {
                 fm_ratio: Some(if matches!(kind, Pulse) { 1.0 } else { 2.0 }),
                 fm_index: Some(if calm {
                     0.45
@@ -894,8 +888,9 @@ fn instrument(kind: Instrument, variant: BgmVariant) -> Voice {
                 fm_strike: Some(0.22),
                 duty: Some(0.37),
                 ..VoiceParams::default()
-            },
-        },
+            };
+            voice
+        }
     };
     // Every note closes within its musical gate; this also gives the loop a
     // quiet, clean join at its next downbeat without a tempo-changing fade.

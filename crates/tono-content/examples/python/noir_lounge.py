@@ -18,7 +18,7 @@ final held Dm9.
 
 Run with an installed tono wheel (or `maturin develop` in crates/tono-py):
 
-    python3 examples/noir_lounge.py
+    python3 crates/tono-content/examples/python/noir_lounge.py
 
 It compiles the song, renders the mix, and writes `noir_lounge.wav`
 (16-bit stereo) into the current directory — that's the track to listen to.

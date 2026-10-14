@@ -92,3 +92,13 @@ assert audio.shape[1] == 2  # columns are left, right
 :::
 
 For more tracks and stereo WAV export, see [songs](/guides/songs). For scheduled playback without an audio device, see [live audio](/guides/live).
+
+Three runnable tours of the typed API ship with the bindings:
+[`night_drive.py`](https://github.com/marmikshah/tono/blob/master/crates/tono-py/examples/night_drive.py)
+(compose, compile, render, and run a program live with scheduled commands),
+[`render_numpy.py`](https://github.com/marmikshah/tono/blob/master/crates/tono-py/examples/render_numpy.py)
+(the pull API: render to a numpy array), and
+[`live_pygame.py`](https://github.com/marmikshah/tono/blob/master/crates/tono-py/examples/live_pygame.py)
+(live procedural audio for a Pygame game). The
+[complete reference scores](https://github.com/marmikshah/tono/tree/master/crates/tono-content/examples/python)
+behind the site's music catalog use the same API.

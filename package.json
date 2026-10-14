@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "docs:audio": "cargo run --locked --release -p tono --example site_samples -- docs/public/generated/sfx",
+    "docs:audio": "cargo run --locked --release -p tono-content --example site_samples -- docs/public/generated/sfx",
     "docs:engine": "node scripts/build-web.mjs",
     "docs:prepare": "npm run docs:audio && npm run docs:engine",
     "docs:dev": "npm run docs:prepare && vitepress dev docs",
