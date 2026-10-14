@@ -66,18 +66,19 @@ from source (see below); they are not on PyPI yet.
 ```text
 crates/
 ├── tono-core/     Graphs, DSP, song compiler, streaming, runtime and analysis
+│   ├── examples/  Runnable Rust examples (speaker ones need `--features cpal`)
 │   └── tests/     Regression/property tests and current JSON fixtures
 ├── tono-content/  Authored sound library, BGM themes, site exporter and Python scores
 ├── tono-web/      Lean WebAssembly adapter using the same core DSP
 ├── tono-cli/      Audio/MIDI files, feedback images and the tono command
-├── tono-play/     Shared cpal speaker adapter and runnable Rust examples
 └── tono-py/       PyO3 bindings, type stubs, Python tests and examples
 docs/             VitePress guides and playable demos
 scripts/          Portable release packaging and installed-wheel checks
 .github/workflows/ Shared Rust gate, docs, registry/binary releases and wheels
 ```
 
-Rust uses the pinned 1.88.0 toolchain. Default builds cover the core and CLI:
+Rust uses the pinned 1.88.0 toolchain. Default builds cover the core and CLI
+without an audio device:
 
 ```sh
 cargo run --locked -- --help
@@ -87,11 +88,13 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
-Auditioning needs an output device. On Linux, install the ALSA development
-package (`libasound2-dev`).
+Auditioning needs an output device: the core `cpal` feature (the shared
+speaker adapter behind `tono play`, the Python bindings and the examples) is
+off by default. On Linux, install the ALSA development package
+(`libasound2-dev`).
 
 ```sh
-cargo run --locked -p tono-play --example live_band
+cargo run --locked -p tono-core --features cpal --example live_band
 cargo test --locked --workspace --all-features
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 ```

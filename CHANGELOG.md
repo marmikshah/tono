@@ -17,6 +17,7 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 ### Changed
 - The `tono` CLI parses arguments with clap, so every subcommand has structured `--help`. FLAC/OGG encoding and MIDI import/export are now the `encode` and `midi` cargo features (off by default; WAV is always available).
 - The curated sound library and background music themes moved from `tono-core` to the unpublished `tono-content` crate; `tono_core::library` and `tono_core::bgm` are gone.
+- The cpal speaker adapter moved from the unpublished `tono-play` crate into `tono-core` behind the `cpal` feature (off by default); the CLI's `play` feature and the Python bindings use it. The runnable examples now live in `crates/tono-core/examples`.
 - Website guides use concise, runnable Rust and Python examples with a language preference shared across code blocks and pages.
 - Website uses a charcoal audio workspace with lilac accents, a direct sound-browser homepage, consistent controls, and keyboard-accessible global search.
 - Effects and music use compact waveform rows, a selected-sound inspector, category filters, variation selectors, saved bookmarks, shareable searches, editable exports, and a persistent preview player. Smaller screens show details inline; waveform cards remain an optional view.

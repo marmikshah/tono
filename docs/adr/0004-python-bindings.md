@@ -19,7 +19,8 @@ Return owned numpy arrays with explicit mono/stereo shapes. Convert compile and
 load failures to Python exceptions; compile diagnostics retain their codes,
 messages, and remediation. Ship `.pyi` stubs and `py.typed` in the package.
 
-Live output shares `tono-play::Speaker`. Python control operates on the source
+Live output shares `tono_core::speaker::Speaker` (the core `cpal` feature).
+Python control operates on the source
 and pump; the native audio callback drains the sample ring without acquiring
 the Python GIL or the control mutex.
 
