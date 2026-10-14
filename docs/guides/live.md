@@ -65,10 +65,11 @@ Rust buffers contain **two samples per frame**; Python `fill` takes a frame coun
 
 For speakers, Python `tono.Performance(program)` opens an audio device and
 renders in the background; keep it alive while playing and **do not call
-`fill` in live mode**. Rust `tono-core` owns no audio device: send its blocks
-to your output callback. The repository has a runnable adapter example:
-`cargo run -p tono-play --example live_band`
-([source](https://github.com/marmikshah/tono/blob/master/crates/tono-play/examples/live_band.rs)).
+`fill` in live mode**. Rust `tono-core` owns no audio device by default: send
+its blocks to your output callback, or enable its `cpal` feature for the
+`tono_core::speaker` adapter. The repository has a runnable example:
+`cargo run -p tono-core --features cpal --example live_band`
+([source](https://github.com/marmikshah/tono/blob/master/crates/tono-core/examples/live_band.rs)).
 
 Check `program.is_streamable()` in Rust or `program.is_streamable` in Python:
 unsupported graphs use a pre-rendered buffer. To require native streaming,

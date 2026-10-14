@@ -424,9 +424,9 @@ song host   ──►  <span class="a">runtime</span>: Performance (rung 9) — 
           <span class="run">cargo run -p tono -- render f.json</span>
         </div>
         <div class="box">
-          <span class="name">tono-play</span>
-          <span class="role">code playground: Speaker, play_doc, 11 examples</span>
-          <span class="run">cargo run -p tono-play --example drums</span>
+          <span class="name">tono-core <span style="font-weight:400">(feature cpal)</span></span>
+          <span class="role">code playground: the speaker module (Speaker, play_doc) + 5 examples</span>
+          <span class="run">cargo run -p tono-core --features cpal --example live_band</span>
         </div>
         <div class="box">
           <span class="name">tono-web</span>
@@ -439,9 +439,9 @@ song host   ──►  <span class="a">runtime</span>: Performance (rung 9) — 
           <span class="run">maturin develop -m crates/tono-py/Cargo.toml</span>
         </div>
       </div>
-      <div class="flow-arrow">│ all four depend on ▼ (tono-py streams through tono-play's Speaker)</div>
+      <div class="flow-arrow">│ all four depend on ▼ (tono play and tono-py stream through core's cpal Speaker)</div>
       <div class="core">
-        <div class="core-title">crates/tono-core <span>— DSP, compiler, transport, and runtime. Optional SoundFont loading; no audio-device dependency.</span></div>
+        <div class="core-title">crates/tono-core <span>— DSP, compiler, transport, and runtime. Optional SoundFont loading; the audio device only behind the off-by-default <code>cpal</code> feature.</span></div>
         <div class="core-rows">
           <div class="core-row">
             <div class="rlabel">rungs 1–4</div>
@@ -536,12 +536,12 @@ xdg-open out/blip.png    <span class="c"># the spectrogram; out/blip.stats.json 
     </li>
     <li>
       <h3>Hear rungs 6–7 live from code</h3>
-      <p>The tono-play examples are the guided tour of the layers — sounds, instruments, voice
-      management, buses, songs, adaptive game music.</p>
-      <pre><code>cargo run -p tono-play --example playground  <span class="c"># walkthrough</span>
-cargo run -p tono-play --example band        <span class="c"># catalog + fluent song builder</span>
-cargo run -p tono-play --example adaptive    <span class="c"># intensity-driven stems + stinger</span>
-ls crates/tono-play/examples/        <span class="c"># all eleven</span></code></pre>
+      <p>The tono-core speaker examples (feature <code>cpal</code>) are the guided tour of the
+      layers — sounds, instruments, a live band, buses, songs, adaptive game music.</p>
+      <pre><code>cargo run -p tono-core --features cpal --example playground  <span class="c"># walkthrough</span>
+cargo run -p tono-core --features cpal --example lofi        <span class="c"># catalog + fluent song builder</span>
+cargo run -p tono-core --features cpal --example adaptive    <span class="c"># intensity-driven stems + stinger</span>
+ls crates/tono-core/examples/        <span class="c"># all five, plus the headless ones</span></code></pre>
     </li>
     <li>
       <h3>Compile a song into a Program — rungs 8–9</h3>
@@ -559,8 +559,8 @@ ls crates/tono-play/examples/        <span class="c"># all eleven</span></code><
 EOF
 cargo run -p tono -- compile groove.song.json            <span class="c"># writes groove.program.json</span>
 cargo run -p tono -- compile groove.song.json --inspect  <span class="c"># pins, hash, estimates, capabilities</span></code></pre>
-      <p>Then hear rung 9: <code>cargo run -p tono-play --example interactive_music</code> runs a Performance —
-      sections that switch on the bar, an intensity knob, an on-beat stinger.</p>
+      <p>Then run rung 9: <code>cargo run -p tono-core --example compose</code> composes a song, compiles it
+      and runs it through a Performance, headless and deterministic.</p>
     </li>
     <li>
       <h3>Read the core in ladder order</h3>
@@ -598,7 +598,7 @@ cargo test --locked</code></pre>
         <tr><td>write music in code</td><td><code>song/</code> (tracks / patterns / buses + the pattern algebra) + <code>music.rs</code> (harmony) + <code>catalog.rs</code> — compiles to a Program</td></tr>
         <tr><td>adaptive game music</td><td><code>adaptive/</code> — intensity stems, beat-quantized transitions, stingers, ducking</td></tr>
         <tr><td>deterministic PCM</td><td><code>det.rs</code> — current engine-5 kernels; Linux golden tests pin their output</td></tr>
-        <tr><td>speaker output in Rust</td><td><code>tono-play::Speaker</code> — the one cpal shim; py streams through it too</td></tr>
+        <tr><td>speaker output in Rust</td><td><code>speaker.rs</code> (<code>tono_core::speaker::Speaker</code>, feature <code>cpal</code>) — the one cpal shim; <code>tono play</code>, desktop and py stream through it too</td></tr>
         <tr><td>analyze / grade a render</td><td><code>analysis.rs</code> (numbers + images), <code>review.rs</code> (pass/warn/fail against an archetype)</td></tr>
         <tr><td>understand any workflow</td><td>the root README, <a href="project/release-gates.html">release workflow</a>, and <code>.github/workflows/</code></td></tr>
       </tbody>
@@ -606,7 +606,7 @@ cargo test --locked</code></pre>
   </div>
 
   <div class="footer">
-    tono · workspace: tono (CLI) · tono-core · tono-play · tono-web · tono-py ·
+    tono · workspace: tono (CLI) · tono-core · tono-web · tono-py ·
     gates: <span class="mono">cargo fmt</span> + <span class="mono">cargo clippy</span> + <span class="mono">cargo test</span> ·
     reference: <a href="guides/sound-effects.html">sound effects</a>, <a href="guides/live.html">live runtime</a> · <a href="index.html">← back to the showcase</a>
   </div>
