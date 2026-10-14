@@ -44,11 +44,17 @@ pub(crate) struct Ctx {
     pub(crate) offline: bool,
 }
 
+/// An unvalidated document can carry any sample rate, and every delay line,
+/// reverb and chorus buffer scales with it — a 30 s delay at `u32::MAX` Hz
+/// would ask for 515 GB. The evaluator builds such a document at the
+/// validation ceiling instead; validated documents never exceed it.
+const MAX_BUILD_RATE: u32 = 192_000;
+
 impl Ctx {
     /// The bounce: one block of `n` samples, every node allowed.
     pub(crate) fn offline(sr: u32, n: usize) -> Self {
         Ctx {
-            sr,
+            sr: sr.min(MAX_BUILD_RATE),
             n,
             cap: n.max(1),
             offline: true,
@@ -58,7 +64,7 @@ impl Ctx {
     /// Streaming in [`CHUNK`]-sized blocks; whole-buffer nodes are refused.
     pub(crate) fn stream(sr: u32, n: usize) -> Self {
         Ctx {
-            sr,
+            sr: sr.min(MAX_BUILD_RATE),
             n,
             cap: CHUNK,
             offline: false,
