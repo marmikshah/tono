@@ -2,10 +2,52 @@
 
 use std::{fs, path::PathBuf};
 
+use clap::Args;
 use serde::Serialize;
 use tono_core::generate::{SfxSpec, SfxTemplate, generate_sfx};
 
-use super::{Cli, parse_format, render_to_dir};
+use super::{Format, format_parser, render_to_dir, unit_interval};
+
+/// `tono generate`: the starter, its seed, the spec's controls, the batch.
+#[derive(Args)]
+pub(super) struct GenerateArgs {
+    /// The starter to generate from (see `tono templates`)
+    #[arg(value_name = "TEMPLATE")]
+    template: SfxTemplate,
+
+    /// Seed of the first candidate; each later one advances it by one
+    #[arg(long, value_name = "N", default_value_t = 0)]
+    seed: u64,
+
+    /// How many candidates to generate
+    #[arg(short = 'n', long = "count", value_name = "COUNT", default_value_t = 4,
+          value_parser = clap::value_parser!(u32).range(1..=32))]
+    count: u32,
+
+    /// Spectral tilt [default: 0.5]
+    #[arg(long, value_name = "0..1", value_parser = unit_interval)]
+    brightness: Option<f32>,
+
+    /// Transient emphasis [default: 0.5]
+    #[arg(long, value_name = "0..1", value_parser = unit_interval)]
+    punch: Option<f32>,
+
+    /// Spread between the candidates [default: 0.15]
+    #[arg(long, value_name = "0..1", value_parser = unit_interval)]
+    variation: Option<f32>,
+
+    /// Sample rate in Hz [default: 48000]
+    #[arg(long, value_name = "HZ")]
+    sample_rate: Option<u32>,
+
+    /// Output directory; must be empty [default: target/generated/<template>-<seed>]
+    #[arg(short = 'o', long = "out", value_name = "DIR")]
+    out: Option<PathBuf>,
+
+    /// Audio file format
+    #[arg(long, value_name = "FORMAT", default_value = "wav", value_parser = format_parser())]
+    format: Format,
+}
 
 #[derive(Serialize)]
 struct Manifest {
@@ -26,50 +68,35 @@ struct Candidate {
     stats: String,
 }
 
-pub(super) fn templates_cmd(args: &[String]) -> anyhow::Result<()> {
-    let cli = Cli::parse(args, &[], &[])?;
-    anyhow::ensure!(cli.positionals.is_empty(), "usage: tono templates");
+pub(super) fn templates_cmd() -> anyhow::Result<()> {
     for template in SfxTemplate::ALL {
         println!("{:<12} {}", template.id(), template.description());
     }
     Ok(())
 }
 
-pub(super) fn generate_cmd(args: &[String]) -> anyhow::Result<()> {
-    let cli = Cli::parse(
-        args,
-        &[
-            "--seed",
-            "-n",
-            "--count",
-            "--brightness",
-            "--punch",
-            "--variation",
-            "--sample-rate",
-            "-o",
-            "--out",
-            "--format",
-        ],
-        &[],
-    )?;
-    let template: SfxTemplate = cli
-        .input("tono generate TEMPLATE [--seed N] [-n COUNT] [-o DIR]")?
-        .parse()?;
-    let seed = number(&cli, &["--seed"], 0u64)?;
-    let count = number(&cli, &["-n", "--count"], 4usize)?;
-    anyhow::ensure!((1..=32).contains(&count), "--count must be in [1, 32]");
-    let format = parse_format(cli.flag(&["--format"]))?;
+pub(super) fn generate_cmd(args: GenerateArgs) -> anyhow::Result<()> {
+    let GenerateArgs {
+        template,
+        seed,
+        count,
+        brightness,
+        punch,
+        variation,
+        sample_rate,
+        out,
+        format,
+    } = args;
+    let count = count as usize;
+    // The spec owns the defaults; a flag overrides one control at a time.
     let mut spec = SfxSpec::new(template, seed);
-    spec.brightness = number(&cli, &["--brightness"], spec.brightness)?;
-    spec.punch = number(&cli, &["--punch"], spec.punch)?;
-    spec.variation = number(&cli, &["--variation"], spec.variation)?;
-    spec.sample_rate = number(&cli, &["--sample-rate"], spec.sample_rate)?;
+    spec.brightness = brightness.unwrap_or(spec.brightness);
+    spec.punch = punch.unwrap_or(spec.punch);
+    spec.variation = variation.unwrap_or(spec.variation);
+    spec.sample_rate = sample_rate.unwrap_or(spec.sample_rate);
     spec.validate()?;
 
-    let out = cli
-        .flag(&["-o", "--out"])
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(format!("target/generated/{template}-{seed}")));
+    let out = out.unwrap_or_else(|| PathBuf::from(format!("target/generated/{template}-{seed}")));
     // All parameters and documents are checked before creating the directory.
     // A batch owns an empty destination so earlier candidates stay intact.
     if out.exists() {
@@ -98,7 +125,7 @@ pub(super) fn generate_cmd(args: &[String]) -> anyhow::Result<()> {
             document_hash: tono_core::program::content_hash(&doc),
             duration_secs: doc.duration,
             document: format!("{stem}.json"),
-            audio: format!("{stem}.{format}"),
+            audio: format!("{stem}.{}", format.extension()),
             spectrogram: format!("{stem}.png"),
             waveform: format!("{stem}_wave.png"),
             stats: format!("{stem}.stats.json"),
@@ -170,18 +197,4 @@ img { width: 100%; border-radius: 6px; } .links { display: flex; flex-wrap: wrap
         "</div><p><a href=\"./manifest.json\">Generation settings</a></p></main></body></html>",
     );
     html
-}
-
-fn number<T>(cli: &Cli, flags: &[&str], default: T) -> anyhow::Result<T>
-where
-    T: std::str::FromStr,
-    T::Err: std::fmt::Display,
-{
-    cli.flag(flags)
-        .map(|text| {
-            text.parse()
-                .map_err(|err| anyhow::anyhow!("{}: {err}", flags[0]))
-        })
-        .transpose()
-        .map(|value| value.unwrap_or(default))
 }
