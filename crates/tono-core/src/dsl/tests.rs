@@ -276,6 +276,55 @@ fn processors_are_processors_sources_are_not() {
     assert!(!s.is_processor());
 }
 
+/// `PROCESSOR_KINDS` and `is_processor` describe the same set: every listed
+/// tag parses to a processor, and every processor the fuzz corpus can build
+/// has its tag listed.
+#[test]
+fn processor_kinds_match_is_processor() {
+    let minimal = |kind: &str| -> serde_json::Value {
+        let mut v = serde_json::json!({ "type": kind });
+        let extra = match kind {
+            "lowpass" | "highpass" | "bandpass" | "notch" | "peak" | "lowshelf" | "highshelf" => {
+                serde_json::json!({ "cutoff": 1000 })
+            }
+            "gain" => serde_json::json!({ "amount": 0.5 }),
+            "bitcrush" => serde_json::json!({ "bits": 8 }),
+            "downsample" => serde_json::json!({ "factor": 4 }),
+            "delay" => serde_json::json!({ "secs": 0.1 }),
+            "modal" => serde_json::json!({ "modes": [{ "freq": 440 }] }),
+            "drive" => serde_json::json!({ "amount": 2 }),
+            "ringmod" => serde_json::json!({ "freq": 100 }),
+            "compress" => serde_json::json!({ "threshold": -12, "ratio": 4 }),
+            "duck" => serde_json::json!({ "trigger": { "type": "sine", "freq": 440 } }),
+            _ => serde_json::json!({}),
+        };
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        v
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    for kind in Node::PROCESSOR_KINDS {
+        assert!(seen.insert(*kind), "{kind} listed twice");
+        let node: Node =
+            serde_json::from_value(minimal(kind)).unwrap_or_else(|e| panic!("{kind}: {e}"));
+        assert!(
+            node.is_processor(),
+            "{kind} is listed but is not a processor"
+        );
+        let tag = serde_json::to_value(&node).unwrap()["type"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(tag, *kind);
+    }
+    for kind in [
+        "sine", "noise", "mix", "mul", "chain", "env", "seq", "tracks",
+    ] {
+        assert!(!seen.contains(kind), "{kind} is a source or combinator");
+    }
+}
+
 fn doc(json: &str) -> SoundDoc {
     serde_json::from_str(json).expect("deserialize")
 }

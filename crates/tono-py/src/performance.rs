@@ -27,7 +27,8 @@ use tono_core::runtime::{
     PerformanceError as CorePerformanceError, Pump, TransportState, spsc,
 };
 
-use crate::song::{Program, TonoError};
+use crate::convert::TonoError;
+use crate::program::Program;
 use crate::stream::{PUMP_TICK, RING_FRAMES, parse_doc, run_stream};
 
 pyo3::create_exception!(
