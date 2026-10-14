@@ -704,28 +704,8 @@ mod tests {
 }
 
 #[cfg(test)]
-mod duck_and_bounds_tests {
+mod bounds_tests {
     use super::*;
-
-    #[test]
-    fn exports_a_seq_inside_a_duck_trigger() {
-        // The duck trigger is where the kick pattern lives — a doc whose only
-        // seq is a trigger must not export a note-less file.
-        let doc: SoundDoc = serde_json::from_str(
-            r#"{ "name":"pump", "duration":2.0, "root":{ "type":"chain", "stages":[
-              { "type":"sawtooth", "freq":110 },
-              { "type":"duck", "amount":0.8,
-                "trigger": { "type":"seq", "bpm":120, "steps_per_beat":4, "wave":"kit",
-                  "env":{"s":1},
-                  "notes":[ {"step":0,"len":2,"pitch":"midi:36"} ] } } ] } }"#,
-        )
-        .unwrap();
-        let dir = std::env::temp_dir().join("tono-midi-test");
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("pump.mid");
-        let s = export_midi(&doc, &path).unwrap();
-        assert_eq!(s.notes, 1, "the duck trigger's seq exported");
-    }
 
     #[test]
     fn pathological_step_values_never_panic() {

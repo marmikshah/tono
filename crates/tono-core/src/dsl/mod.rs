@@ -444,29 +444,6 @@ pub enum SuperWave {
     Square,
 }
 
-/// Table set of a [`Node::Wavetable`] morphing oscillator: an ordered set of
-/// single-cycle waves that `position` (0..1) crossfades across. Each sub-wave
-/// is generated at node build time by additive synthesis, band-limited to 32
-/// partials (darker sub-waves use fewer), sampled into a 2048-sample table —
-/// zero assets, fully deterministic.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum WavetableKind {
-    /// sine → triangle → square → saw: the classic dark-to-bright morph.
-    #[default]
-    Basic,
-    /// A saw that grows its harmonic count (1 → 2 → 4 → 8 → 16 → 32 partials):
-    /// a pure brightness ramp.
-    Harmonics,
-    /// Vowel-ish fixed formant stacks a → e → i → o → u (fundamental plus two
-    /// partials tuned to formant centres, voiced against a ~110 Hz reference).
-    /// Sweep `position` slowly for vocal morphs.
-    Formant,
-    /// Sparse, cluster-like partial stacks (missing fundamentals, wide gaps)
-    /// that read metallic / clangorous while staying perfectly periodic.
-    Metallic,
-}
-
 /// Oscillator choice for a [`Node::Seq`] note.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq)]

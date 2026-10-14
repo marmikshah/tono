@@ -457,8 +457,6 @@ pub fn tono_core::dsl::Modulator::deserialize<__D>(__D) -> core::result::Result<
 pub tono_core::dsl::Node::Bandpass
 pub tono_core::dsl::Node::Bandpass::cutoff: tono_core::dsl::Value
 pub tono_core::dsl::Node::Bandpass::q: f32
-pub tono_core::dsl::Node::Bitcrush
-pub tono_core::dsl::Node::Bitcrush::bits: u8
 pub tono_core::dsl::Node::Chain
 pub tono_core::dsl::Node::Chain::stages: alloc::vec::Vec<tono_core::dsl::Node>
 pub tono_core::dsl::Node::Chorus
@@ -471,48 +469,24 @@ pub tono_core::dsl::Node::Compress::makeup: f32
 pub tono_core::dsl::Node::Compress::ratio: f32
 pub tono_core::dsl::Node::Compress::release: f32
 pub tono_core::dsl::Node::Compress::threshold: f32
-pub tono_core::dsl::Node::Convolve
-pub tono_core::dsl::Node::Convolve::damp: f32
-pub tono_core::dsl::Node::Convolve::decay: f32
-pub tono_core::dsl::Node::Convolve::mix: f32
-pub tono_core::dsl::Node::Convolve::predelay: f32
-pub tono_core::dsl::Node::Convolve::size: f32
 pub tono_core::dsl::Node::Delay
 pub tono_core::dsl::Node::Delay::feedback: f32
 pub tono_core::dsl::Node::Delay::secs: f32
-pub tono_core::dsl::Node::Downsample
-pub tono_core::dsl::Node::Downsample::factor: u32
 pub tono_core::dsl::Node::Drive
 pub tono_core::dsl::Node::Drive::aa: core::option::Option<bool>
 pub tono_core::dsl::Node::Drive::amount: tono_core::dsl::Value
 pub tono_core::dsl::Node::Drive::shape: tono_core::dsl::DriveShape
-pub tono_core::dsl::Node::Duck
-pub tono_core::dsl::Node::Duck::amount: f32
-pub tono_core::dsl::Node::Duck::attack: f32
-pub tono_core::dsl::Node::Duck::release: f32
-pub tono_core::dsl::Node::Duck::trigger: alloc::boxed::Box<tono_core::dsl::Node>
 pub tono_core::dsl::Node::Dust
 pub tono_core::dsl::Node::Dust::decay: f32
 pub tono_core::dsl::Node::Dust::density: f32
 pub tono_core::dsl::Node::Env
 pub tono_core::dsl::Node::Env::adsr: tono_core::dsl::Adsr
-pub tono_core::dsl::Node::Flanger
-pub tono_core::dsl::Node::Flanger::depth: f32
-pub tono_core::dsl::Node::Flanger::feedback: f32
-pub tono_core::dsl::Node::Flanger::mix: f32
-pub tono_core::dsl::Node::Flanger::rate: f32
 pub tono_core::dsl::Node::Fm
 pub tono_core::dsl::Node::Fm::freq: tono_core::dsl::Value
 pub tono_core::dsl::Node::Fm::index: tono_core::dsl::Value
 pub tono_core::dsl::Node::Fm::ratio: f32
 pub tono_core::dsl::Node::Gain
 pub tono_core::dsl::Node::Gain::amount: tono_core::dsl::Value
-pub tono_core::dsl::Node::Granular
-pub tono_core::dsl::Node::Granular::density: f32
-pub tono_core::dsl::Node::Granular::grain_ms: f32
-pub tono_core::dsl::Node::Granular::mix: f32
-pub tono_core::dsl::Node::Granular::pitch: f32
-pub tono_core::dsl::Node::Granular::spread: f32
 pub tono_core::dsl::Node::Highpass
 pub tono_core::dsl::Node::Highpass::cutoff: tono_core::dsl::Value
 pub tono_core::dsl::Node::Highpass::q: f32
@@ -544,16 +518,9 @@ pub tono_core::dsl::Node::Peak
 pub tono_core::dsl::Node::Peak::cutoff: tono_core::dsl::Value
 pub tono_core::dsl::Node::Peak::gain_db: f32
 pub tono_core::dsl::Node::Peak::q: f32
-pub tono_core::dsl::Node::Phaser
-pub tono_core::dsl::Node::Phaser::depth: f32
-pub tono_core::dsl::Node::Phaser::feedback: f32
-pub tono_core::dsl::Node::Phaser::mix: f32
-pub tono_core::dsl::Node::Phaser::rate: f32
 pub tono_core::dsl::Node::Reverb
 pub tono_core::dsl::Node::Reverb::mix: f32
 pub tono_core::dsl::Node::Reverb::room: f32
-pub tono_core::dsl::Node::RingMod
-pub tono_core::dsl::Node::RingMod::freq: tono_core::dsl::Value
 pub tono_core::dsl::Node::Sawtooth
 pub tono_core::dsl::Node::Sawtooth::freq: tono_core::dsl::Value
 pub tono_core::dsl::Node::Seq
@@ -591,10 +558,6 @@ pub tono_core::dsl::Node::Tremolo::depth: f32
 pub tono_core::dsl::Node::Tremolo::rate: f32
 pub tono_core::dsl::Node::Triangle
 pub tono_core::dsl::Node::Triangle::freq: tono_core::dsl::Value
-pub tono_core::dsl::Node::Wavetable
-pub tono_core::dsl::Node::Wavetable::freq: tono_core::dsl::Value
-pub tono_core::dsl::Node::Wavetable::position: tono_core::dsl::Value
-pub tono_core::dsl::Node::Wavetable::wave: tono_core::dsl::WavetableKind
 impl tono_core::dsl::Node
 pub const tono_core::dsl::Node::PROCESSOR_KINDS: &'static [&'static str]
 pub fn tono_core::dsl::Node::children(&self) -> tono_core::dsl::Children<'_>
@@ -793,30 +756,6 @@ impl serde_core::ser::Serialize for tono_core::dsl::Value
 pub fn tono_core::dsl::Value::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for tono_core::dsl::Value
 pub fn tono_core::dsl::Value::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-pub enum tono_core::dsl::WavetableKind
-pub tono_core::dsl::WavetableKind::Basic
-pub tono_core::dsl::WavetableKind::Formant
-pub tono_core::dsl::WavetableKind::Harmonics
-pub tono_core::dsl::WavetableKind::Metallic
-impl core::clone::Clone for tono_core::dsl::WavetableKind
-pub fn tono_core::dsl::WavetableKind::clone(&self) -> tono_core::dsl::WavetableKind
-impl core::cmp::PartialEq for tono_core::dsl::WavetableKind
-pub fn tono_core::dsl::WavetableKind::eq(&self, &tono_core::dsl::WavetableKind) -> bool
-impl core::default::Default for tono_core::dsl::WavetableKind
-pub fn tono_core::dsl::WavetableKind::default() -> tono_core::dsl::WavetableKind
-impl core::fmt::Debug for tono_core::dsl::WavetableKind
-pub fn tono_core::dsl::WavetableKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for tono_core::dsl::WavetableKind
-impl core::marker::StructuralPartialEq for tono_core::dsl::WavetableKind
-impl schemars::JsonSchema for tono_core::dsl::WavetableKind
-pub fn tono_core::dsl::WavetableKind::inline_schema() -> bool
-pub fn tono_core::dsl::WavetableKind::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
-pub fn tono_core::dsl::WavetableKind::schema_id() -> alloc::borrow::Cow<'static, str>
-pub fn tono_core::dsl::WavetableKind::schema_name() -> alloc::borrow::Cow<'static, str>
-impl serde_core::ser::Serialize for tono_core::dsl::WavetableKind
-pub fn tono_core::dsl::WavetableKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
-impl<'de> serde_core::de::Deserialize<'de> for tono_core::dsl::WavetableKind
-pub fn tono_core::dsl::WavetableKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct tono_core::dsl::Adsr
 pub tono_core::dsl::Adsr::a: f32
 pub tono_core::dsl::Adsr::d: f32
@@ -1811,8 +1750,6 @@ pub mod tono_core::prelude
 pub tono_core::prelude::Node::Bandpass
 pub tono_core::prelude::Node::Bandpass::cutoff: tono_core::dsl::Value
 pub tono_core::prelude::Node::Bandpass::q: f32
-pub tono_core::prelude::Node::Bitcrush
-pub tono_core::prelude::Node::Bitcrush::bits: u8
 pub tono_core::prelude::Node::Chain
 pub tono_core::prelude::Node::Chain::stages: alloc::vec::Vec<tono_core::dsl::Node>
 pub tono_core::prelude::Node::Chorus
@@ -1825,48 +1762,24 @@ pub tono_core::prelude::Node::Compress::makeup: f32
 pub tono_core::prelude::Node::Compress::ratio: f32
 pub tono_core::prelude::Node::Compress::release: f32
 pub tono_core::prelude::Node::Compress::threshold: f32
-pub tono_core::prelude::Node::Convolve
-pub tono_core::prelude::Node::Convolve::damp: f32
-pub tono_core::prelude::Node::Convolve::decay: f32
-pub tono_core::prelude::Node::Convolve::mix: f32
-pub tono_core::prelude::Node::Convolve::predelay: f32
-pub tono_core::prelude::Node::Convolve::size: f32
 pub tono_core::prelude::Node::Delay
 pub tono_core::prelude::Node::Delay::feedback: f32
 pub tono_core::prelude::Node::Delay::secs: f32
-pub tono_core::prelude::Node::Downsample
-pub tono_core::prelude::Node::Downsample::factor: u32
 pub tono_core::prelude::Node::Drive
 pub tono_core::prelude::Node::Drive::aa: core::option::Option<bool>
 pub tono_core::prelude::Node::Drive::amount: tono_core::dsl::Value
 pub tono_core::prelude::Node::Drive::shape: tono_core::dsl::DriveShape
-pub tono_core::prelude::Node::Duck
-pub tono_core::prelude::Node::Duck::amount: f32
-pub tono_core::prelude::Node::Duck::attack: f32
-pub tono_core::prelude::Node::Duck::release: f32
-pub tono_core::prelude::Node::Duck::trigger: alloc::boxed::Box<tono_core::dsl::Node>
 pub tono_core::prelude::Node::Dust
 pub tono_core::prelude::Node::Dust::decay: f32
 pub tono_core::prelude::Node::Dust::density: f32
 pub tono_core::prelude::Node::Env
 pub tono_core::prelude::Node::Env::adsr: tono_core::dsl::Adsr
-pub tono_core::prelude::Node::Flanger
-pub tono_core::prelude::Node::Flanger::depth: f32
-pub tono_core::prelude::Node::Flanger::feedback: f32
-pub tono_core::prelude::Node::Flanger::mix: f32
-pub tono_core::prelude::Node::Flanger::rate: f32
 pub tono_core::prelude::Node::Fm
 pub tono_core::prelude::Node::Fm::freq: tono_core::dsl::Value
 pub tono_core::prelude::Node::Fm::index: tono_core::dsl::Value
 pub tono_core::prelude::Node::Fm::ratio: f32
 pub tono_core::prelude::Node::Gain
 pub tono_core::prelude::Node::Gain::amount: tono_core::dsl::Value
-pub tono_core::prelude::Node::Granular
-pub tono_core::prelude::Node::Granular::density: f32
-pub tono_core::prelude::Node::Granular::grain_ms: f32
-pub tono_core::prelude::Node::Granular::mix: f32
-pub tono_core::prelude::Node::Granular::pitch: f32
-pub tono_core::prelude::Node::Granular::spread: f32
 pub tono_core::prelude::Node::Highpass
 pub tono_core::prelude::Node::Highpass::cutoff: tono_core::dsl::Value
 pub tono_core::prelude::Node::Highpass::q: f32
@@ -1898,16 +1811,9 @@ pub tono_core::prelude::Node::Peak
 pub tono_core::prelude::Node::Peak::cutoff: tono_core::dsl::Value
 pub tono_core::prelude::Node::Peak::gain_db: f32
 pub tono_core::prelude::Node::Peak::q: f32
-pub tono_core::prelude::Node::Phaser
-pub tono_core::prelude::Node::Phaser::depth: f32
-pub tono_core::prelude::Node::Phaser::feedback: f32
-pub tono_core::prelude::Node::Phaser::mix: f32
-pub tono_core::prelude::Node::Phaser::rate: f32
 pub tono_core::prelude::Node::Reverb
 pub tono_core::prelude::Node::Reverb::mix: f32
 pub tono_core::prelude::Node::Reverb::room: f32
-pub tono_core::prelude::Node::RingMod
-pub tono_core::prelude::Node::RingMod::freq: tono_core::dsl::Value
 pub tono_core::prelude::Node::Sawtooth
 pub tono_core::prelude::Node::Sawtooth::freq: tono_core::dsl::Value
 pub tono_core::prelude::Node::Seq
@@ -1945,10 +1851,6 @@ pub tono_core::prelude::Node::Tremolo::depth: f32
 pub tono_core::prelude::Node::Tremolo::rate: f32
 pub tono_core::prelude::Node::Triangle
 pub tono_core::prelude::Node::Triangle::freq: tono_core::dsl::Value
-pub tono_core::prelude::Node::Wavetable
-pub tono_core::prelude::Node::Wavetable::freq: tono_core::dsl::Value
-pub tono_core::prelude::Node::Wavetable::position: tono_core::dsl::Value
-pub tono_core::prelude::Node::Wavetable::wave: tono_core::dsl::WavetableKind
 impl tono_core::dsl::Node
 pub const tono_core::dsl::Node::PROCESSOR_KINDS: &'static [&'static str]
 pub fn tono_core::dsl::Node::children(&self) -> tono_core::dsl::Children<'_>
@@ -4122,8 +4024,6 @@ pub enum tono_core::streaming::StreamBlocker
 pub tono_core::streaming::StreamBlocker::LoopPlayback
 pub tono_core::streaming::StreamBlocker::NestedMixer
 pub tono_core::streaming::StreamBlocker::Normalize
-pub tono_core::streaming::StreamBlocker::OfflineEffect
-pub tono_core::streaming::StreamBlocker::OfflineEffect::name: &'static str
 pub tono_core::streaming::StreamBlocker::Sampler
 pub tono_core::streaming::StreamBlocker::StereoTreatment
 pub tono_core::streaming::StreamBlocker::TracksPart

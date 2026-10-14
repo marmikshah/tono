@@ -8,7 +8,7 @@ use super::proc::{Proc, try_proc};
 use super::value::Val;
 use crate::dsl::{Node, NoiseColor, SeqWave, Shape, SuperWave, Value};
 use crate::dsp::{Rng, adsr_env, node_path, node_seed};
-use crate::render::{osc, poly_blep, seq_to_signal, wavetable_frames, wavetable_lookup};
+use crate::render::{osc, poly_blep, seq_to_signal};
 
 /// Per-color filter state for a noise node.
 pub(super) enum NoiseKind {
@@ -60,13 +60,6 @@ pub(super) enum Src {
         phases: Vec<f32>,
         ratios: Vec<f32>,
         scale: f32,
-        srf: f32,
-    },
-    Wavetable {
-        frames: Vec<Vec<f32>>,
-        phase: f32,
-        freq: Val,
-        position: Val,
         srf: f32,
     },
     Impact {
@@ -224,20 +217,6 @@ impl Src {
                     *o = acc * *scale;
                 }
             }
-            Src::Wavetable {
-                frames,
-                phase,
-                freq,
-                position,
-                srf,
-            } => {
-                for (i, o) in out.iter_mut().enumerate() {
-                    let t = t0 + i;
-                    *o = wavetable_lookup(frames, position.eval(t), *phase);
-                    *phase += freq.eval(t).max(0.0) * pitch[i] / *srf;
-                    *phase -= phase.floor();
-                }
-            }
             Src::Impact { w, norm } => {
                 for (i, o) in out.iter_mut().enumerate() {
                     let t = t0 + i;
@@ -328,7 +307,7 @@ impl Src {
             Src::Chain { src, procs } => {
                 src.process(out, t0, pitch);
                 for p in procs.iter_mut() {
-                    p.process(out, t0, pitch);
+                    p.process(out, t0);
                 }
             }
         }
@@ -444,17 +423,6 @@ pub(super) fn try_src(node: &Node, ctx: &Ctx, path: u64) -> Option<Src> {
                 srf,
             }
         }
-        Node::Wavetable {
-            wave,
-            freq,
-            position,
-        } => Src::Wavetable {
-            frames: wavetable_frames(*wave),
-            phase: 0.0,
-            freq: v(freq),
-            position: v(position),
-            srf,
-        },
         Node::Impact { hardness, velocity } => {
             let h = hardness.clamp(0.0, 1.0);
             let vel = velocity.clamp(0.0, 1.0);

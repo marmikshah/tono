@@ -592,25 +592,29 @@ mod tests {
         assert!(program.warnings().is_empty());
     }
 
+    /// The demo song plus a SoundFont sampler track — the one part-level
+    /// streaming blocker a song can carry.
+    fn song_with_sampler_track() -> Song {
+        let mut song = demo_song();
+        song.add_track("sampled", SeqWave::Sampler, amp());
+        song.tracks.last_mut().unwrap().sf2 = "piano.sf2".into();
+        song.arrange("sampled", "stab", 0);
+        song
+    }
+
     #[test]
     fn a_tracks_root_with_an_unstreamable_part_still_warns() {
-        // A master-chain convolve can't stream — the program keeps the
-        // warning (and the Player fallback), now naming the failing part.
-        let mut song = demo_song();
-        song.master.push(
-            serde_json::from_value(
-                serde_json::json!({ "type": "convolve", "decay": 0.6, "mix": 0.4 }),
-            )
-            .unwrap(),
-        );
+        // A sampler track can't stream — the program keeps the warning (and
+        // the Player fallback), naming the failing part.
+        let song = song_with_sampler_track();
         let program = song.compile(&CompileOptions::default()).unwrap();
         assert!(!program.is_streamable());
         assert!(
             program
                 .warnings()
                 .iter()
-                .any(|d| d.code == "T1508" && d.message.contains("the master chain")),
-            "the master-chain blocker is a warning with its context: {:?}",
+                .any(|d| d.code == "T1506" && d.message.contains("track 'sampled'")),
+            "the track blocker is a warning with its context: {:?}",
             program.warnings()
         );
         assert!(
@@ -624,13 +628,7 @@ mod tests {
 
     #[test]
     fn runtime_target_rejects_streaming_blockers() {
-        let mut song = demo_song();
-        song.master.push(
-            serde_json::from_value(
-                serde_json::json!({ "type": "convolve", "decay": 0.6, "mix": 0.4 }),
-            )
-            .unwrap(),
-        );
+        let song = song_with_sampler_track();
         let err = song
             .compile(&CompileOptions {
                 target: CompileTarget::Runtime,
@@ -641,7 +639,7 @@ mod tests {
         assert!(
             err.0
                 .iter()
-                .any(|d| d.code == "T1508" && d.severity == crate::diag::Severity::Error)
+                .any(|d| d.code == "T1506" && d.severity == crate::diag::Severity::Error)
         );
     }
 

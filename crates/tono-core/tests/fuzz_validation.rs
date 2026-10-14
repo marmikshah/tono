@@ -416,45 +416,6 @@ fn j_modfx(valid: bool) -> SJ {
         )
             .prop_map(|(r, d, m)| json!({ "type": "chorus", "rate": r, "depth": d, "mix": m }))
             .boxed(),
-        (
-            proptest::sample::select(vec!["flanger", "phaser"]),
-            fnum(valid, 0.05, 20.0),
-            fnum(valid, 0.0, 1.0),
-            fnum(valid, 0.0, 1.0),
-            fnum(valid, 0.0, 1.0),
-        )
-            .prop_map(|(t, r, d, f, m)| {
-                json!({ "type": t, "rate": r, "depth": d, "feedback": f, "mix": m })
-            })
-            .boxed(),
-    ]
-    .boxed()
-}
-
-fn j_tail_fx(valid: bool) -> SJ {
-    prop_oneof![
-        (
-            fnum(valid, 0.05, 3.0),
-            fnum(valid, 0.0, 3.0),
-            fnum(valid, 0.0, 0.5),
-            fnum(valid, 0.0, 1.0),
-            fnum(valid, 0.0, 1.0),
-        )
-            .prop_map(|(decay, size, predelay, damp, mix)| {
-                json!({ "type": "convolve", "decay": decay, "size": size, "predelay": predelay, "damp": damp, "mix": mix })
-            })
-            .boxed(),
-        (
-            fnum(valid, 5.0, 500.0),
-            fnum(valid, 0.1, 200.0),
-            fnum(valid, 0.25, 4.0),
-            fnum(valid, 0.0, 1.0),
-            fnum(valid, 0.0, 1.0),
-        )
-            .prop_map(|(grain_ms, density, pitch, spread, mix)| {
-                json!({ "type": "granular", "grain_ms": grain_ms, "density": density, "pitch": pitch, "spread": spread, "mix": mix })
-            })
-            .boxed(),
     ]
     .boxed()
 }
@@ -465,12 +426,6 @@ fn processor_json(valid: bool) -> SJ {
         j_eq(valid),
         value_json(valid, -2.0, 2.0)
             .prop_map(|a| json!({ "type": "gain", "amount": a }))
-            .boxed(),
-        uint(valid, 1, 16, 0, 20)
-            .prop_map(|b| json!({ "type": "bitcrush", "bits": b }))
-            .boxed(),
-        uint(valid, 1, 8, 0, 8)
-            .prop_map(|f| json!({ "type": "downsample", "factor": f }))
             .boxed(),
         (fnum(valid, 0.001, 2.0), fnum(valid, 0.0, 1.0))
             .prop_map(|(s, f)| json!({ "type": "delay", "secs": s, "feedback": f }))
@@ -485,11 +440,7 @@ fn processor_json(valid: bool) -> SJ {
         )
             .prop_map(|(a, s)| json!({ "type": "drive", "amount": a, "shape": s }))
             .boxed(),
-        value_json(valid, 20.0, 10_000.0)
-            .prop_map(|f| json!({ "type": "ringmod", "freq": f }))
-            .boxed(),
         j_modfx(valid),
-        j_tail_fx(valid),
         (
             fnum(valid, -60.0, 0.0),
             fnum(valid, 1.0, 20.0),
@@ -526,16 +477,6 @@ fn node_json(valid: bool, depth: u32) -> SJ {
             .boxed(),
         1 => proptest::collection::vec(inner.clone(), 1..=3)
             .prop_map(|stages| json!({ "type": "chain", "stages": stages }))
-            .boxed(),
-        1 => (
-            inner,
-            fnum(valid, 0.0, 1.0),
-            fnum(valid, 0.0, 0.1),
-            fnum(valid, 0.0, 0.5),
-        )
-            .prop_map(|(t, amount, attack, release)| {
-                json!({ "type": "duck", "trigger": t, "amount": amount, "attack": attack, "release": release })
-            })
             .boxed(),
     ]
     .boxed()
@@ -806,10 +747,9 @@ fn poison_node(node: &mut Node, x: f32) {
             poison_value(freq, x);
             poison_value(duty, x);
         }
-        Node::Triangle { freq }
-        | Node::Sawtooth { freq }
-        | Node::Sine { freq }
-        | Node::RingMod { freq } => poison_value(freq, x),
+        Node::Triangle { freq } | Node::Sawtooth { freq } | Node::Sine { freq } => {
+            poison_value(freq, x)
+        }
         Node::Fm { freq, ratio, index } => {
             poison_value(freq, x);
             *ratio = x;
@@ -917,33 +857,6 @@ fn poison_node(node: &mut Node, x: f32) {
             *depth = x;
             *mix = x;
         }
-        Node::Flanger {
-            rate,
-            depth,
-            feedback,
-            mix,
-        }
-        | Node::Phaser {
-            rate,
-            depth,
-            feedback,
-            mix,
-        } => {
-            *rate = x;
-            *depth = x;
-            *feedback = x;
-            *mix = x;
-        }
-        Node::Duck {
-            amount,
-            attack,
-            release,
-            ..
-        } => {
-            *amount = x;
-            *attack = x;
-            *release = x;
-        }
         Node::Compress {
             threshold,
             ratio,
@@ -956,32 +869,6 @@ fn poison_node(node: &mut Node, x: f32) {
             *attack = x;
             *release = x;
             *makeup = x;
-        }
-        Node::Convolve {
-            decay,
-            size,
-            predelay,
-            damp,
-            mix,
-        } => {
-            *decay = x;
-            *size = x;
-            *predelay = x;
-            *damp = x;
-            *mix = x;
-        }
-        Node::Granular {
-            grain_ms,
-            density,
-            pitch,
-            spread,
-            mix,
-        } => {
-            *grain_ms = x;
-            *density = x;
-            *pitch = x;
-            *spread = x;
-            *mix = x;
         }
         Node::Tracks { tracks, .. } => {
             for t in tracks.iter_mut() {

@@ -20,7 +20,7 @@ WAV downloads locally. The visual studio submits edited SoundDocs directly to
 the same worker; exact serialized content keys keep changed graphs out of stale
 PCM caches. Native tests and the Node integration check cover error
 recovery and exact native/WASM sample bits, including stereo mixers, looping,
-normalization, instruments, convolution, and granular processing.
+normalization and instruments.
 
 ## ABI
 
@@ -42,8 +42,8 @@ WebAssembly linear memory can retain its allocated capacity for reuse.
 
 The browser adapter disables native SoundFont loading and image analysis. It
 supports synthesized graphs up to 30 seconds at 8–48 kHz, 1 MiB of JSON, 128
-nodes, and 32 levels. It also checks conservative graph, note-work and convolution
-workspace budgets before DSP allocations. Graph intermediates retain the original
+nodes, and 32 levels. It also checks conservative graph and note-work budgets
+before DSP allocations. Graph intermediates retain the original
 32-million frame-work cap. Musical scores use a separate 64-million note-work
 cap, counting actual note gates, scratch buffers, and instrument setup instead
 of charging every event for the whole song. The authored BGM catalog is checked

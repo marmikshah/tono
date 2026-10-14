@@ -3,7 +3,7 @@
 
 use super::{
     Adsr, Bus, DriveShape, KitStyle, Mode, NoiseColor, SeqNote, SeqWave, SuperWave, TempoPoint,
-    Track, Value, WavetableKind, default_gain,
+    Track, Value, default_gain,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -13,17 +13,13 @@ use serde::{Deserialize, Serialize};
 fn default_duty() -> Value {
     Value::Const(0.5)
 }
-// Wavetable morph starts at the first (darkest) sub-wave.
-fn default_wavetable_position() -> Value {
-    Value::Const(0.0)
-}
 fn default_q() -> f32 {
     0.707
 }
 fn default_steps_per_beat() -> u32 {
     4
 }
-// Shared by chorus / flanger / phaser ("mod fx").
+// Shared by chorus and tremolo ("mod fx").
 fn default_mod_depth() -> f32 {
     0.5
 }
@@ -36,18 +32,6 @@ fn default_chorus_rate() -> f32 {
 // Classic amp/tremolo rate.
 fn default_tremolo_rate() -> f32 {
     6.0
-}
-fn default_flanger_rate() -> f32 {
-    0.25
-}
-fn default_flanger_feedback() -> f32 {
-    0.5
-}
-fn default_phaser_rate() -> f32 {
-    0.4
-}
-fn default_phaser_feedback() -> f32 {
-    0.3
 }
 fn default_comp_attack() -> f32 {
     0.005
@@ -136,15 +120,6 @@ fn default_bass_drive() -> f32 {
 fn default_bass_body_decay() -> f32 {
     2.0
 }
-fn default_duck_amount() -> f32 {
-    0.8
-}
-fn default_duck_attack() -> f32 {
-    0.005
-}
-fn default_duck_release() -> f32 {
-    0.25
-}
 fn default_modal_mix() -> f32 {
     1.0
 }
@@ -153,30 +128,6 @@ fn default_impact_hardness() -> f32 {
 }
 fn default_dust_decay() -> f32 {
     0.02
-}
-fn default_convolve_decay() -> f32 {
-    1.5
-}
-fn default_convolve_damp() -> f32 {
-    0.3
-}
-fn default_convolve_mix() -> f32 {
-    0.35
-}
-fn default_granular_grain_ms() -> f32 {
-    80.0
-}
-fn default_granular_density() -> f32 {
-    25.0
-}
-fn default_granular_pitch() -> f32 {
-    1.0
-}
-fn default_granular_spread() -> f32 {
-    0.3
-}
-fn default_granular_mix() -> f32 {
-    0.5
 }
 
 /// A node in the synthesis graph. Every node evaluates to a mono signal.
@@ -242,24 +193,6 @@ pub enum Node {
         /// Total detune spread in cents across all voices.
         #[serde(default = "default_detune")]
         detune_cents: f32,
-    },
-    /// Morphing wavetable oscillator: `position` (0..1) sweeps across an
-    /// ordered set of built-in, single-cycle tables (see [`WavetableKind`]),
-    /// crossfading between adjacent sub-waves — the classic wavetable sweep.
-    /// Modulate `position` (an `lfo` or `env`) for the signature moving timbre:
-    /// a vocal morph on `formant`, a brightness swell on `harmonics`. Tables
-    /// are generated deterministically at build time (additive, band-limited to
-    /// 32 partials — darker sub-waves use fewer), so no table files are needed;
-    /// very high pitches at bright positions can fold.
-    Wavetable {
-        /// Which table set to morph across.
-        #[serde(default)]
-        wave: WavetableKind,
-        /// Frequency in Hz (modulatable).
-        freq: Value,
-        /// Morph position across the sub-waves, 0..1 (modulatable).
-        #[serde(default = "default_wavetable_position")]
-        position: Value,
     },
     /// A note sequencer: plays `notes` on a tempo grid, each with its own pitch,
     /// length, and a shared per-note ADSR. This is how you write real melodies,
@@ -460,16 +393,6 @@ pub enum Node {
         /// Multiplier.
         amount: Value,
     },
-    /// Quantize amplitude to `bits` of resolution for crunch.
-    Bitcrush {
-        /// Bit depth, 1..16.
-        bits: u8,
-    },
-    /// Sample-rate reduction by an integer `factor` for lo-fi grit.
-    Downsample {
-        /// Hold each sample for this many samples.
-        factor: u32,
-    },
     /// Feedback delay (echo / comb).
     Delay {
         /// Delay time in seconds.
@@ -520,17 +443,9 @@ pub enum Node {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         aa: Option<bool>,
     },
-    /// Ring modulation: multiply the signal by a sine carrier at `freq`. Metallic,
-    /// clangorous, robotic textures.
-    RingMod {
-        /// Carrier frequency in Hz.
-        freq: Value,
-    },
     /// Tremolo: per-sample amplitude modulation — the gain swings between
-    /// `1 - depth` and 1 at `rate` Hz. Unlike a modulated `gain` (which does
-    /// not stream), the gain is a closed-form function of the absolute sample
-    /// index, so tremolo streams natively and byte-identically to the offline
-    /// render.
+    /// `1 - depth` and 1 at `rate` Hz, a closed-form function of the absolute
+    /// sample index.
     Tremolo {
         /// LFO rate in Hz.
         #[serde(default = "default_tremolo_rate")]
@@ -538,38 +453,6 @@ pub enum Node {
         /// Modulation depth, 0..1 (0 = transparent passthrough, 1 = full cut).
         #[serde(default = "default_mod_depth")]
         depth: f32,
-    },
-    /// Flanger: a very short modulated delay with feedback — the classic jet
-    /// sweep / metallic whoosh. Stronger and more resonant than chorus.
-    Flanger {
-        /// LFO rate in Hz.
-        #[serde(default = "default_flanger_rate")]
-        rate: f32,
-        /// Modulation depth, 0..1.
-        #[serde(default = "default_mod_depth")]
-        depth: f32,
-        /// Feedback amount, 0..1 (more ⇒ more resonant).
-        #[serde(default = "default_flanger_feedback")]
-        feedback: f32,
-        /// Dry/wet mix, 0..1.
-        #[serde(default = "default_mod_mix")]
-        mix: f32,
-    },
-    /// Phaser: swept all-pass notches — a hollow, swooshing movement for pads,
-    /// lasers, and sci-fi textures.
-    Phaser {
-        /// LFO sweep rate in Hz.
-        #[serde(default = "default_phaser_rate")]
-        rate: f32,
-        /// Sweep depth, 0..1.
-        #[serde(default = "default_mod_depth")]
-        depth: f32,
-        /// Feedback amount, 0..1.
-        #[serde(default = "default_phaser_feedback")]
-        feedback: f32,
-        /// Dry/wet mix, 0..1.
-        #[serde(default = "default_mod_mix")]
-        mix: f32,
     },
     /// Chorus: a short modulated delay mixed with the dry signal for thickening
     /// and width.
@@ -583,23 +466,6 @@ pub enum Node {
         /// Dry/wet mix, 0..1.
         #[serde(default = "default_mod_mix")]
         mix: f32,
-    },
-    /// Sidechain duck: gain-reduces the chained signal whenever `trigger` is
-    /// loud — the pumping that glues a bass or pad to the kick. The trigger
-    /// is rendered silently (it only steers the gain); chain the audible
-    /// kick separately in the mix.
-    Duck {
-        /// The signal whose loudness drives the ducking (e.g. the kick seq).
-        trigger: Box<Node>,
-        /// Duck depth, 0..1 (1 = fully silent at the trigger's peak).
-        #[serde(default = "default_duck_amount")]
-        amount: f32,
-        /// Gain-reduction attack in seconds.
-        #[serde(default = "default_duck_attack")]
-        attack: f32,
-        /// Recovery time in seconds (the "pump" length).
-        #[serde(default = "default_duck_release")]
-        release: f32,
     },
     /// Dynamic-range compressor: tames peaks above `threshold` (dBFS) by `ratio`,
     /// with `attack`/`release` ballistics, then applies `makeup` gain (dB). The
@@ -619,73 +485,6 @@ pub enum Node {
         #[serde(default)]
         makeup: f32,
     },
-    /// Convolution reverb with a synthesized impulse response — the "put it in
-    /// a real space" effect, with zero assets: instead of loading an IR file,
-    /// the node *generates* its own IR deterministically from its parameters
-    /// and its structural position in the graph (the same node at the same
-    /// graph position always builds the same IR — edit-stable like the
-    /// structurally-seeded RNG sources of engine 2 and later). The IR is a
-    /// white-noise burst under an exponential
-    /// decay envelope reaching −60 dB at `decay` seconds (RT60-style), capped
-    /// at `size` seconds, darkened over time by a one-pole lowpass whose
-    /// cutoff falls per `damp`, and shifted right by `predelay` (the gap
-    /// between the dry hit and the room's answer — larger rooms answer later).
-    /// Convolution is FFT-based (single-shot, the whole block at once) and
-    /// normalized to unit IR energy, so the wet level stays put as `decay` /
-    /// `size` change. Like `reverb`, the tail folds into the document: the
-    /// output is truncated to the document length rather than extended. `mix`
-    /// crossfades dry/wet (0 = transparent passthrough). This node is
-    /// **offline only**: convolution needs the whole input buffer, so the
-    /// streaming renderer refuses it with a named reason (bounce it offline
-    /// and keep the streamed graph causal).
-    Convolve {
-        /// RT60-ish decay time in seconds (tail reaches −60 dB at this point).
-        #[serde(default = "default_convolve_decay")]
-        decay: f32,
-        /// IR length cap in seconds (0 = `decay`, i.e. no extra truncation).
-        #[serde(default)]
-        size: f32,
-        /// Silence before the IR starts, in seconds (pre-delay).
-        #[serde(default)]
-        predelay: f32,
-        /// High-frequency damping, 0..1: how fast the tail darkens (0 = the
-        /// burst stays white, 1 = it closes to a rumble by the end).
-        #[serde(default = "default_convolve_damp")]
-        damp: f32,
-        /// Dry/wet mix, 0..1.
-        #[serde(default = "default_convolve_mix")]
-        mix: f32,
-    },
-    /// Granular texture: chops the incoming signal into overlapping
-    /// Hann-windowed grains of `grain_ms` milliseconds at `density` grains per
-    /// second, replays each at `pitch` (playback ratio — 2 = octave up, 0.5 =
-    /// octave down) with deterministic onset/source jitter and detune of depth
-    /// `spread` (drawn from the node's structurally-seeded stream in a fixed
-    /// order, so the texture is stable under edits), sums them (normalized by
-    /// the window overlap so loudness tracks the dry signal), and crossfades
-    /// with the dry signal per `mix`. Frozen pads and shimmer from any source
-    /// material: chain it after a note or a noise burst and let `spread`
-    /// smear it into a cloud. `mix` 0 = transparent passthrough. **Offline
-    /// only** — grains read the whole input out of order, so the streaming
-    /// renderer refuses it with a named reason (bounce it offline and keep the
-    /// streamed graph causal).
-    Granular {
-        /// Grain length in milliseconds (5..=500).
-        #[serde(default = "default_granular_grain_ms")]
-        grain_ms: f32,
-        /// Grains per second (overlap = grain_ms × density / 1000).
-        #[serde(default = "default_granular_density")]
-        density: f32,
-        /// Grain playback ratio (1 = source pitch, 2 = octave up).
-        #[serde(default = "default_granular_pitch")]
-        pitch: f32,
-        /// Randomization depth, 0..1: onset jitter and per-grain detune.
-        #[serde(default = "default_granular_spread")]
-        spread: f32,
-        /// Dry/wet mix, 0..1.
-        #[serde(default = "default_granular_mix")]
-        mix: f32,
-    },
 }
 
 impl Node {
@@ -702,21 +501,13 @@ impl Node {
         "lowshelf",
         "highshelf",
         "gain",
-        "bitcrush",
-        "downsample",
         "delay",
         "reverb",
         "modal",
         "drive",
-        "ringmod",
         "tremolo",
         "chorus",
-        "flanger",
-        "phaser",
         "compress",
-        "duck",
-        "convolve",
-        "granular",
     ];
 
     /// True if this node only makes sense as a non-first stage of a `chain`
@@ -732,32 +523,22 @@ impl Node {
                 | Node::Lowshelf { .. }
                 | Node::Highshelf { .. }
                 | Node::Gain { .. }
-                | Node::Bitcrush { .. }
-                | Node::Downsample { .. }
                 | Node::Delay { .. }
                 | Node::Reverb { .. }
                 | Node::Modal { .. }
                 | Node::Drive { .. }
-                | Node::RingMod { .. }
                 | Node::Tremolo { .. }
                 | Node::Chorus { .. }
-                | Node::Flanger { .. }
-                | Node::Phaser { .. }
                 | Node::Compress { .. }
-                | Node::Duck { .. }
-                | Node::Convolve { .. }
-                | Node::Granular { .. }
         )
     }
 
     /// Every direct child of this node — the nested graphs of the combinator
-    /// variants: `mix`/`mul` inputs, `chain` stages, a `tracks`' layers then
-    /// its `master` chain, and a `duck`'s trigger. The ONE traversal
-    /// definition every walker shares, so a new variant can never be silently
-    /// skipped the way the hand-written walkers were (the `duck`-trigger
-    /// omissions in the vary and MIDI walkers were exactly that class). The
-    /// match is exhaustive *on purpose*: adding a variant without a children
-    /// decision is a compile error, never a silent skip.
+    /// variants: `mix`/`mul` inputs, `chain` stages, a `tracks`' layers, its
+    /// `master` chain and its buses' inserts. The ONE traversal definition
+    /// every walker shares, so a new variant can never be silently skipped.
+    /// The match is exhaustive *on purpose*: adding a variant without a
+    /// children decision is a compile error, never a silent skip.
     pub fn children(&self) -> Children<'_> {
         let kind = match self {
             Node::Mix { inputs } | Node::Mul { inputs } => ChildrenKind::Slice(inputs.iter()),
@@ -772,7 +553,6 @@ impl Node {
                 buses: buses.iter(),
                 bus_fx: [].iter(),
             },
-            Node::Duck { trigger, .. } => ChildrenKind::One(Some(trigger)),
             Node::Square { .. }
             | Node::Triangle { .. }
             | Node::Sawtooth { .. }
@@ -780,7 +560,6 @@ impl Node {
             | Node::Noise { .. }
             | Node::Fm { .. }
             | Node::Super { .. }
-            | Node::Wavetable { .. }
             | Node::Seq { .. }
             | Node::Impact { .. }
             | Node::Dust { .. }
@@ -793,20 +572,13 @@ impl Node {
             | Node::Lowshelf { .. }
             | Node::Highshelf { .. }
             | Node::Gain { .. }
-            | Node::Bitcrush { .. }
-            | Node::Downsample { .. }
             | Node::Delay { .. }
             | Node::Reverb { .. }
             | Node::Modal { .. }
             | Node::Drive { .. }
-            | Node::RingMod { .. }
             | Node::Tremolo { .. }
             | Node::Chorus { .. }
-            | Node::Flanger { .. }
-            | Node::Phaser { .. }
-            | Node::Compress { .. }
-            | Node::Convolve { .. }
-            | Node::Granular { .. } => ChildrenKind::None,
+            | Node::Compress { .. } => ChildrenKind::None,
         };
         Children { kind }
     }
@@ -828,7 +600,6 @@ impl Node {
                 buses: buses.iter_mut(),
                 bus_fx: [].iter_mut(),
             },
-            Node::Duck { trigger, .. } => ChildrenMutKind::One(Some(trigger)),
             Node::Square { .. }
             | Node::Triangle { .. }
             | Node::Sawtooth { .. }
@@ -836,7 +607,6 @@ impl Node {
             | Node::Noise { .. }
             | Node::Fm { .. }
             | Node::Super { .. }
-            | Node::Wavetable { .. }
             | Node::Seq { .. }
             | Node::Impact { .. }
             | Node::Dust { .. }
@@ -849,20 +619,13 @@ impl Node {
             | Node::Lowshelf { .. }
             | Node::Highshelf { .. }
             | Node::Gain { .. }
-            | Node::Bitcrush { .. }
-            | Node::Downsample { .. }
             | Node::Delay { .. }
             | Node::Reverb { .. }
             | Node::Modal { .. }
             | Node::Drive { .. }
-            | Node::RingMod { .. }
             | Node::Tremolo { .. }
             | Node::Chorus { .. }
-            | Node::Flanger { .. }
-            | Node::Phaser { .. }
-            | Node::Compress { .. }
-            | Node::Convolve { .. }
-            | Node::Granular { .. } => ChildrenMutKind::None,
+            | Node::Compress { .. } => ChildrenMutKind::None,
         };
         ChildrenMut { kind }
     }
@@ -892,7 +655,6 @@ pub struct Children<'a> {
 
 enum ChildrenKind<'a> {
     None,
-    One(Option<&'a Node>),
     Slice(std::slice::Iter<'a, Node>),
     Tracks {
         tracks: std::slice::Iter<'a, Track>,
@@ -907,7 +669,6 @@ impl<'a> Iterator for Children<'a> {
     fn next(&mut self) -> Option<&'a Node> {
         match &mut self.kind {
             ChildrenKind::None => None,
-            ChildrenKind::One(x) => x.take(),
             ChildrenKind::Slice(it) => it.next(),
             ChildrenKind::Tracks {
                 tracks,
@@ -940,7 +701,6 @@ pub struct ChildrenMut<'a> {
 
 enum ChildrenMutKind<'a> {
     None,
-    One(Option<&'a mut Node>),
     Slice(std::slice::IterMut<'a, Node>),
     Tracks {
         tracks: std::slice::IterMut<'a, Track>,
@@ -955,7 +715,6 @@ impl<'a> Iterator for ChildrenMut<'a> {
     fn next(&mut self) -> Option<&'a mut Node> {
         match &mut self.kind {
             ChildrenMutKind::None => None,
-            ChildrenMutKind::One(x) => x.take(),
             ChildrenMutKind::Slice(it) => it.next(),
             ChildrenMutKind::Tracks {
                 tracks,

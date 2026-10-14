@@ -11,11 +11,8 @@ mod seq;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use effects::{
-    ConvolveSpec, FilterKind, GranularSpec, biquad_coeffs, convolve, drive_antideriv, drive_curve,
-    granular,
-};
-pub(crate) use osc::{osc, poly_blep, wavetable_frames, wavetable_lookup};
+pub(crate) use effects::{FilterKind, biquad_coeffs, drive_antideriv, drive_curve};
+pub(crate) use osc::{osc, poly_blep};
 pub(crate) use seq::seq_to_signal;
 
 use crate::dsl::{Adsr, Playback, SoundDoc, Value};

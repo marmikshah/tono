@@ -1,18 +1,14 @@
 //! Processors: the stateful block evaluators of every transforming node
-//! (filters, delays, dynamics, waveshaping, the whole-buffer effects), and
-//! the graph walk that builds them.
+//! (filters, delays, dynamics, waveshaping), and the graph walk that builds
+//! them.
 
 use std::f32::consts::TAU;
 
 use super::Ctx;
-use super::source::{Src, try_src};
 use super::value::Val;
 use crate::dsl::{DriveShape, Node};
-use crate::dsp::{self, node_path, node_seed};
-use crate::render::{
-    ConvolveSpec, FilterKind, GranularSpec, biquad_coeffs, convolve, drive_antideriv, drive_curve,
-    granular,
-};
+use crate::dsp;
+use crate::render::{FilterKind, biquad_coeffs, drive_antideriv, drive_curve};
 
 /// One resonator of a [`Proc::Modal`] bank: constant LTI coeffs + 2-pole state.
 pub(super) struct ModalMode {
@@ -49,13 +45,6 @@ pub(super) enum Proc {
         y1: f32,
         y2: f32,
     },
-    Bitcrush {
-        half: f32,
-    },
-    Downsample {
-        f: usize,
-        held: f32,
-    },
     Delay {
         buf: Vec<f32>,
         w: usize,
@@ -83,11 +72,6 @@ pub(super) enum Proc {
         dc_x: f32,
         dc_y: f32,
     },
-    RingMod {
-        phase: f32,
-        freq: Val,
-        srf: f32,
-    },
     Tremolo {
         rate: f32,
         depth: f32,
@@ -103,27 +87,6 @@ pub(super) enum Proc {
         rate: f32,
         srf: f32,
     },
-    Flanger {
-        buf: Vec<f32>,
-        w: usize,
-        base: f32,
-        swing: f32,
-        max_delay: usize,
-        fb: f32,
-        mix: f32,
-        rate: f32,
-        srf: f32,
-    },
-    Phaser {
-        x1: [f32; 4],
-        y1: [f32; 4],
-        last_wet: f32,
-        rate: f32,
-        depth: f32,
-        fb: f32,
-        mix: f32,
-        srf: f32,
-    },
     Compress {
         env: f32,
         at: f32,
@@ -132,40 +95,11 @@ pub(super) enum Proc {
         ratio: f32,
         makeup: f32,
     },
-    Duck {
-        trigger: Box<Src>,
-        /// The trigger's block.
-        scratch: Vec<f32>,
-        env: f32,
-        at: f32,
-        rt: f32,
-        amount: f32,
-    },
-    /// FFT convolution with a synthesized IR: needs the whole signal at once,
-    /// so it is built only for the bounce, which processes one block as long
-    /// as the document.
-    Convolve {
-        spec: ConvolveSpec,
-        sr: u32,
-        seed: u64,
-        n: usize,
-    },
-    /// The granular texture reads the whole signal out of order: bounce-only,
-    /// like [`Proc::Convolve`].
-    Granular {
-        spec: GranularSpec,
-        sr: u32,
-        seed: u64,
-        n: usize,
-    },
 }
 
 impl Proc {
-    /// Transform the samples at `t0..t0 + buf.len()` in place. `pitch` is
-    /// the per-sample live multiplier the pitched processors (ring mod, a
-    /// duck's trigger) follow.
-    pub(super) fn process(&mut self, buf: &mut [f32], t0: usize, pitch: &[f32]) {
-        debug_assert_eq!(buf.len(), pitch.len());
+    /// Transform the samples at `t0..t0 + buf.len()` in place.
+    pub(super) fn process(&mut self, buf: &mut [f32], t0: usize) {
         match self {
             Proc::Gain(amount) => {
                 for (i, x) in buf.iter_mut().enumerate() {
@@ -202,19 +136,6 @@ impl Proc {
                     *y2 = *y1;
                     *y1 = y0;
                     *x = y0;
-                }
-            }
-            Proc::Bitcrush { half } => {
-                for x in buf.iter_mut() {
-                    *x = (x.clamp(-1.0, 1.0) * *half).round() / *half;
-                }
-            }
-            Proc::Downsample { f, held } => {
-                for (i, x) in buf.iter_mut().enumerate() {
-                    if (t0 + i).is_multiple_of(*f) {
-                        *held = *x;
-                    }
-                    *x = *held;
                 }
             }
             Proc::Delay {
@@ -310,13 +231,6 @@ impl Proc {
                     *x = yb;
                 }
             }
-            Proc::RingMod { phase, freq, srf } => {
-                for (i, x) in buf.iter_mut().enumerate() {
-                    *x *= dsp::sin(TAU * *phase);
-                    *phase += freq.eval(t0 + i).max(0.0) * pitch[i] / *srf;
-                    *phase -= phase.floor();
-                }
-            }
             Proc::Tremolo { rate, depth, srf } => {
                 // Closed form of the absolute sample index: block-size
                 // independent by construction.
@@ -350,57 +264,6 @@ impl Proc {
                     *w = (*w + 1) % *max_delay;
                 }
             }
-            Proc::Flanger {
-                buf: line,
-                w,
-                base,
-                swing,
-                max_delay,
-                fb,
-                mix,
-                rate,
-                srf,
-            } => {
-                for (i, x) in buf.iter_mut().enumerate() {
-                    let x0 = *x;
-                    let lfo = dsp::sin(TAU * *rate * (t0 + i) as f32 / *srf);
-                    let delay = *base + *swing * lfo;
-                    let read = (*w as f32 - delay).rem_euclid(*max_delay as f32);
-                    let i0 = read.floor() as usize % *max_delay;
-                    let i1 = (i0 + 1) % *max_delay;
-                    let frac = read - read.floor();
-                    let wet = line[i0] * (1.0 - frac) + line[i1] * frac;
-                    line[*w] = x0 + wet * *fb;
-                    *w = (*w + 1) % *max_delay;
-                    *x = x0 * (1.0 - *mix) + wet * *mix;
-                }
-            }
-            Proc::Phaser {
-                x1,
-                y1,
-                last_wet,
-                rate,
-                depth,
-                fb,
-                mix,
-                srf,
-            } => {
-                for (i, x) in buf.iter_mut().enumerate() {
-                    let x0 = *x;
-                    // Sweep the all-pass coefficient between ~0.15 and ~0.85.
-                    let lfo = 0.5 + 0.5 * dsp::sin(TAU * *rate * (t0 + i) as f32 / *srf);
-                    let g = 0.15 + 0.7 * *depth * lfo;
-                    let mut s = x0 + *last_wet * *fb;
-                    for k in 0..4 {
-                        let y = -g * s + x1[k] + g * y1[k];
-                        x1[k] = s;
-                        y1[k] = y;
-                        s = y;
-                    }
-                    *last_wet = s;
-                    *x = x0 * (1.0 - *mix) + s * *mix;
-                }
-            }
             Proc::Compress {
                 env,
                 at,
@@ -423,42 +286,6 @@ impl Proc {
                     let g = dsp::powf(10.0, gain_db / 20.0);
                     *x = *x * g * *makeup;
                 }
-            }
-            Proc::Duck {
-                trigger,
-                scratch,
-                env,
-                at,
-                rt,
-                amount,
-            } => {
-                // The trigger renders silently; its loudness envelope steers a
-                // gain dip on the chained signal — the sidechain pump.
-                let len = buf.len();
-                let trig = &mut scratch[..len];
-                trigger.process(trig, t0, pitch);
-                for (x, t) in buf.iter_mut().zip(trig.iter()) {
-                    let rect = t.abs().min(1.0);
-                    let coeff = if rect > *env { *at } else { *rt };
-                    *env = rect + coeff * (*env - rect);
-                    *x *= 1.0 - *amount * *env;
-                }
-            }
-            Proc::Convolve { spec, sr, seed, n } => {
-                debug_assert!(
-                    t0 == 0 && buf.len() == *n,
-                    "convolve needs the whole signal"
-                );
-                let out = convolve(buf, *spec, *sr, *seed);
-                buf.copy_from_slice(&out);
-            }
-            Proc::Granular { spec, sr, seed, n } => {
-                debug_assert!(
-                    t0 == 0 && buf.len() == *n,
-                    "granular needs the whole signal"
-                );
-                let out = granular(buf, *spec, *sr, *seed);
-                buf.copy_from_slice(&out);
             }
         }
     }
@@ -521,10 +348,9 @@ pub(super) fn reverb_proc(room: f32, mix: f32, sr: u32, spread: usize) -> Proc {
     }
 }
 
-/// Build the processor for `node`, or `None` when the context refuses it: the
-/// whole-buffer effects only exist for the bounce, and a non-processor node
-/// is not a processor.
-pub(super) fn try_proc(node: &Node, ctx: &Ctx, path: u64) -> Option<Proc> {
+/// Build the processor for `node`, or `None` for a node that is not a
+/// processor.
+pub(super) fn try_proc(node: &Node, ctx: &Ctx, _path: u64) -> Option<Proc> {
     let sr = ctx.sr;
     let srf = ctx.srf();
     let v = |val: &crate::dsl::Value| Val::build(val, sr, ctx.n);
@@ -541,16 +367,6 @@ pub(super) fn try_proc(node: &Node, ctx: &Ctx, path: u64) -> Option<Proc> {
         Node::Highshelf { cutoff, gain_db } => {
             biquad(FilterKind::HighShelf(*gain_db), v(cutoff), 0.707, sr)
         }
-        Node::Bitcrush { bits } => {
-            // validate() bounds bits to 1..=16; the shared clamp keeps an
-            // unvalidated doc from overflowing the shift.
-            let levels = crate::dsp::bitcrush_levels(*bits);
-            Proc::Bitcrush { half: levels / 2.0 }
-        }
-        Node::Downsample { factor } => Proc::Downsample {
-            f: (*factor).max(1) as usize,
-            held: 0.0,
-        },
         Node::Delay { secs, feedback } => {
             // validate() caps secs at 30 s; the shared clamp guards an
             // unvalidated doc from an unbounded allocation.
@@ -591,11 +407,6 @@ pub(super) fn try_proc(node: &Node, ctx: &Ctx, path: u64) -> Option<Proc> {
             dc_x: 0.0,
             dc_y: 0.0,
         },
-        Node::RingMod { freq } => Proc::RingMod {
-            phase: 0.0,
-            freq: v(freq),
-            srf,
-        },
         Node::Tremolo { rate, depth } => Proc::Tremolo {
             rate: *rate,
             depth: *depth,
@@ -616,42 +427,6 @@ pub(super) fn try_proc(node: &Node, ctx: &Ctx, path: u64) -> Option<Proc> {
                 srf,
             }
         }
-        Node::Flanger {
-            rate,
-            depth,
-            feedback,
-            mix,
-        } => {
-            let base = crate::dsp::FLANGER_BASE_SECS * srf;
-            let swing = depth.clamp(0.0, 1.0) * crate::dsp::FLANGER_SWING_SECS * srf;
-            let max_delay = (base + swing) as usize + 2;
-            Proc::Flanger {
-                buf: vec![0.0; max_delay],
-                w: 0,
-                base,
-                swing,
-                max_delay,
-                fb: feedback.clamp(0.0, 0.95),
-                mix: mix.clamp(0.0, 1.0),
-                rate: *rate,
-                srf,
-            }
-        }
-        Node::Phaser {
-            rate,
-            depth,
-            feedback,
-            mix,
-        } => Proc::Phaser {
-            x1: [0.0; 4],
-            y1: [0.0; 4],
-            last_wet: 0.0,
-            rate: *rate,
-            depth: depth.clamp(0.0, 1.0),
-            fb: feedback.clamp(0.0, 0.95),
-            mix: mix.clamp(0.0, 1.0),
-            srf,
-        },
         Node::Compress {
             threshold,
             ratio,
@@ -669,59 +444,6 @@ pub(super) fn try_proc(node: &Node, ctx: &Ctx, path: u64) -> Option<Proc> {
                 makeup: dsp::powf(10.0, makeup / 20.0),
             }
         }
-        Node::Duck {
-            trigger,
-            amount,
-            attack,
-            release,
-        } => {
-            let (at, rt) = dsp::follower_coeffs(*attack, *release, srf);
-            Proc::Duck {
-                trigger: Box::new(try_src(trigger, ctx, node_path(path, 0))?),
-                scratch: vec![0.0; ctx.cap],
-                env: 0.0,
-                at,
-                rt,
-                amount: *amount,
-            }
-        }
-        Node::Convolve {
-            decay,
-            size,
-            predelay,
-            damp,
-            mix,
-        } if ctx.offline => Proc::Convolve {
-            spec: ConvolveSpec {
-                decay: *decay,
-                size: *size,
-                predelay: *predelay,
-                damp: *damp,
-                mix: *mix,
-            },
-            sr,
-            // The IR comes from the node's structurally-seeded stream.
-            seed: node_seed(path),
-            n: ctx.n,
-        },
-        Node::Granular {
-            grain_ms,
-            density,
-            pitch,
-            spread,
-            mix,
-        } if ctx.offline => Proc::Granular {
-            spec: GranularSpec {
-                grain_ms: *grain_ms,
-                density: *density,
-                pitch: *pitch,
-                spread: *spread,
-                mix: *mix,
-            },
-            sr,
-            seed: node_seed(path),
-            n: ctx.n,
-        },
         _ => return None,
     })
 }

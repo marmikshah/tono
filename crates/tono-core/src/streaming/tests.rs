@@ -124,26 +124,6 @@ fn lfo_modulated_frequency() {
 }
 
 #[test]
-fn wavetable_modulated_position() {
-    // The signature move: an LFO morphing the table position must stream
-    // byte-identically to the offline render.
-    assert_byte_identical(&parse(
-        r#"{ "name":"w", "duration":0.1, "root":
-            { "type":"wavetable", "wave":"basic", "freq":220,
-              "position": { "lfo": { "shape":"sine", "rate":7, "depth":0.5, "center":0.5 } } } }"#,
-    ));
-    // Every other table, with a modulated frequency this time.
-    for wave in ["harmonics", "formant", "metallic"] {
-        assert_byte_identical(&parse(&format!(
-            r#"{{ "name":"w", "duration":0.08, "root":
-                {{ "type":"wavetable", "wave":"{wave}",
-                   "freq": {{ "slide": {{ "from":110, "to":440, "secs":0.07 }} }},
-                   "position": {{ "env": {{ "a":0.01, "d":0.05, "s":0.3, "r":0.02, "from":0, "to":1 }} }} }} }}"#
-        )));
-    }
-}
-
-#[test]
 fn slide_and_arp_modulators() {
     assert_byte_identical(&parse(
         r#"{ "name":"sl", "duration":0.1, "root":
@@ -219,11 +199,10 @@ fn delay_reverb_and_modal_effects() {
 }
 
 #[test]
-fn modulation_effects_chorus_flanger_phaser() {
+fn modulation_effects_chorus_and_tremolo() {
     for eff in [
         r#"{ "type":"chorus", "rate":1.5, "depth":0.6, "mix":0.5 }"#,
-        r#"{ "type":"flanger", "rate":0.8, "depth":0.7, "feedback":0.5, "mix":0.6 }"#,
-        r#"{ "type":"phaser", "rate":0.5, "depth":0.8, "feedback":0.4, "mix":0.7 }"#,
+        r#"{ "type":"tremolo", "rate":5.5, "depth":0.7 }"#,
     ] {
         assert_byte_identical(&parse(&format!(
             r#"{{ "name":"fx", "duration":0.12, "root": {{ "type":"chain", "stages": [
@@ -243,23 +222,6 @@ fn dynamics_and_waveshaping() {
         r#"{ "name":"dv", "duration":0.06, "engine":5, "root": { "type":"chain", "stages": [
             { "type":"sine", "freq":200 },
             { "type":"drive", "amount":6, "shape":"tanh" } ] } }"#,
-    ));
-    assert_byte_identical(&parse(
-        r#"{ "name":"bc", "duration":0.06, "root": { "type":"chain", "stages": [
-            { "type":"sawtooth", "freq":180 },
-            { "type":"bitcrush", "bits":5 },
-            { "type":"downsample", "factor":4 },
-            { "type":"ringmod", "freq":300 } ] } }"#,
-    ));
-}
-
-#[test]
-fn duck_with_streamable_trigger() {
-    assert_byte_identical(&parse(
-        r#"{ "name":"dk", "duration":0.12, "root": { "type":"chain", "stages": [
-            { "type":"sawtooth", "freq":110 },
-            { "type":"duck", "amount":0.8, "attack":0.005, "release":0.05,
-              "trigger": { "type":"square", "freq":4 } } ] } }"#,
     ));
 }
 
@@ -416,7 +378,7 @@ fn tracks_at_offsets_stream_byte_identically() {
                           {{ "t":0.0, "v":-0.8 }}, {{ "t":0.6, "v":0.8 }} ] }} ] }},
                     {{ "id":"blip", "node": {{ "type":"chain", "stages": [
                           {{ "type":"square", "freq":880 }},
-                          {{ "type":"bitcrush", "bits":6 }} ] }},
+                          {{ "type":"drive", "amount":3, "shape":"hard" }} ] }},
                       "gain":0.3, "at":{} }}
                 ] }} }}"#,
             at.0, at.1, at.2
@@ -498,10 +460,9 @@ fn tracks_golden_shapes_stream_byte_identically() {
 }
 
 #[test]
-fn tracks_master_chain_with_duck_and_delay_streams_byte_identically() {
+fn tracks_master_chain_with_delay_and_compressor_streams_byte_identically() {
     // Non-reverb bus/master inserts run as per-channel pairs built on the
-    // bus/master stream path — a duck's trigger (structurally seeded there)
-    // must fire identically on both channels and in the stream.
+    // bus/master stream path and must match the bounce on both channels.
     assert_tracks_byte_identical(&parse(
         r#"{ "name":"md", "duration":0.4, "seed":2, "version":2, "engine":5,
             "root": { "type":"tracks",
@@ -512,15 +473,10 @@ fn tracks_master_chain_with_duck_and_delay_streams_byte_identically() {
               ],
               "buses": [ { "id":"fx", "gain":1.1, "effects": [
                   { "type":"delay", "secs":0.02, "feedback":0.35 },
-                  { "type":"duck", "amount":0.6, "attack":0.004, "release":0.06,
-                    "trigger": { "type":"noise", "color":"white" } } ] } ],
+                  { "type":"chorus", "rate":1.2, "depth":0.5, "mix":0.4 } ] } ],
               "master": [
                   { "type":"delay", "secs":0.011, "feedback":0.25 },
-                  { "type":"duck", "amount":0.5, "attack":0.003, "release":0.05,
-                    "trigger": { "type":"seq", "bpm":200, "steps_per_beat":4, "wave":"kit",
-                        "env": { "a":0.001, "d":0.06, "s":0.0, "r":0.03 },
-                        "notes": [ { "step":0, "len":1, "pitch":"midi:36" },
-                                   { "step":2, "len":1, "pitch":"midi:36" } ] } } ] } }"#,
+                  { "type":"compress", "threshold":-12, "ratio":3, "attack":0.003, "release":0.05, "makeup":1 } ] } }"#,
     ));
 }
 
@@ -562,17 +518,6 @@ fn tracks_blockers_name_the_failing_part_with_context() {
         cause: Box::new(cause),
     };
     let cases: &[(&str, StreamBlocker)] = &[
-        // An offline-only effect on one track names the track.
-        (
-            r#"{ "name":"a", "duration":0.1, "version":2, "engine":5, "root": { "type":"tracks", "tracks": [
-                { "id":"pad", "node": { "type":"chain", "stages": [
-                    { "type":"sine", "freq":220 }, { "type":"convolve", "decay":0.8, "mix":0.5 } ] } },
-                { "id":"bass", "node": { "type":"sawtooth", "freq":55 } } ] } }"#,
-            part(
-                "track 'pad'",
-                StreamBlocker::OfflineEffect { name: "convolve" },
-            ),
-        ),
         // A sampler track names the track.
         (
             r#"{ "name":"b", "duration":0.1, "version":2, "engine":5, "root": { "type":"tracks", "tracks": [
@@ -580,37 +525,6 @@ fn tracks_blockers_name_the_failing_part_with_context() {
                     "env": { "a":0.001, "s":1.0, "r":0.1 },
                     "notes": [ { "step":0, "len":4, "pitch":"C4" } ] } } ] } }"#,
             part("track 'keys'", StreamBlocker::Sampler),
-        ),
-        // A master-chain blocker names the master chain.
-        (
-            r#"{ "name":"d", "duration":0.1, "version":2, "engine":5, "root": { "type":"tracks",
-                "tracks": [ { "id":"a", "node": { "type":"sine", "freq":220 } } ],
-                "master": [ { "type":"granular", "grain_ms":60, "density":30 } ] } }"#,
-            part(
-                "the master chain",
-                StreamBlocker::OfflineEffect { name: "granular" },
-            ),
-        ),
-        // A bus-insert blocker names the bus.
-        (
-            r#"{ "name":"e", "duration":0.1, "version":2, "engine":5, "root": { "type":"tracks",
-                "buses": [ { "id":"verb", "effects": [ { "type":"convolve" } ] } ],
-                "tracks": [ { "id":"a", "node": { "type":"sine", "freq":220 }, "bus":"verb" } ] } }"#,
-            part(
-                "bus 'verb'",
-                StreamBlocker::OfflineEffect { name: "convolve" },
-            ),
-        ),
-        // An id-less track is named by its backfilled layer id.
-        (
-            r#"{ "name":"g", "duration":0.1, "version":2, "engine":5, "root": { "type":"tracks", "tracks": [
-                { "node": { "type":"sine", "freq":440 } },
-                { "node": { "type":"chain", "stages": [
-                    { "type":"sine", "freq":220 }, { "type":"granular" } ] } } ] } }"#,
-            part(
-                "track 'layer_1'",
-                StreamBlocker::OfflineEffect { name: "granular" },
-            ),
         ),
     ];
     for (json, want) in cases {
@@ -691,7 +605,7 @@ fn gen_proc(rng: &mut Rng) -> serde_json::Value {
         8 => {
             json!({ "type":"chorus", "rate":rf(rng,0.5,3.0), "depth":rf(rng,0.3,0.9), "mix":rf(rng,0.3,0.7) })
         }
-        9 => json!({ "type":"bitcrush", "bits": 3 + (rng.next_u64()%8) as u32 }),
+        9 => json!({ "type":"tremolo", "rate":rf(rng,1.0,12.0), "depth":rf(rng,0.2,0.9) }),
         _ => {
             json!({ "type":"compress", "threshold":rf(rng,-24.0,-6.0), "ratio":rf(rng,2.0,8.0), "attack":0.005, "release":0.06, "makeup":rf(rng,0.0,4.0) })
         }
@@ -921,15 +835,13 @@ fn effects_stream_byte_identically() {
                 { "type":"chorus", "rate":1.2, "depth":0.6, "mix":0.4 },
                 { "type":"compress", "threshold":-16, "ratio":3, "attack":0.004, "release":0.07, "makeup":2 } ] } }"#,
     ));
-    // FM through ringmod/tremolo and the swept-delay pair (per-sample sines).
+    // FM through tremolo and chorus (per-sample sines).
     assert_byte_identical(&parse(
         r#"{ "name":"e5tr", "duration":0.2, "seed":2, "version":2, "engine":5,
             "root": { "type":"chain", "stages": [
                 { "type":"fm", "freq":330, "ratio":2.0, "index":2.5 },
-                { "type":"ringmod", "freq":7 },
                 { "type":"tremolo", "rate":5.5, "depth":0.7 },
-                { "type":"flanger", "rate":0.7, "depth":0.6, "feedback":0.4, "mix":0.5 },
-                { "type":"phaser", "rate":0.4, "depth":0.7, "feedback":0.3, "mix":0.6 } ] } }"#,
+                { "type":"chorus", "rate":0.7, "depth":0.6, "mix":0.5 } ] } }"#,
     ));
 }
 
@@ -966,10 +878,10 @@ fn tracks_stream_byte_identically() {
 fn render_is_bit_deterministic_in_process() {
     // Twice in one process, identical bits. The cross-platform half of the
     // promise holds by construction: every transcendental in this render goes
-    // through crate::det (the f32 wrappers and the f64 gated-loudness path),
-    // and the convolve runs the fixed-order det FFT — no platform libm
-    // remains in the engine-5 path. The CI two-platform run is the real
-    // proof; this pins the per-process determinism plus the output stage.
+    // through crate::det (the f32 wrappers and the f64 gated-loudness path)
+    // — no platform libm remains in the engine-5 path. The CI multi-platform
+    // run is the real proof; this pins the per-process determinism plus the
+    // output stage.
     let doc = parse(
         r#"{ "name":"e5all", "duration":0.5, "seed":9, "version":2, "engine":5,
             "normalize": { "target_lufs": -16, "ceiling_dbtp": -1.0 },
@@ -977,8 +889,8 @@ fn render_is_bit_deterministic_in_process() {
                 { "type":"mul", "inputs": [
                     { "type":"fm", "freq":"A3", "ratio":2.5, "index":3 },
                     { "type":"env", "a":0.005, "d":0.1, "s":0.4, "r":0.1 } ] },
-                { "type":"convolve", "decay":0.2, "predelay":0.005, "damp":0.4, "mix":0.35 },
-                { "type":"granular", "grain_ms":40, "density":30, "pitch":1.5, "spread":0.25, "mix":0.4 } ] } }"#,
+                { "type":"reverb", "room":0.5, "mix":0.35 },
+                { "type":"chorus", "rate":1.1, "depth":0.5, "mix":0.4 } ] } }"#,
     );
     doc.validate().unwrap();
     let a = crate::render::render_product(&doc);
@@ -1048,18 +960,6 @@ fn blockers_names_every_reason_with_a_fix() {
                 "notes": [ { "step":0, "len":4, "pitch":"C4" } ] } }"#,
             StreamBlocker::Sampler,
         ),
-        (
-            r#"{ "name":"cv", "duration":0.1, "root": { "type":"chain", "stages": [
-                { "type":"impact", "hardness":0.8 },
-                { "type":"convolve", "decay":0.8, "mix":0.5 } ] } }"#,
-            StreamBlocker::OfflineEffect { name: "convolve" },
-        ),
-        (
-            r#"{ "name":"gr", "duration":0.1, "root": { "type":"chain", "stages": [
-                { "type":"sine", "freq":220 },
-                { "type":"granular", "grain_ms":60, "density":30 } ] } }"#,
-            StreamBlocker::OfflineEffect { name: "granular" },
-        ),
     ];
     for (json, want) in cases {
         let doc = parse(json);
@@ -1108,16 +1008,17 @@ fn blockers_agrees_with_try_from_doc() {
         assert!(StreamGraph::try_from_doc(&doc).is_some(), "{json}");
     }
     let blocked = [
-        r#"{ "name":"f", "duration":0.1, "root": { "type":"chain", "stages": [
-            { "type":"impact" },
-            { "type":"convolve" } ] } }"#,
-        r#"{ "name":"g", "duration":0.1, "root": { "type":"chain", "stages": [
-            { "type":"sine", "freq":220 },
-            { "type":"granular" } ] } }"#,
+        r#"{ "name":"f", "duration":0.1, "normalize": { "ceiling_dbtp": -1.0 },
+            "root": { "type":"sine", "freq":440 } }"#,
+        r#"{ "name":"g", "duration":0.1, "engine":5, "root": { "type":"seq",
+            "wave":"sampler", "sf2":"x.sf2", "bpm":100,
+            "env": { "a":0.001, "s":1.0, "r":0.1 },
+            "notes": [ { "step":0, "len":4, "pitch":"C4" } ] } }"#,
         // A mixer with an unstreamable part reports the part and rejects.
         r#"{ "name":"h", "duration":0.1, "version":2, "engine":5, "root": { "type":"tracks", "tracks": [
-            { "id":"pad", "node": { "type":"chain", "stages": [
-                { "type":"sine", "freq":220 }, { "type":"convolve" } ] } } ] } }"#,
+            { "id":"keys", "node": { "type":"seq", "wave":"sampler", "sf2":"x.sf2", "bpm":100,
+                "env": { "a":0.001, "s":1.0, "r":0.1 },
+                "notes": [ { "step":0, "len":4, "pitch":"C4" } ] } } ] } }"#,
     ];
     for json in blocked {
         let doc = parse(json);

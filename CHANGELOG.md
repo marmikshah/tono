@@ -31,6 +31,7 @@ checks. The 1.x line may break in minor releases; every break is listed here.
   (`Bars`, `Decibels`, `Hertz`, `Samples`), and the `Serialize` derives on
   `Recipe` and `Composition`.
 - `StreamBlocker::ModulatedFilter` (diagnostic T1507) is gone: modulated filters and gains stream. Code matching on the enum must drop that arm.
+- Nine node types are removed: `wavetable`, `bitcrush`, `downsample`, `ringmod`, `flanger`, `phaser`, `duck`, `convolve` and `granular`. A document using one fails to parse with the unknown type named; use a mixer `sidechain` instead of `duck`, and `chorus`/`tremolo` for modulation. Documents that never used them render byte-identically (schema 2 and engine 5 stay; see ADR 0001). With them go `dsl::WavetableKind`, `StreamBlocker::OfflineEffect` (diagnostic T1508) and the FFT in `det`.
 - Program format 3: `Program` no longer duplicates `schema_version`,
   `engine_version` and `warnings`, and `ProgramMeta`/`TrackMeta` drop the
   fields now derived from the document. Bundles compiled by 1.10 must be

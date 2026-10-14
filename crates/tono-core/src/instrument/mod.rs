@@ -124,8 +124,8 @@ pub struct Instrument {
 /// fundamentals are left as authored.
 ///
 /// Looks like `vary::transpose_node` but is deliberately NOT unified with it:
-/// the two walkers invert Modulated/RingMod/Modal handling (live play must
-/// track the key on pitch-determining processors; humanize must not), and
+/// the two walkers invert Modulated/Modal handling (live play must track the
+/// key on pitch-determining processors; humanize must not), and
 /// unifying them would change rendered bytes.
 fn transpose(node: &mut Node, ratio: f32) {
     fn scale(v: &mut Value, ratio: f32) {
@@ -147,12 +147,10 @@ fn transpose(node: &mut Node, ratio: f32) {
         | Node::Sawtooth { freq }
         | Node::Square { freq, .. }
         | Node::Fm { freq, .. }
-        | Node::Super { freq, .. }
-        | Node::Wavetable { freq, .. } => scale(freq, ratio),
-        // Pitch-determining processors: the ring-mod carrier and the modal
-        // body's resonant partials must track the note, or a bell/metallic patch
-        // plays the same pitch for every key.
-        Node::RingMod { freq } => scale(freq, ratio),
+        | Node::Super { freq, .. } => scale(freq, ratio),
+        // A pitch-determining processor: the modal body's resonant partials
+        // must track the note, or a bell patch plays the same pitch for every
+        // key.
         Node::Modal { modes, .. } => {
             for m in modes.iter_mut() {
                 m.freq *= ratio;
