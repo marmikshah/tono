@@ -13,8 +13,6 @@ separate behavior paths without serving the current product.
 
 Support SoundDoc/Song schema 2 and DSP engine 5 only. Omitted document pins
 select those current defaults; explicit unsupported revisions fail validation.
-The desktop replaces invalid or unsupported saved projects with a fresh project
-and reports filesystem failures without crashing.
 
 The current renderer uses deterministic f64 transcendental kernels and a
 fixed-order FFT in `crates/tono-core/src/det.rs`. RNG streams remain seeded by

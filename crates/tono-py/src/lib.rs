@@ -19,7 +19,7 @@
 //!   `set_intensity`, `trigger`) while the audio thread stays GIL-free.
 //!
 //! `SoundDoc`s and `Patch`es cross the boundary as JSON strings — the same serde
-//! types the CLI and desktop studio use. The compiled extension is `tono._tono`;
+//! types the CLI uses. The compiled extension is `tono._tono`;
 //! the `tono` package (see `python/tono/`) re-exports this surface and ships the
 //! type stubs.
 

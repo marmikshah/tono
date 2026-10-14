@@ -1,6 +1,0 @@
-{
-  "identifier": "default",
-  "description": "Core permissions for the tono studio window.",
-  "windows": ["main"],
-  "permissions": ["core:default"]
-}
