@@ -15,9 +15,9 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
-The full gate, including the speaker adapter and Python extension, is in the
-[README](README.md) and runs in CI on every pull request. Linux needs the ALSA
-development package (`libasound2-dev`).
+The full gate, including the core `cpal` speaker feature and the Python
+extension, is in the [README](README.md) and runs in CI on every pull request.
+Linux needs the ALSA development package (`libasound2-dev`).
 
 ## Ground rules
 

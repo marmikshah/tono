@@ -20,8 +20,9 @@ ring carries interleaved samples to `Renderer`; `Renderer::fill` drains it
 without a lock or allocation. An empty ring yields silence. Python's callback
 does not acquire the pump/control mutex or GIL.
 
-The shared CPAL `Speaker` wrapper uses a nonblocking source mutex and writes
-silence on contention. It grows channel-adaptation scratch on first use or a
+The shared CPAL `Speaker` wrapper (`tono_core::speaker`, behind the core
+`cpal` feature) uses a nonblocking source mutex and writes silence on
+contention. It grows channel-adaptation scratch on first use or a
 larger block.
 
 Prepare stinger renders and verify replacement Programs while scheduling.
