@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 // Serde `default = "..."` requires free functions. Values with non-obvious
 // origins: q 0.707 is Butterworth (maximally flat).
-fn default_duty() -> Value {
+pub(crate) fn default_duty() -> Value {
     Value::Const(0.5)
 }
 fn default_q() -> f32 {
@@ -844,7 +844,7 @@ pub struct BassKnobs {
 
 /// SoundFont sampler settings of a `seq` node (`wave: "sampler"`), flattened
 /// onto the node in JSON.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Sf2Knobs {
     /// Path to a SoundFont (.sf2) file.
     #[serde(default)]
@@ -855,4 +855,54 @@ pub struct Sf2Knobs {
     /// SoundFont bank (0 = melodic, 128 = the percussion bank / GM drum map).
     #[serde(default)]
     pub sf2_bank: u32,
+}
+
+impl Default for FmKnobs {
+    fn default() -> Self {
+        FmKnobs {
+            fm_ratio: default_seq_fm_ratio(),
+            fm_index: default_seq_fm_index(),
+            fm_strike: default_seq_fm_strike(),
+        }
+    }
+}
+
+impl Default for PluckKnobs {
+    fn default() -> Self {
+        PluckKnobs {
+            pluck_decay: default_pluck_decay(),
+            pluck_body: default_pluck_body(),
+            pluck_pick: default_pluck_pick(),
+            pluck_tone: default_pluck_tone(),
+        }
+    }
+}
+
+impl Default for PianoKnobs {
+    fn default() -> Self {
+        PianoKnobs {
+            piano_hammer: default_piano_hammer(),
+            piano_strike: default_piano_strike(),
+            piano_inharm: default_piano_inharm(),
+            piano_detune: default_piano_detune(),
+            piano_decay: default_piano_decay(),
+        }
+    }
+}
+
+impl Default for BassKnobs {
+    fn default() -> Self {
+        BassKnobs {
+            bass_cutoff: default_bass_cutoff(),
+            bass_env: default_bass_env(),
+            bass_env_vel: default_bass_env_vel(),
+            bass_decay: default_bass_decay(),
+            bass_click: default_bass_click(),
+            bass_body: default_bass_body(),
+            bass_sub: default_bass_sub(),
+            bass_sub_ratio: default_bass_sub_ratio(),
+            bass_drive: default_bass_drive(),
+            bass_body_decay: default_bass_body_decay(),
+        }
+    }
 }

@@ -175,7 +175,7 @@ impl SfxSpec {
             SFX_TEMPLATE_VERSION
         );
         anyhow::ensure!(
-            (8_000..=192_000).contains(&self.sample_rate),
+            crate::dsl::bounds::SAMPLE_RATE_HZ.contains(&self.sample_rate),
             "sample_rate must be in [8000, 192000] Hz"
         );
         for (name, value) in [

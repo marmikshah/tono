@@ -48,7 +48,7 @@ pub(crate) struct Ctx {
 /// reverb and chorus buffer scales with it — a 30 s delay at `u32::MAX` Hz
 /// would ask for 515 GB. The evaluator builds such a document at the
 /// validation ceiling instead; validated documents never exceed it.
-const MAX_BUILD_RATE: u32 = 192_000;
+const MAX_BUILD_RATE: u32 = *crate::dsl::bounds::SAMPLE_RATE_HZ.end();
 
 impl Ctx {
     /// The bounce: one block of `n` samples, every node allowed.
