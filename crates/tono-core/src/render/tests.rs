@@ -465,6 +465,7 @@ fn adaa_can_be_disabled_explicitly() {
     );
 }
 
+#[cfg(feature = "analysis")]
 #[test]
 fn adaa_lowers_off_harmonic_energy_for_a_folded_tone() {
     let mk = |aa: bool| {
