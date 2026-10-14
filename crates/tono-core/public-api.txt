@@ -596,6 +596,7 @@ pub tono_core::dsl::Node::Wavetable::freq: tono_core::dsl::Value
 pub tono_core::dsl::Node::Wavetable::position: tono_core::dsl::Value
 pub tono_core::dsl::Node::Wavetable::wave: tono_core::dsl::WavetableKind
 impl tono_core::dsl::Node
+pub const tono_core::dsl::Node::PROCESSOR_KINDS: &'static [&'static str]
 pub fn tono_core::dsl::Node::children(&self) -> tono_core::dsl::Children<'_>
 pub fn tono_core::dsl::Node::children_mut(&mut self) -> tono_core::dsl::ChildrenMut<'_>
 pub fn tono_core::dsl::Node::is_processor(&self) -> bool
@@ -1949,6 +1950,7 @@ pub tono_core::prelude::Node::Wavetable::freq: tono_core::dsl::Value
 pub tono_core::prelude::Node::Wavetable::position: tono_core::dsl::Value
 pub tono_core::prelude::Node::Wavetable::wave: tono_core::dsl::WavetableKind
 impl tono_core::dsl::Node
+pub const tono_core::dsl::Node::PROCESSOR_KINDS: &'static [&'static str]
 pub fn tono_core::dsl::Node::children(&self) -> tono_core::dsl::Children<'_>
 pub fn tono_core::dsl::Node::children_mut(&mut self) -> tono_core::dsl::ChildrenMut<'_>
 pub fn tono_core::dsl::Node::is_processor(&self) -> bool

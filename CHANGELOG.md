@@ -57,6 +57,7 @@ checks. The 1.x line may break in minor releases; every break is listed here.
 - Website SFX previews ship recipes and a shared synthesis engine instead of pre-rendered WAV files.
 - GitHub Releases attach CLI binaries for Linux x86_64, macOS (Apple silicon and Intel) and Windows x86_64, built with default features. Python wheels are still built for Linux x86_64 only.
 - The SoundDoc reference shows the external tagging of modulators and the object form of the `stereo` field.
+- `Node::PROCESSOR_KINDS` lists the processor node tags; the Python bindings validate bus effects against it instead of a private copy, and their typed-song module is split into `convert`, `instruments`, `pattern`, `song` and `program`.
 
 ### Fixed
 - Program load and scheduled swaps verify the current bundle revision, integrity hash, and resolved document.

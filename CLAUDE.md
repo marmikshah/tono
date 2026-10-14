@@ -101,8 +101,8 @@ in `docs/**/*.md` must run against the checkout.
   `vary::mutate_node` and `song/diagnostics.rs`; change all three.
 - Adding a `Node` variant touches `node.rs` (enum, `is_processor`, `children`,
   `children_mut`), `validate.rs`, `render/`, `streaming/`, `vary.rs`,
-  `tests/fuzz_validation.rs`, `docs/reference/sounddoc.md`, and the
-  `PROCESSOR_TYPES` list in `crates/tono-py/src/song.rs`.
+  `tests/fuzz_validation.rs`, `docs/reference/sounddoc.md`, and, for a
+  processor, `Node::PROCESSOR_KINDS` next to `is_processor`.
 - Public API of `tono-core`: `bevy_tono` and the CLI depend on it. Removing or
   renaming a `pub` item is a semver-major change; say so in the PR, and
   regenerate `crates/tono-core/public-api.txt` (commands in CONTRIBUTING.md)

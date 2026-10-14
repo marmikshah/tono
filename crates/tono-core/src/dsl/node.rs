@@ -689,6 +689,36 @@ pub enum Node {
 }
 
 impl Node {
+    /// The serde tags of every processor variant (the set [`Node::is_processor`]
+    /// accepts), for adapters that validate an effect type before building the
+    /// node and want to list the accepted ones. Kept next to `is_processor`;
+    /// `dsl/tests.rs` checks the two agree.
+    pub const PROCESSOR_KINDS: &'static [&'static str] = &[
+        "lowpass",
+        "highpass",
+        "bandpass",
+        "notch",
+        "peak",
+        "lowshelf",
+        "highshelf",
+        "gain",
+        "bitcrush",
+        "downsample",
+        "delay",
+        "reverb",
+        "modal",
+        "drive",
+        "ringmod",
+        "tremolo",
+        "chorus",
+        "flanger",
+        "phaser",
+        "compress",
+        "duck",
+        "convolve",
+        "granular",
+    ];
+
     /// True if this node only makes sense as a non-first stage of a `chain`
     /// (it transforms an incoming signal rather than generating one).
     pub fn is_processor(&self) -> bool {
