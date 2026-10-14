@@ -4,6 +4,10 @@
 //! command-line tool can author sound by the loop: write a doc,
 //! render it, look at the spectrogram/waveform, refine.
 
+// The doc comments on the clap types are the --help text, and its
+// placeholders (<name>.png, <template>-<seed>) are not HTML.
+#![allow(rustdoc::invalid_html_tags)]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -12,7 +16,15 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use tono_core::dsl::SoundDoc;
 use tono_core::render;
 
+mod audio;
+mod audition;
+mod compile;
 mod generation;
+mod imaging;
+#[cfg(feature = "midi")]
+mod midi;
+#[cfg(feature = "play")]
+mod play;
 
 const AFTER_HELP: &str = "\
 The SoundDoc format and the node vocabulary are documented in the SoundDoc
@@ -459,11 +471,11 @@ fn write_audio(
 ) -> anyhow::Result<PathBuf> {
     let path = out_dir.join(format!("{stem}.{}", format.extension()));
     match format {
-        Format::Wav => tono::audio::write_wav_stereo(&path, left, right, sample_rate, 16)?,
+        Format::Wav => crate::audio::write_wav_stereo(&path, left, right, sample_rate, 16)?,
         #[cfg(feature = "encode")]
-        Format::Flac => tono::audio::write_flac(&path, &[left, right], sample_rate, 16)?,
+        Format::Flac => crate::audio::write_flac(&path, &[left, right], sample_rate, 16)?,
         #[cfg(feature = "encode")]
-        Format::Ogg => tono::audio::write_ogg(&path, &[left, right], sample_rate, 0.7)?,
+        Format::Ogg => crate::audio::write_ogg(&path, &[left, right], sample_rate, 0.7)?,
         // The value parser already refused these on a build without encoders.
         #[cfg(not(feature = "encode"))]
         Format::Flac | Format::Ogg => {
@@ -502,7 +514,7 @@ fn render_to_dir(doc: &SoundDoc, stem: &str, out_dir: &Path, format: Format) -> 
         && matches!(doc.playback, tono_core::dsl::Playback::Loop { .. })
         && !left.is_empty()
     {
-        tono::audio::append_smpl_loop(
+        crate::audio::append_smpl_loop(
             &audio_path,
             doc.sample_rate,
             0,
@@ -514,7 +526,7 @@ fn render_to_dir(doc: &SoundDoc, stem: &str, out_dir: &Path, format: Format) -> 
     // Level metrics measure the stereo pair when there is one (the export);
     // the images read the mono mid.
     let png = out_dir.join(format!("{stem}.png"));
-    let analysis = tono::imaging::analyze_to_disk(&product.mono, stereo, doc.sample_rate, &png)?;
+    let analysis = crate::imaging::analyze_to_disk(&product.mono, stereo, doc.sample_rate, &png)?;
     let stats = out_dir.join(format!("{stem}.stats.json"));
     fs::write(&stats, serde_json::to_string_pretty(&analysis)?)?;
 
@@ -536,7 +548,7 @@ fn write_stems(doc: &SoundDoc, stem: &str, dir: &Path) -> anyhow::Result<()> {
         let safe_id = s.id.replace(':', "_");
         let safe_id = sanitize_stem(&safe_id)?;
         let path = dir.join(format!("{stem}_{safe_id}.wav"));
-        tono::audio::write_wav_stereo(&path, &s.left, &s.right, doc.sample_rate, 16)?;
+        crate::audio::write_wav_stereo(&path, &s.left, &s.right, doc.sample_rate, 16)?;
         println!("{}", path.display());
     }
     Ok(())
@@ -604,10 +616,10 @@ fn midi_cmd(args: MidiArgs) -> anyhow::Result<()> {
     let summary = if args.song {
         let song: tono_core::song::Song = serde_json::from_str(&fs::read_to_string(&args.file)?)
             .map_err(|e| anyhow::anyhow!("parsing {} as a Song: {e}", args.file))?;
-        tono::midi::export_song_midi(&song, &out)?
+        crate::midi::export_song_midi(&song, &out)?
     } else {
         let doc = load_doc(&args.file)?;
-        tono::midi::export_midi(&doc, &out)?
+        crate::midi::export_midi(&doc, &out)?
     };
     println!(
         "{} — {} notes across {} tracks",
@@ -620,12 +632,12 @@ fn midi_cmd(args: MidiArgs) -> anyhow::Result<()> {
 
 /// `tono compile` — a Song becomes a validated, hashed Program bundle.
 fn compile_cmd(args: CompileArgs) -> anyhow::Result<()> {
-    let program = tono::compile::compile_song(&args.file, args.sample_rate)?;
+    let program = crate::compile::compile_song(&args.file, args.sample_rate)?;
     for w in &program.warnings() {
         eprintln!("{} {} {}: {}", w.severity, w.code, w.path, w.message);
     }
     if args.inspect {
-        let inspect = tono::compile::inspect_json(&program);
+        let inspect = crate::compile::inspect_json(&program);
         println!("{}", serde_json::to_string_pretty(&inspect)?);
         return Ok(());
     }
@@ -687,7 +699,7 @@ fn import_cmd(args: ImportArgs) -> anyhow::Result<()> {
     // --song switches the output format: the tracks become SongTracks with the
     // notes written directly; without it the output is a SoundDoc.
     if args.song {
-        let song = tono::midi::import_midi_song(file, spb)?;
+        let song = crate::midi::import_midi_song(file, spb)?;
         let notes: usize = song.tracks.iter().map(|t| t.notes.len()).sum();
         fs::write(&out, serde_json::to_string_pretty(&song)?)?;
         println!(
@@ -698,7 +710,7 @@ fn import_cmd(args: ImportArgs) -> anyhow::Result<()> {
             song.bpm
         );
     } else {
-        let (doc, summary) = tono::midi::import_midi(file, spb)?;
+        let (doc, summary) = crate::midi::import_midi(file, spb)?;
         fs::write(&out, serde_json::to_string_pretty(&doc)?)?;
         println!(
             "{} — {} notes across {} tracks at {:.1} bpm",
@@ -716,16 +728,16 @@ fn import_cmd(args: ImportArgs) -> anyhow::Result<()> {
 fn play_cmd(args: PlayArgs) -> anyhow::Result<()> {
     let doc = load_doc(&args.file)?;
     let secs = args.secs.unwrap_or(doc.duration + 1.0);
-    tono::play::play_doc(&doc, secs)
+    crate::play::play_doc(&doc, secs)
 }
 
 /// `tono presets` — list the factory presets, or render one's demo riff.
 fn presets_cmd(args: PresetsArgs) -> anyhow::Result<()> {
     let Some(name) = args.name else {
-        print!("{}", tono::audition::preset_list());
+        print!("{}", crate::audition::preset_list());
         return Ok(());
     };
-    let preset = tono::audition::find_preset(&name)
+    let preset = crate::audition::find_preset(&name)
         .ok_or_else(|| anyhow::anyhow!("unknown preset '{name}' — run 'tono presets' to list"))?;
     let OutputArgs {
         out: out_dir,
@@ -733,7 +745,7 @@ fn presets_cmd(args: PresetsArgs) -> anyhow::Result<()> {
     } = args.output;
     fs::create_dir_all(&out_dir)?;
     let sample_rate = 48_000;
-    let (left, right) = tono::audition::bounce_preset(preset, sample_rate)?;
+    let (left, right) = crate::audition::bounce_preset(preset, sample_rate)?;
     write_bounce(
         sanitize_stem(preset.name)?.as_str(),
         &out_dir,
@@ -747,17 +759,17 @@ fn presets_cmd(args: PresetsArgs) -> anyhow::Result<()> {
 /// `tono catalog` — list the catalog voices, or render one's demo.
 fn catalog_cmd(args: CatalogArgs) -> anyhow::Result<()> {
     let Some(slug) = args.name else {
-        print!("{}", tono::audition::catalog_list());
+        print!("{}", crate::audition::catalog_list());
         return Ok(());
     };
-    let voice = tono::audition::find_voice(&slug)
+    let voice = crate::audition::find_voice(&slug)
         .ok_or_else(|| anyhow::anyhow!("unknown voice '{slug}' — run 'tono catalog' to list"))?;
     let OutputArgs {
         out: out_dir,
         format,
     } = args.output;
     fs::create_dir_all(&out_dir)?;
-    let doc = tono::audition::voice_demo_doc(&voice)?;
+    let doc = crate::audition::voice_demo_doc(&voice)?;
     render_to_dir(&doc, &sanitize_stem(&slug)?, &out_dir, format)
 }
 
@@ -775,7 +787,7 @@ fn write_bounce(
     let audio_path = write_audio(out_dir, stem, format, left, right, sample_rate)?;
     let mono: Vec<f32> = left.iter().zip(right).map(|(l, r)| 0.5 * (l + r)).collect();
     let png = out_dir.join(format!("{stem}.png"));
-    let analysis = tono::imaging::analyze_to_disk(&mono, Some((left, right)), sample_rate, &png)?;
+    let analysis = crate::imaging::analyze_to_disk(&mono, Some((left, right)), sample_rate, &png)?;
     let stats = out_dir.join(format!("{stem}.stats.json"));
     fs::write(&stats, serde_json::to_string_pretty(&analysis)?)?;
 
@@ -964,7 +976,7 @@ mod tests {
         let dir = std::env::temp_dir().join("tono-cli-song-test");
         fs::create_dir_all(&dir).unwrap();
         let mid = dir.join("imp.mid");
-        tono::midi::export_midi(&doc, &mid).unwrap();
+        crate::midi::export_midi(&doc, &mid).unwrap();
         let out = dir.join("imp.song.json");
 
         import_cmd(ImportArgs {
