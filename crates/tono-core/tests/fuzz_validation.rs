@@ -1098,6 +1098,24 @@ fn multi_point_lane_at_zero_sample_rate_renders_without_panic() {
 /// f32::MAX]`. Shrunk case: decay 3.4e38 validates; `mutate(doc, 0.7495734,
 /// 0)` used to make it inf.
 #[test]
+fn absurd_sample_rate_renders_without_exhausting_memory() {
+    // An unvalidated document can carry any sample rate, and every delay
+    // line, reverb and chorus buffer scales with it: a 30 s delay at
+    // u32::MAX Hz asked for 515 GB. The evaluator builds such a document at
+    // the validation ceiling instead.
+    let doc: SoundDoc = serde_json::from_str(
+        r#"{ "name": "n", "duration": 0.000001, "sample_rate": 4294967295,
+            "root": { "type": "chain", "stages": [
+                { "type": "noise" }, { "type": "delay", "secs": 30 },
+                { "type": "reverb", "room": 0.5, "mix": 0.5 }, { "type": "chorus" } ] } }"#,
+    )
+    .unwrap();
+    assert!(doc.validate().is_err());
+    let product = render::render_product(&doc);
+    assert!(product.mono.iter().all(|x| x.is_finite()));
+}
+
+#[test]
 fn mutate_clamps_uncapped_params_to_finite() {
     let doc: SoundDoc = serde_json::from_str(
         r#"{ "name": "repro", "duration": 0.05, "sample_rate": 8000,
