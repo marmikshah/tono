@@ -5,12 +5,14 @@
 //! `serde`-deserializable (the on-disk / wire format is JSON) and `JsonSchema`-
 //! describable so a tool can self-correct against the schema.
 
+pub mod bounds;
 mod node;
 #[cfg(test)]
 mod tests;
 mod tracks;
 mod validate;
 
+pub(crate) use node::default_duty;
 pub use node::{BassKnobs, Children, ChildrenMut, FmKnobs, Node, PianoKnobs, PluckKnobs, Sf2Knobs};
 pub use tracks::{AutoCurve, AutoLane, AutoPoint, AutoTarget, Bus, Send, Sidechain, Track};
 pub use validate::ValidateError;
@@ -125,11 +127,13 @@ impl SoundDoc {
     }
 
     /// The number of frames the document renders: `duration × sample_rate`,
-    /// rounded up, at least one. The duration is clamped to the 600 s that
-    /// [`validate`](Self::validate) enforces, so a render path reached with
-    /// an unvalidated document cannot be asked for an unbounded allocation.
+    /// rounded up, at least one. The duration is clamped to the
+    /// [`bounds::MAX_DURATION_SECS`] that [`validate`](Self::validate)
+    /// enforces, so a render path reached with an unvalidated document cannot
+    /// be asked for an unbounded allocation.
     pub fn frame_count(&self) -> usize {
-        ((self.duration.clamp(0.0, 600.0) * self.sample_rate as f32).ceil() as usize).max(1)
+        let secs = self.duration.clamp(0.0, bounds::MAX_DURATION_SECS);
+        ((secs * self.sample_rate as f32).ceil() as usize).max(1)
     }
 
     /// A copy re-stamped to render at `sample_rate`. The runtime pins every
@@ -304,7 +308,7 @@ fn midi_to_hz(m: f32) -> Option<f32> {
     // Hz turns oscillator phase accumulators to NaN, and anything far above
     // the highest supported Nyquist (96 kHz at 192 kHz sr) is an authoring
     // error, not a sound.
-    (hz.is_finite() && hz > 0.0 && hz <= 100_000.0).then_some(hz)
+    (hz.is_finite() && hz > 0.0 && hz <= bounds::MAX_CONST_HZ).then_some(hz)
 }
 
 /// Interpolation curve for a [`Modulator::Slide`].

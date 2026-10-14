@@ -2,116 +2,84 @@
 //! grid placement, and sections/markers checks (T1003–T1006). Every problem
 //! is collected, never first-error — see [`crate::diag`].
 
-use super::Song;
+use super::{MeterPoint, Song};
 use crate::diag::{CompileError, Diagnostic};
+use crate::dsl::bounds::{MAX_METER_DENOMINATOR, MAX_METER_POINTS, MapProblem, tempo_map_problems};
 use crate::units::Beat;
+
+/// Every problem with a meter map: bounded length, first point at bar 0,
+/// numerators ≥ 1, power-of-two denominators up to 64, strictly ascending
+/// bars. An empty map (the song's default meter throughout) has none.
+pub fn meter_map_problems(map: &[MeterPoint]) -> Vec<MapProblem> {
+    let mut out = Vec::new();
+    let mut push = |path: String, message: String, remediation: &'static str| {
+        out.push(MapProblem {
+            path,
+            message,
+            remediation,
+        })
+    };
+    if map.len() > MAX_METER_POINTS {
+        push(
+            "meter_map".into(),
+            format!(
+                "meter_map is capped at {MAX_METER_POINTS} points, got {}",
+                map.len()
+            ),
+            "consolidate repeated time-signature changes",
+        );
+    }
+    if let Some(first) = map.first()
+        && first.bar != 0
+    {
+        push(
+            "meter_map[0].bar".into(),
+            "meter_map's first point must be at bar 0".into(),
+            "add the opening time signature at bar 0",
+        );
+    }
+    for (i, p) in map.iter().enumerate() {
+        if p.numerator < 1 {
+            push(
+                format!("meter_map[{i}].numerator"),
+                "time-signature numerator must be ≥ 1".into(),
+                "use a numerator like 3 (3/4) or 6 (6/8)",
+            );
+        }
+        if !p.denominator.is_power_of_two() || p.denominator > MAX_METER_DENOMINATOR {
+            push(
+                format!("meter_map[{i}].denominator"),
+                format!(
+                    "time-signature denominator must be a power of two ≤ {MAX_METER_DENOMINATOR}, got {}",
+                    p.denominator
+                ),
+                "use 2, 4, 8, 16, 32, or 64",
+            );
+        }
+        if i > 0 && p.bar <= map[i - 1].bar {
+            push(
+                format!("meter_map[{i}].bar"),
+                "meter_map must be strictly ascending by bar".into(),
+                "sort the changes and merge any duplicates",
+            );
+        }
+    }
+    out
+}
 
 impl Song {
     /// Validate the tempo/meter maps, pickup, grid placement, and
     /// sections/markers — one pass, every problem collected (T1003–T1006).
     pub(crate) fn validate_maps(&self, diags: &mut CompileError) {
-        // The tempo map (T1003): first at beat 0, strictly ascending, sane
-        // tempos, bounded (mirrors the document-level seq validation).
-        let map = &self.tempo_map;
-        if map.len() > 1024 {
+        for p in tempo_map_problems(&self.tempo_map) {
             diags.push(
-                Diagnostic::error(
-                    "T1003",
-                    "tempo_map",
-                    format!("tempo_map is capped at 1024 points, got {}", map.len()),
-                )
-                .with_remediation("split the piece or thin the tempo changes"),
+                Diagnostic::error("T1003", p.path, p.message).with_remediation(p.remediation),
             );
         }
-        if let Some(first) = map.first()
-            && first.at != Beat::zero()
-        {
+        for p in meter_map_problems(&self.meter_map) {
             diags.push(
-                Diagnostic::error("T1003", "tempo_map[0].at", "tempo_map's first point must be at beat 0")
-                    .with_remediation("add a point at beat 0 (the song's bpm applies before the first change otherwise)"),
+                Diagnostic::error("T1004", p.path, p.message).with_remediation(p.remediation),
             );
-        }
-        for (i, p) in map.iter().enumerate() {
-            if !(p.bpm.is_finite() && p.bpm > 0.0) {
-                diags.push(
-                    Diagnostic::error(
-                        "T1003",
-                        format!("tempo_map[{i}].bpm"),
-                        format!("tempo must be positive and finite, got {}", p.bpm),
-                    )
-                    .with_remediation("set a tempo above 0 BPM"),
-                );
-            }
-            if i > 0 && p.at <= map[i - 1].at {
-                diags.push(
-                    Diagnostic::error(
-                        "T1003",
-                        format!("tempo_map[{i}].at"),
-                        "tempo_map must be strictly ascending by beat",
-                    )
-                    .with_remediation("sort the changes and merge any duplicates"),
-                );
-            }
-        }
-        // The meter map (T1004): first at bar 0, ascending bars, numerator ≥ 1,
-        // power-of-two denominator, bounded.
-        let meter = &self.meter_map;
-        if meter.len() > 256 {
-            diags.push(
-                Diagnostic::error(
-                    "T1004",
-                    "meter_map",
-                    format!("meter_map is capped at 256 points, got {}", meter.len()),
-                )
-                .with_remediation("consolidate repeated time-signature changes"),
-            );
-        }
-        if let Some(first) = meter.first()
-            && first.bar != 0
-        {
-            diags.push(
-                Diagnostic::error(
-                    "T1004",
-                    "meter_map[0].bar",
-                    "meter_map's first point must be at bar 0",
-                )
-                .with_remediation("add the opening time signature at bar 0"),
-            );
-        }
-        for (i, p) in meter.iter().enumerate() {
-            if p.numerator < 1 {
-                diags.push(
-                    Diagnostic::error(
-                        "T1004",
-                        format!("meter_map[{i}].numerator"),
-                        "time-signature numerator must be ≥ 1",
-                    )
-                    .with_remediation("use a numerator like 3 (3/4) or 6 (6/8)"),
-                );
-            }
-            if !p.denominator.is_power_of_two() || p.denominator > 64 {
-                diags.push(
-                    Diagnostic::error(
-                        "T1004",
-                        format!("meter_map[{i}].denominator"),
-                        format!(
-                            "time-signature denominator must be a power of two ≤ 64, got {}",
-                            p.denominator
-                        ),
-                    )
-                    .with_remediation("use 2, 4, 8, 16, 32, or 64"),
-                );
-            }
-            if i > 0 && p.bar <= meter[i - 1].bar {
-                diags.push(
-                    Diagnostic::error(
-                        "T1004",
-                        format!("meter_map[{i}].bar"),
-                        "meter_map must be strictly ascending by bar",
-                    )
-                    .with_remediation("sort the changes and merge any duplicates"),
-                );
-            }
         }
         if let Some(pickup) = self.pickup
             && pickup < Beat::zero()

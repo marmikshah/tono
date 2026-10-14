@@ -100,8 +100,9 @@ in `docs/**/*.md` must run against the checkout.
 
 ## Changes that need extra care
 
-- Anything in `dsl/validate.rs`: validation is also mirrored in
-  `vary::mutate_node` and `song/diagnostics.rs`; change all three.
+- A validation bound: add or change it in `dsl/bounds.rs`, which
+  `dsl/validate.rs`, `vary::mutate_node`, `song/diagnostics.rs` and the
+  Python bindings all read; never write the number twice.
 - Adding a `Node` variant touches `node.rs` (enum, `is_processor`, `children`,
   `children_mut`), `validate.rs`, `streaming/source.rs` or `proc.rs`, `vary.rs`,
   `tests/fuzz_validation.rs`, `docs/reference/sounddoc.md`, and, for a

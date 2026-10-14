@@ -446,10 +446,9 @@ pub(crate) fn modal_coeffs(freq: f32, decay: f32, gain: f32, sr: u32) -> (f32, f
 }
 
 /// The delay-line allocation for a `delay` node, in samples: validate() caps
-/// `secs` at 30 s, and the clamp guards unvalidated docs identically on the
-/// offline and streaming paths.
+/// `secs` at `MAX_DELAY_SECS`, and the clamp guards unvalidated docs.
 pub(crate) fn delay_line_len(secs: f32, sr: u32) -> usize {
-    ((secs.min(30.0) * sr as f32) as usize).max(1)
+    ((secs.min(crate::dsl::bounds::MAX_DELAY_SECS) * sr as f32) as usize).max(1)
 }
 
 /// The Freeverb delay-line lengths in samples at `sr` — `(comb, allpass)`,

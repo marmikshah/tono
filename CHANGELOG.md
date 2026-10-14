@@ -60,6 +60,8 @@ checks. The 1.x line may break in minor releases; every break is listed here.
 - GitHub Releases attach CLI binaries for Linux x86_64, macOS (Apple silicon and Intel) and Windows x86_64, built with default features. Python wheels are still built for Linux x86_64 only.
 - The SoundDoc reference shows the external tagging of modulators and the object form of the `stereo` field.
 - `Node::PROCESSOR_KINDS` lists the processor node tags; the Python bindings validate bus effects against it instead of a private copy, and their typed-song module is split into `convert`, `instruments`, `pattern`, `song` and `program`.
+- `dsl::bounds` holds every numeric validation bound and the shared tempo-map rule (`tempo_map_problems`; `song::meter_map_problems` for meter maps): the validator, `vary::mutate`, the song compiler's diagnostics, the renderer's defensive clamps and the Python `set_tempo_map`/`set_meter_map` read one definition. The validator is split into header, mixer, layer, sidechain, bus and routing checks with unchanged messages.
+- The song compiler builds each track's `seq` node and the document directly instead of through a JSON round trip; a test checks every catalog voice knob still lands on the node.
 - One DSP evaluator: the offline bounce now runs the same block-based kernels as the streaming renderer (one block as long as the document instead of per-sample recursion), so the two can no longer drift; every golden hash is unchanged. The mixer captures layer stats and stems in the same pass. Filters, EQ and `gain` with a modulated cutoff or amount stream natively (the coefficients follow the modulator per sample), so they no longer block streaming.
 
 ### Fixed

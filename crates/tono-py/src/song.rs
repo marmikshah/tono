@@ -10,10 +10,11 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyType};
 
+use tono_core::dsl::bounds::{FADER_GAIN, tempo_map_problems};
 use tono_core::dsl::{AutoCurve, AutoTarget, Bus, Node, Send, TempoPoint};
 use tono_core::song::{
     CompileOptions, CompileTarget, Marker, MeterPoint, Section, Song as CoreSong, SongLane,
-    SongPoint, SongTrack,
+    SongPoint, SongTrack, meter_map_problems,
 };
 use tono_core::units::Beat;
 
@@ -337,40 +338,21 @@ impl Song {
     /// float is its EXACT binary value, so 0.1 isn't 1/10 — use Fraction for
     /// exact decimals). Validated eagerly against the compiler's rules
     /// (ValueError naming the problem): the first point must sit at beat 0,
-    /// beats strictly ascend, tempos are positive and finite, at most 1024
-    /// points. `set_tempo_map([])` clears the map (constant tempo).
+    /// beats strictly ascend, tempos are positive and finite, bounded length.
+    /// `set_tempo_map([])` clears the map (constant tempo).
     fn set_tempo_map(&mut self, points: Vec<(Bound<'_, PyAny>, f32)>) -> PyResult<()> {
-        if points.len() > 1024 {
-            return Err(PyValueError::new_err(format!(
-                "tempo_map is capped at 1024 points, got {}",
-                points.len()
-            )));
-        }
         let mut map = Vec::with_capacity(points.len());
-        for (i, (beat, bpm)) in points.iter().enumerate() {
-            let at = py_beat(beat)?;
-            if !(bpm.is_finite() && *bpm > 0.0) {
-                return Err(PyValueError::new_err(format!(
-                    "tempo_map[{i}].bpm: tempo must be positive and finite, got {bpm}"
-                )));
-            }
-            map.push(TempoPoint { at, bpm: *bpm });
+        for (beat, bpm) in &points {
+            map.push(TempoPoint {
+                at: py_beat(beat)?,
+                bpm: *bpm,
+            });
         }
-        if let Some(first) = map.first()
-            && first.at != Beat::zero()
-        {
-            return Err(PyValueError::new_err(
-                "tempo_map's first point must be at beat 0 (the song's tempo applies before \
-                 the first change otherwise)",
-            ));
-        }
-        for (i, w) in map.windows(2).enumerate() {
-            if w[1].at <= w[0].at {
-                return Err(PyValueError::new_err(format!(
-                    "tempo_map[{}].at: tempo_map must be strictly ascending by beat",
-                    i + 1
-                )));
-            }
+        if let Some(p) = tempo_map_problems(&map).into_iter().next() {
+            return Err(PyValueError::new_err(format!(
+                "{}: {} ({})",
+                p.path, p.message, p.remediation
+            )));
         }
         self.inner.tempo_map = map;
         Ok(())
@@ -380,42 +362,10 @@ impl Song {
     /// signature from each bar on (6/8 is `(bar, 6, 8)`). Validated eagerly
     /// against the compiler's rules (ValueError naming the problem): the
     /// first point must be bar 0, bars strictly ascend, numerator ≥ 1,
-    /// denominator a power of two ≤ 64, at most 256 points.
+    /// denominator a power of two ≤ 64, bounded length.
     /// `set_meter_map([])` clears the map (the song's default 4/4).
     fn set_meter_map(&mut self, points: Vec<(u32, u32, u32)>) -> PyResult<()> {
-        if points.len() > 256 {
-            return Err(PyValueError::new_err(format!(
-                "meter_map is capped at 256 points, got {}",
-                points.len()
-            )));
-        }
-        for (i, (bar, numerator, denominator)) in points.iter().enumerate() {
-            if *numerator < 1 {
-                return Err(PyValueError::new_err(format!(
-                    "meter_map[{i}].numerator: time-signature numerator must be ≥ 1"
-                )));
-            }
-            if !denominator.is_power_of_two() || *denominator > 64 {
-                return Err(PyValueError::new_err(format!(
-                    "meter_map[{i}].denominator: time-signature denominator must be a \
-                     power of two ≤ 64, got {denominator}"
-                )));
-            }
-            if i > 0 && *bar <= points[i - 1].0 {
-                return Err(PyValueError::new_err(format!(
-                    "meter_map[{i}].bar: meter_map must be strictly ascending by bar"
-                )));
-            }
-        }
-        if let Some(first) = points.first()
-            && first.0 != 0
-        {
-            return Err(PyValueError::new_err(
-                "meter_map's first point must be at bar 0 (add the opening time signature \
-                 at bar 0)",
-            ));
-        }
-        self.inner.meter_map = points
+        let map: Vec<MeterPoint> = points
             .iter()
             .map(|&(bar, numerator, denominator)| MeterPoint {
                 bar,
@@ -423,6 +373,13 @@ impl Song {
                 denominator,
             })
             .collect();
+        if let Some(p) = meter_map_problems(&map).into_iter().next() {
+            return Err(PyValueError::new_err(format!(
+                "{}: {} ({})",
+                p.path, p.message, p.remediation
+            )));
+        }
+        self.inner.meter_map = map;
         Ok(())
     }
 
@@ -516,7 +473,7 @@ impl Song {
                 "bus id '{id}' is also a track name — a track and its bus must be named apart"
             )));
         }
-        if !(gain.is_finite() && (0.0..=2.0).contains(&gain)) {
+        if !(gain.is_finite() && FADER_GAIN.contains(&gain)) {
             return Err(PyValueError::new_err(format!(
                 "bus '{id}': gain must be in [0, 2], got {gain}"
             )));

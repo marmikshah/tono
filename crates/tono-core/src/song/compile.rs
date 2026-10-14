@@ -5,7 +5,9 @@
 
 use super::{Song, SongError, SongTrack};
 use crate::diag::{CompileError, Diagnostic};
-use crate::dsl::{Node, SeqNote, SoundDoc, Track};
+use crate::dsl::{
+    BassKnobs, FmKnobs, Node, PianoKnobs, PluckKnobs, SeqNote, Sf2Knobs, SoundDoc, Track, Value,
+};
 use crate::program::{PROGRAM_VERSION, Program, ProgramMeta, TrackMeta, blocker_warnings};
 use crate::units::Beat;
 
@@ -178,15 +180,10 @@ impl Song {
             master: self.master.clone(),
             buses: self.buses.clone(),
         };
-        let json = serde_json::json!({
-            "name": self.name,
-            "duration": duration,
-            "engine": self.engine,
-            "version": self.version,
-            "root": serde_json::to_value(&root).map_err(|e| SongError::Compile(e.to_string()))?,
-        });
-        let doc: crate::dsl::SoundDoc = serde_json::from_value(json)
-            .map_err(|e| SongError::Compile(format!("song doc build: {e}")))?;
+        let mut doc = crate::dsl::SoundDoc::new(self.name.clone(), root);
+        doc.duration = duration;
+        doc.engine = self.engine;
+        doc.version = self.version;
         Ok(doc)
     }
 
@@ -230,44 +227,65 @@ impl Song {
         }
         notes.sort_by_key(|n| n.step);
 
-        // Build the seq node via serde so the seq-only fields (duty, fm_*,
-        // pluck_decay) take the engine's own defaults — then merge the whole
-        // VoiceParams struct over it. Field names match the seq node's keys
-        // one-for-one, so every set knob flows through and a newly added voice
-        // param can never be silently dropped here.
-        let mut seq_json = serde_json::json!({
-            "type": "seq",
+        // Every voice knob overrides the engine default of its seq field;
+        // `voice_params_reach_every_seq_knob` keeps the mapping complete.
+        let v = &t.voice;
+        let fm = FmKnobs::default();
+        let pluck = PluckKnobs::default();
+        let piano = PianoKnobs::default();
+        let bass = BassKnobs::default();
+        let seq = Node::Seq {
             // bpm/steps_per_beat are clamped exactly like to_doc's duration
             // math — degenerate values would otherwise place notes beyond the
             // computed duration (silently dropping them) or build an invalid seq.
-            "bpm": self.bpm.max(1.0),
-            "steps_per_beat": self.steps_per_beat.max(1),
-            "wave": serde_json::to_value(t.wave).map_err(|e| SongError::Compile(e.to_string()))?,
-            "env": serde_json::to_value(t.env).map_err(|e| SongError::Compile(e.to_string()))?,
-            "swing": t.swing.unwrap_or(self.swing),
-            "humanize": t.humanize.unwrap_or(self.humanize),
-            "sf2": t.sf2,
-            "sf2_preset": t.sf2_preset,
-            "sf2_bank": t.sf2_bank,
-            "notes": serde_json::to_value(&notes).map_err(|e| SongError::Compile(e.to_string()))?,
-        });
-        if let serde_json::Value::Object(voice) =
-            serde_json::to_value(t.voice).map_err(|e| SongError::Compile(e.to_string()))?
-        {
-            for (key, val) in voice {
-                if !val.is_null() {
-                    seq_json[key] = val;
-                }
-            }
-        }
-        // The song's tempo map applies to every track's seq (the grid is
-        // shared); empty maps omit the field, so plain songs are unchanged.
-        if !self.tempo_map.is_empty() {
-            seq_json["tempo_map"] = serde_json::to_value(&self.tempo_map)
-                .map_err(|e| SongError::Compile(e.to_string()))?;
-        }
-        let seq: Node = serde_json::from_value(seq_json)
-            .map_err(|e| SongError::Compile(format!("track '{}' seq build: {e}", t.name)))?;
+            bpm: self.bpm.max(1.0),
+            // The song's tempo map applies to every track's seq (the grid is
+            // shared); an empty map is the constant-tempo seq.
+            tempo_map: self.tempo_map.clone(),
+            steps_per_beat: self.steps_per_beat.max(1),
+            wave: t.wave,
+            duty: v.duty.map_or_else(crate::dsl::default_duty, Value::Const),
+            fm: FmKnobs {
+                fm_ratio: v.fm_ratio.unwrap_or(fm.fm_ratio),
+                fm_index: v.fm_index.unwrap_or(fm.fm_index),
+                fm_strike: v.fm_strike.unwrap_or(fm.fm_strike),
+            },
+            pluck: PluckKnobs {
+                pluck_decay: v.pluck_decay.unwrap_or(pluck.pluck_decay),
+                pluck_body: v.pluck_body.unwrap_or(pluck.pluck_body),
+                pluck_pick: v.pluck_pick.unwrap_or(pluck.pluck_pick),
+                pluck_tone: v.pluck_tone.unwrap_or(pluck.pluck_tone),
+            },
+            piano: PianoKnobs {
+                piano_hammer: v.piano_hammer.unwrap_or(piano.piano_hammer),
+                piano_strike: v.piano_strike.unwrap_or(piano.piano_strike),
+                piano_inharm: v.piano_inharm.unwrap_or(piano.piano_inharm),
+                piano_detune: v.piano_detune.unwrap_or(piano.piano_detune),
+                piano_decay: v.piano_decay.unwrap_or(piano.piano_decay),
+            },
+            kit: v.kit.unwrap_or_default(),
+            bass: BassKnobs {
+                bass_cutoff: v.bass_cutoff.unwrap_or(bass.bass_cutoff),
+                bass_env: v.bass_env.unwrap_or(bass.bass_env),
+                bass_env_vel: v.bass_env_vel.unwrap_or(bass.bass_env_vel),
+                bass_decay: v.bass_decay.unwrap_or(bass.bass_decay),
+                bass_click: v.bass_click.unwrap_or(bass.bass_click),
+                bass_body: v.bass_body.unwrap_or(bass.bass_body),
+                bass_sub: v.bass_sub.unwrap_or(bass.bass_sub),
+                bass_sub_ratio: v.bass_sub_ratio.unwrap_or(bass.bass_sub_ratio),
+                bass_drive: v.bass_drive.unwrap_or(bass.bass_drive),
+                bass_body_decay: v.bass_body_decay.unwrap_or(bass.bass_body_decay),
+            },
+            sf2: Sf2Knobs {
+                sf2: t.sf2.clone(),
+                sf2_preset: t.sf2_preset,
+                sf2_bank: t.sf2_bank,
+            },
+            swing: t.swing.unwrap_or(self.swing),
+            humanize: t.humanize.unwrap_or(self.humanize),
+            env: t.env,
+            notes,
+        };
 
         // A reverb send wraps the seq in a chain (dry when reverb == 0, so
         // the track is byte-identical without it).
@@ -480,6 +498,55 @@ mod tests {
         song.arrange("bass", "riff", 0);
         song.arrange("keys", "stab", 0);
         song
+    }
+
+    #[test]
+    fn voice_params_reach_every_seq_knob() {
+        // Every VoiceParams field is named like its seq knob; a set knob must
+        // land on the compiled seq node with its value, so a knob added to
+        // the catalog can never be silently dropped by the compiler.
+        let voice = crate::catalog::VoiceParams {
+            duty: Some(0.31),
+            fm_ratio: Some(2.5),
+            fm_index: Some(7.0),
+            fm_strike: Some(0.4),
+            pluck_decay: Some(0.95),
+            pluck_body: Some(0.2),
+            pluck_pick: Some(0.3),
+            pluck_tone: Some(-0.4),
+            piano_hammer: Some(1.3),
+            piano_strike: Some(0.2),
+            piano_inharm: Some(1.5),
+            piano_detune: Some(3.0),
+            piano_decay: Some(0.8),
+            kit: Some(crate::dsl::KitStyle::Eight08),
+            bass_cutoff: Some(300.0),
+            bass_env: Some(600.0),
+            bass_env_vel: Some(900.0),
+            bass_decay: Some(0.2),
+            bass_click: Some(50.0),
+            bass_body: Some(0.6),
+            bass_sub: Some(0.5),
+            bass_sub_ratio: Some(0.5),
+            bass_drive: Some(0.3),
+            bass_body_decay: Some(1.5),
+        };
+        let mut song = Song::new("v", 100.0);
+        song.add_track("t", SeqWave::Fm, amp());
+        song.tracks[0].voice = voice;
+        song.tracks[0].notes.push(note(0, 2, "C4"));
+        let doc = song.to_doc().unwrap();
+        let Node::Tracks { tracks, .. } = &doc.root else {
+            panic!("a song compiles to a mixer");
+        };
+        let seq = serde_json::to_value(&tracks[0].node).unwrap();
+        let params = serde_json::to_value(voice).unwrap();
+        for (key, value) in params.as_object().unwrap() {
+            assert_eq!(
+                &seq[key], value,
+                "voice param {key} must land on the seq node"
+            );
+        }
     }
 
     #[test]

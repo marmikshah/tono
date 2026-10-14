@@ -4,6 +4,10 @@
 //! deterministically from a seed, for round-robin sets and "nudge until it's
 //! right" exploration.
 
+use crate::dsl::bounds::{
+    EQ_GAIN_DB, MAX_CONST_HZ, MAX_DELAY_SECS, MAX_DETUNE_CENTS, MAX_MOD_HZ, MAX_RAND_RATE,
+    MAX_TREMOLO_RATE_HZ,
+};
 use crate::dsl::{Modulator, Node, SoundDoc, Value};
 use crate::dsp::Rng;
 
@@ -80,22 +84,22 @@ fn mutate_value(value: &mut Value, amount: f32, rng: &mut Rng) {
             *from = jitter(*from, amount, rng, 0.0);
             *to = jitter(*to, amount, rng, 0.0);
             // Clamped to the validation cap — jitter runs to ×2.
-            *rate = jitter(*rate, amount, rng, 0.01).min(10_000.0);
+            *rate = jitter(*rate, amount, rng, 0.01).min(MAX_RAND_RATE);
         }
     }
 }
 
 /// Mutate a frequency-bearing `Value`, then clamp it into the validation
-/// domain (const (0, 100 kHz], modulated endpoints ±1 MHz): `mutate` promises
+/// domain (`MAX_CONST_HZ`, `MAX_MOD_HZ`): `mutate` promises
 /// a still-valid document, and an unclamped jitter could push a near-cap
 /// frequency past the bound (or an exact 0 into a positive-only field).
 fn mutate_freq(value: &mut Value, amount: f32, rng: &mut Rng) {
     mutate_value(value, amount, rng);
     fn clamp_ep(x: &mut f32) {
-        *x = (*x).clamp(-1e6, 1e6);
+        *x = (*x).clamp(-MAX_MOD_HZ, MAX_MOD_HZ);
     }
     match value {
-        Value::Const(c) => *c = (*c).clamp(1e-3, 100_000.0),
+        Value::Const(c) => *c = (*c).clamp(1e-3, MAX_CONST_HZ),
         Value::Modulated(Modulator::Slide { from, to, .. })
         | Value::Modulated(Modulator::EnvMod { from, to, .. })
         | Value::Modulated(Modulator::Rand { from, to, .. }) => {
@@ -154,25 +158,24 @@ fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
         Node::Peak { cutoff, q, gain_db } => {
             mutate_freq(cutoff, amount, rng);
             *q = jitter(*q, amount, rng, 0.05);
-            // Clamped to the ±24 dB validation bound: mutate promises a
-            // still-valid document.
-            *gain_db = (*gain_db + rng.bi() * amount * 6.0).clamp(-24.0, 24.0);
+            // Clamped to the validation bound: mutate promises a still-valid
+            // document.
+            *gain_db = (*gain_db + rng.bi() * amount * 6.0).clamp(-EQ_GAIN_DB, EQ_GAIN_DB);
         }
         Node::Lowshelf { cutoff, gain_db } | Node::Highshelf { cutoff, gain_db } => {
             mutate_freq(cutoff, amount, rng);
-            *gain_db = (*gain_db + rng.bi() * amount * 6.0).clamp(-24.0, 24.0);
+            *gain_db = (*gain_db + rng.bi() * amount * 6.0).clamp(-EQ_GAIN_DB, EQ_GAIN_DB);
         }
         Node::Super {
             freq, detune_cents, ..
         } => {
             mutate_freq(freq, amount, rng);
-            // Clamped to the validation cap (10 octaves) — jitter runs to ×2.
-            *detune_cents = jitter(*detune_cents, amount, rng, 0.0).min(12_000.0);
+            // Clamped to the validation cap — jitter runs to ×2.
+            *detune_cents = jitter(*detune_cents, amount, rng, 0.0).min(MAX_DETUNE_CENTS);
         }
         Node::Gain { amount: amt } => mutate_value(amt, amount, rng),
         Node::Delay { secs, feedback } => {
-            // .min(30.0): the validation cap on the delay-line allocation.
-            *secs = jitter(*secs, amount, rng, 0.001).min(30.0);
+            *secs = jitter(*secs, amount, rng, 0.001).min(MAX_DELAY_SECS);
             *feedback = jitter_unit(*feedback, amount, rng);
         }
         Node::Reverb { room, mix } => {
@@ -197,8 +200,7 @@ fn mutate_node(node: &mut Node, amount: f32, rng: &mut Rng) {
             *decay = jitter(*decay, amount, rng, 0.0);
         }
         Node::Tremolo { rate, depth } => {
-            // .min(40.0): the validation cap on the LFO rate.
-            *rate = jitter(*rate, amount, rng, 0.01).min(40.0);
+            *rate = jitter(*rate, amount, rng, 0.01).min(MAX_TREMOLO_RATE_HZ);
             *depth = jitter_unit(*depth, amount, rng);
         }
         Node::Chorus { rate, depth, mix } => {
