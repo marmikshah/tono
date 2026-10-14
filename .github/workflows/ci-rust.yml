@@ -46,6 +46,10 @@ jobs:
           for features in '' analysis sampler; do
             cargo clippy --locked -p tono-core --all-targets --no-default-features --features "$features" -- -D warnings
           done
+      - name: Test the CLI as installed by default (no optional features)
+        run: |
+          cargo test --locked -p tono
+          cargo clippy --locked -p tono --all-targets -- -D warnings
       - name: Run deterministic soak checks
         run: cargo test --locked -p tono-core --test soak -- --ignored
       - name: Check public API documentation
