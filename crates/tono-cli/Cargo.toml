@@ -6,11 +6,17 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-# cargo copies the workspace README into the package (same convention as
-# tono-core), so the crates.io page of the CLI crate isn't blank.
+homepage.workspace = true
+documentation = "https://docs.rs/tono"
+# cargo copies the workspace README into the package: the `tono` crate is the
+# user-facing entry point, so the crates.io page shows the project overview.
 readme = "../../README.md"
-keywords = ["audio", "synthesis", "dsp", "chiptune", "gamedev"]
-categories = ["multimedia::audio", "game-development"]
+keywords = ["audio", "synthesis", "cli", "chiptune", "gamedev"]
+categories = ["multimedia::audio", "game-development", "command-line-utilities"]
+# The published package carries the binary and the library. The regression
+# suite and the docs-site sample exporter stay in the repository. docs.rs
+# builds with default features: `play` needs ALSA headers the builder lacks.
+exclude = ["/tests/", "/examples/site_samples.rs"]
 
 # docs.rs builds the full feature set so every optional API is documented.
 [package.metadata.docs.rs]
