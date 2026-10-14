@@ -14,9 +14,17 @@ WebAssembly.
 ## Quickstart
 
 ```sh
-cargo install tono
+cargo install tono                        # WAV only; see the features note below
 tono generate laser --seed 42 -o laser   # candidates: wav, editable JSON, spectrograms
 tono render laser/laser_v0.json           # SoundDoc -> wav + analysis images
+```
+
+The default build writes WAV and needs no C toolchain. Cargo features add the
+rest: `midi` (`tono midi` and `tono import`), `encode` (`--format flac|ogg`),
+and `play` (`tono play` through the speakers):
+
+```sh
+cargo install tono --features midi,encode
 ```
 
 A SoundDoc is plain JSON. Render one from Rust with `tono-core`:

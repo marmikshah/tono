@@ -15,6 +15,8 @@
 //! channel-10 kit), written once; mutations are cheap byte ops. Case budget
 //! 64, matching the repo's frugal test times.
 
+#![cfg(feature = "midi")]
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

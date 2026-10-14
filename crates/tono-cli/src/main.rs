@@ -101,8 +101,10 @@ fn main() -> anyhow::Result<()> {
         Some("render") => render_cmd(&args[2..]),
         Some("vary") => vary_cmd(&args[2..]),
         Some("schema") => schema_cmd(&args[2..]),
+        #[cfg(feature = "midi")]
         Some("midi") => midi_cmd(&args[2..]),
         Some("compile") => compile_cmd(&args[2..]),
+        #[cfg(feature = "midi")]
         Some("import") => import_cmd(&args[2..]),
         Some("play") => play_cmd(&args[2..]),
         Some("presets") => presets_cmd(&args[2..]),
@@ -283,6 +285,11 @@ fn parse_format(flag: Option<&str>) -> anyhow::Result<&str> {
     if !["wav", "flac", "ogg"].contains(&format) {
         anyhow::bail!("--format must be wav, flac, or ogg, got '{format}'");
     }
+    if !cfg!(feature = "encode") && format != "wav" {
+        anyhow::bail!(
+            "tono was built without the encode feature; reinstall with --features encode"
+        );
+    }
     Ok(format)
 }
 
@@ -310,7 +317,9 @@ fn render_to_dir(doc: &SoundDoc, stem: &str, out_dir: &Path, format: &str) -> an
 
     let audio_path = out_dir.join(format!("{stem}.{format}"));
     match format {
+        #[cfg(feature = "encode")]
         "flac" => tono::audio::write_flac(&audio_path, &[left, right], doc.sample_rate, 16)?,
+        #[cfg(feature = "encode")]
         "ogg" => tono::audio::write_ogg(&audio_path, &[left, right], doc.sample_rate, 0.7)?,
         _ => tono::audio::write_wav_stereo(&audio_path, left, right, doc.sample_rate, 16)?,
     }
@@ -440,6 +449,7 @@ fn schema_cmd(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "midi")]
 fn midi_cmd(args: &[String]) -> anyhow::Result<()> {
     let cli = Cli::parse(args, &["-o", "--out"], &["--song"])?;
     let file = cli.input("tono midi FILE.json [-o FILE.mid] [--song]")?;
@@ -527,6 +537,7 @@ fn compile_cmd(args: &[String]) -> anyhow::Result<()> {
 }
 
 /// `tono import` — a Standard MIDI File becomes a renderable SoundDoc.
+#[cfg(feature = "midi")]
 fn import_cmd(args: &[String]) -> anyhow::Result<()> {
     let usage = "tono import FILE.mid [-o DOC.json] [--steps-per-beat 4] [--song]";
     let cli = Cli::parse(args, &["-o", "--out", "--steps-per-beat"], &["--song"])?;
@@ -669,7 +680,9 @@ fn write_bounce(
 ) -> anyhow::Result<()> {
     let audio_path = out_dir.join(format!("{stem}.{format}"));
     match format {
+        #[cfg(feature = "encode")]
         "flac" => tono::audio::write_flac(&audio_path, &[left, right], sample_rate, 16)?,
+        #[cfg(feature = "encode")]
         "ogg" => tono::audio::write_ogg(&audio_path, &[left, right], sample_rate, 0.7)?,
         _ => tono::audio::write_wav_stereo(&audio_path, left, right, sample_rate, 16)?,
     }
@@ -798,6 +811,7 @@ mod tests {
         assert_eq!(got, file_mtime(f.to_str().unwrap()).unwrap());
     }
 
+    #[cfg(feature = "midi")]
     #[test]
     fn midi_song_flag_reads_a_song_that_is_not_a_sounddoc() {
         // A Song JSON has no `root` — the doc path must keep rejecting it
@@ -826,6 +840,7 @@ mod tests {
         assert_eq!(smf.tracks.len(), 1);
     }
 
+    #[cfg(feature = "midi")]
     #[test]
     fn import_song_flag_writes_a_song_json() {
         // A MIDI file made through the export path imports as a Song whose
