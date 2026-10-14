@@ -17,6 +17,21 @@ maturin build --locked --release -m crates/tono-py/Cargo.toml
 Linux builds need ALSA development headers. The manual Wheels workflow
 produces install-tested Linux x86_64 artifacts.
 
+## Type stubs
+
+`python/tono/__init__.pyi` and `instruments.pyi` are hand-maintained; when a
+binding's name, parameters or defaults change, update the stub alongside it.
+`scripts/wheel_test.py` (the CI wheel gate) runs mypy's `stubtest`, which
+compares the installed extension against the stubs; the few things PyO3 cannot
+expose are listed with reasons in `stubtest-allowlist.txt`. To run it locally
+against a built wheel directory, or directly in an environment where
+`maturin develop` has installed the package:
+
+```sh
+python scripts/wheel_test.py dist
+python -m pip install mypy && python -m mypy.stubtest tono --allowlist crates/tono-py/stubtest-allowlist.txt
+```
+
 See the [Python guide](https://marmikshah.github.io/tono/guides/python),
 [live runtime guide](https://marmikshah.github.io/tono/guides/live),
 [runnable API tours](https://github.com/marmikshah/tono/tree/master/crates/tono-py/examples), and

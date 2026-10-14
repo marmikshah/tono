@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Install a built tono wheel in a fresh environment and run the Python suites."""
+"""Install a built tono wheel in a fresh environment and run the Python suites.
+
+After the smoke and typed-API suites, mypy's stubtest compares the installed
+extension against the hand-written stubs (`python/tono/*.pyi`); PyO3 details
+it cannot see are listed in `crates/tono-py/stubtest-allowlist.txt`.
+"""
 
 import argparse
 import os
@@ -22,10 +27,11 @@ def main():
         venv.EnvBuilder(with_pip=True).create(folder)
         python = Path(folder) / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         commands = [
-            ["-m", "pip", "install", "numpy"],
+            ["-m", "pip", "install", "numpy", "mypy"],
             ["-m", "pip", "install", "--no-index", "--find-links", str(directory), "--no-deps", "tono"],
             [str(root / "crates/tono-py/tests/smoke.py")],
             [str(root / "crates/tono-py/tests/test_typed.py")],
+            ["-m", "mypy.stubtest", "tono", "--allowlist", str(root / "crates/tono-py/stubtest-allowlist.txt")],
         ]
         for command in commands:
             subprocess.run([str(python), *command], cwd=root, check=True)
