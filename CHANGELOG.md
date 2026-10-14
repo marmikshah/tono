@@ -54,7 +54,7 @@ checks. The 1.x line may break in minor releases; every break is listed here.
 - Sound Studio keeps its continuous sequencer and tabbed device dock visible together on desktop, with grouped instrument browsing, compact transport, an ADSR graph, and project utilities. Smaller screens show a lightweight preset demo instead of the composer, with demo-oriented navigation and library hints.
 - Composition examples use a searchable, compact list with direct playback, source links, and downloads.
 - Website SFX previews ship recipes and a shared synthesis engine instead of pre-rendered WAV files.
-- Release CLI binaries and Python wheels are built for Linux x86_64 only; macOS and Windows are tested in CI and bug patches for them are welcome.
+- GitHub Releases attach CLI binaries for Linux x86_64, macOS (Apple silicon and Intel) and Windows x86_64, built with default features. Python wheels are still built for Linux x86_64 only.
 - The SoundDoc reference shows the external tagging of modulators and the object form of the `stereo` field.
 
 ### Fixed

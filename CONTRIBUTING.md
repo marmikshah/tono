@@ -73,9 +73,10 @@ is where that is disclosed, so the release is only as good as its notes.
    tag. `publish.yml` publishes `tono-core` to crates.io, waits for the index,
    then publishes `tono`; versions already on crates.io are skipped on a
    retry. `release.yml` creates the GitHub Release from that version's
-   changelog section (missing notes fail the workflow) and attaches the Linux
-   x86_64 CLI binary with its SHA-256 sidecar. Python wheels are built by the
-   manual `wheels.yml` workflow and are not published to PyPI.
+   changelog section (missing notes fail the workflow) and attaches the CLI
+   binaries for Linux x86_64, macOS (Apple silicon and Intel) and Windows
+   x86_64 with SHA-256 sidecars. Python wheels are built by the manual
+   `wheels.yml` workflow and are not published to PyPI.
 5. A published crate version cannot be unpublished, only yanked. Speaker
    playback and real SoundFont output need a host with a device; record any
    check that could not be run in the release review.

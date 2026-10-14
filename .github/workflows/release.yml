@@ -37,7 +37,22 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$notes" --verify-tag
   binaries:
     needs: github-release
-    runs-on: ubuntu-latest
+    # Default-feature builds only: no ALSA, FLAC/OGG or MIDI, so every target
+    # builds without native packages. Cargo features are a `cargo install`
+    # decision.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
     steps:
@@ -47,13 +62,13 @@ jobs:
           python-version: "3.13"
       - uses: dtolnay/rust-toolchain@1.88.0
         with:
-          targets: x86_64-unknown-linux-gnu
+          targets: ${{ matrix.target }}
       - shell: bash
         run: python scripts/release.py check-version "$GITHUB_REF_NAME"
       - name: Build the CLI
-        run: cargo build --locked --release -p tono --bin tono --target x86_64-unknown-linux-gnu
+        run: cargo build --locked --release -p tono --bin tono --target ${{ matrix.target }}
       - name: Package with checksum
-        run: python scripts/release.py package-cli
+        run: python scripts/release.py package-cli --target ${{ matrix.target }}
       - name: Upload to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

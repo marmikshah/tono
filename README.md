@@ -59,8 +59,9 @@ from source (see below); they are not on PyPI yet.
   revisions keep rendering unchanged.
 - **Rust:** MSRV is 1.88 (pinned in `rust-toolchain.toml`). Versions follow
   semver; a changed render output for an existing `engine` revision is a bug.
-- **Platforms:** CI, release binaries and wheels run on Linux x86_64. macOS and
-  Windows are not tested in CI; bug reports and patches for them are welcome.
+- **Platforms:** CI runs the core and CLI tests on Linux, macOS and Windows,
+  and releases attach CLI binaries for all three. The speaker adapter, the
+  Python extension and the wheels are built on Linux x86_64 only.
 - **Quality gates:** about 600 tests, including property/fuzz tests, golden
   renders, realtime-allocation checks and soak runs; `clippy -D warnings`,
   strict rustdoc, `cargo deny` and an installed-wheel test on every PR.
