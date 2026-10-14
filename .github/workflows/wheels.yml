@@ -1,8 +1,12 @@
 name: Wheels
 
-# Manual wheel artifacts complement source installation without tag builds.
+# Builds the tono-py wheel and sdist. A manual run uploads them as a workflow
+# artifact; a release tag also publishes them to PyPI through trusted
+# publishing (the `pypi` environment, no stored token).
 on:
   workflow_dispatch:
+  push:
+    tags: ["v*"]
 
 permissions:
   contents: read
@@ -18,7 +22,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: python scripts/release.py check-version
+      - run: python scripts/release.py check-version ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+      - uses: PyO3/maturin-action@v1
+        # The sdist lets pip build from source on platforms without a wheel
+        # (it bundles the path dependency on tono-core). A separate step: the
+        # combined `build --sdist` form failed its wheel build locally.
+        with:
+          command: sdist
+          args: --out dist -m crates/tono-py/Cargo.toml
       - uses: PyO3/maturin-action@v1
         with:
           command: build
@@ -39,3 +50,22 @@ jobs:
           name: wheels-linux-x86_64
           path: dist
           if-no-files-found: error
+  pypi:
+    if: github.ref_type == 'tag'
+    needs: wheels
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-linux-x86_64
+          path: dist
+      - name: Drop the checksum sidecars
+        run: rm -f dist/*.sha256
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          # A re-run of a tag must not fail on files already uploaded.
+          skip-existing: true

@@ -46,6 +46,7 @@ checks. The 1.x line may break in minor releases; every break is listed here.
 - Lean `tono-web` WebAssembly adapter reusing the Rust DSP, bounded worker rendering and PCM caching, plus native/WASM sample-equivalence and full-catalog checks.
 - CI runs the test suite on Linux, macOS and Windows, checks the pinned MSRV, compares the `tono-core` public API against `crates/tono-core/public-api.txt`, reports semver breakage against the latest crates.io release, and runs mypy `stubtest` against the Python type stubs.
 - Crate metadata for docs.rs and crates.io (homepage, documentation, README for `tono-core`, trimmed package contents) and a versioning policy in the README.
+- The Python bindings are published to PyPI as `tono-py` on every release tag (Linux x86_64 wheel plus an sdist; the import name stays `tono`).
 
 ### Changed
 - Website guides use concise, runnable Rust and Python examples with a language preference shared across code blocks and pages.

@@ -50,8 +50,9 @@ let samples: Vec<f32> = render(&doc); // identical on every platform
 ```
 
 See [your first sound](https://marmikshah.github.io/tono/get-started/quickstart)
-for a complete Rust and Python walkthrough. Python bindings currently build
-from source (see below); they are not on PyPI yet.
+for a complete Rust and Python walkthrough. The Python bindings are on PyPI as
+`tono-py` (`pip install tono-py`, imported as `tono`); Linux x86_64 gets a
+wheel, other platforms build from the sdist with a Rust toolchain.
 
 ## Status
 

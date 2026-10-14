@@ -17,18 +17,15 @@ cargo check
 ```
 
 ```sh [Python]
-git clone https://github.com/marmikshah/tono.git
-cd tono
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install maturin numpy
-maturin develop --locked --release -m crates/tono-py/Cargo.toml
+python -m pip install tono-py
 python -c "import tono; print('tono is ready')"
 ```
 
 :::
 
-The Python commands use a Unix shell. In Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`.
+The Python commands use a Unix shell. In Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`. The package is `tono-py` on PyPI and `tono` when imported. Linux x86_64 installs a prebuilt wheel; macOS and Windows build it from the sdist, which needs the Rust toolchain. To work from a checkout instead, run `python -m pip install maturin numpy` and `maturin develop --locked --release -m crates/tono-py/Cargo.toml` inside the clone.
 
 For the optional CLI, run `cargo install tono`, then `tono catalog`.
 

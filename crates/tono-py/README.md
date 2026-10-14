@@ -2,9 +2,11 @@
 
 Compose typed songs, render SoundDocs and parameterized patches to numpy,
 or control live instruments, drum kits and adaptive music through native audio.
-CPython 3.9+ is supported with abi3 wheels.
+CPython 3.9+ is supported with abi3 wheels. Install from PyPI with
+`pip install tono-py` (the import name is `tono`; the `tono` PyPI name belongs
+to an unrelated project).
 
-Build from a repository checkout in an activated virtual environment:
+Or build from a repository checkout in an activated virtual environment:
 
 ```sh
 python -m pip install maturin numpy
@@ -14,8 +16,9 @@ python crates/tono-py/tests/test_typed.py
 maturin build --locked --release -m crates/tono-py/Cargo.toml
 ```
 
-Linux builds need ALSA development headers. The manual Wheels workflow
-produces install-tested Linux x86_64 artifacts.
+Linux builds need ALSA development headers. The Wheels workflow builds an
+install-tested Linux x86_64 wheel and an sdist; release tags publish both to
+PyPI.
 
 ## Type stubs
 
