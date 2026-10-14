@@ -1,0 +1,11 @@
+# mypy stubtest allowlist for the `tono` package (used by scripts/wheel_test.py).
+# Entries are regexes over the "<module>.<name>" stubtest reports; each must
+# still match something, so stale lines fail the check and the list stays short.
+
+# `Beat` is a stub-only alias for the beat-position union; the runtime has no
+# such name (the Rust side extracts int | float | Fraction | tuple ad hoc).
+tono\.Beat
+
+# `tono/__init__.py` star-imports the extension and defines no `__all__`; the
+# stub's `__all__` documents the public surface for type checkers only.
+tono\.__all__
