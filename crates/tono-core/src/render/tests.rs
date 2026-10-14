@@ -679,44 +679,6 @@ fn stereoize_modes_behave() {
 }
 
 #[test]
-fn fm_seq_strikes_bright_then_mellows() {
-    // One sustained fm note: the decaying modulation index makes the
-    // attack brighter than the tail — the hammer-strike signature.
-    let d = doc(r#"{ "name": "n", "duration": 1.0, "root": { "type": "seq",
-                 "bpm": 60, "steps_per_beat": 1, "wave": "fm",
-                 "fm_ratio": 1.0, "fm_index": 6, "fm_strike": 0.15,
-                 "env": { "d": 0.9, "s": 0.5 },
-                 "notes": [ { "step": 0, "len": 1, "pitch": "A3" } ] } }"#);
-    let s = render(&d);
-    assert!(rms(&s) > 0.05, "fm note audible");
-    let third = s.len() / 3;
-    assert!(
-        brightness(&s[..third]) > brightness(&s[2 * third..]) * 1.5,
-        "strike should be brighter than the tail"
-    );
-}
-
-#[test]
-fn pluck_seq_rings_and_decays_deterministically() {
-    let json = r#"{ "name": "n", "duration": 1.2, "seed": 9, "root": { "type": "seq",
-            "bpm": 60, "steps_per_beat": 1, "wave": "pluck", "pluck_decay": 0.995,
-            "env": { "d": 0.1, "s": 1.0 },
-            "notes": [ { "step": 0, "len": 1, "pitch": "A3" } ] } }"#;
-    let s = render(&doc(json));
-    let half = s.len() / 2;
-    assert!(rms(&s[..half]) > 0.05, "pluck audible");
-    assert!(
-        rms(&s[half..]) < rms(&s[..half]) * 0.5,
-        "string decays naturally"
-    );
-    // Same seed ⇒ identical string; different seed ⇒ different noise burst.
-    assert_eq!(s, render(&doc(json)));
-    let mut other = doc(json);
-    other.seed = 10;
-    assert_ne!(s, render(&other));
-}
-
-#[test]
 fn piano_bass_rings_longer_than_treble() {
     let note = |pitch: &str| {
         let d = doc(&format!(
@@ -882,11 +844,107 @@ fn guitar_tone_stages_default_to_identity_and_variants_differ() {
     assert_ne!(bare, nylon, "nylon body/tone/pick change the voice");
 }
 
-fn one_note(wave: &str, pitch: &str, secs: f32) -> Vec<f32> {
+/// The character that distinguishes a seq voice on one held note, on top
+/// of the checks every voice passes (audible, finite, deterministic).
+enum Character {
+    /// The attack is brighter than the tail by `ratio`, comparing the first
+    /// and last of `parts` equal windows — a strike that mellows.
+    BrightThenMellow { parts: usize, ratio: f32 },
+    /// The second half is quieter than the first by half — a string ringing
+    /// out — and the seed changes the burst.
+    DecaysPerSeed,
+    /// No natural decay: the last quarter holds the level of the second.
+    Holds,
+    /// The first 50 ms are much quieter than the body — a bow swell.
+    Swells,
+    /// Filtered darker than the raw wave named.
+    DarkerThan(&'static str),
+    /// The tone brightens as the filter opens after the attack — the blat.
+    Blat,
+    /// Nothing beyond the shared checks.
+    Plain,
+}
+
+/// One held note per voice: `(wave, extra seq knobs, pitch, seconds, minimum
+/// rms, character)`.
+const VOICES: &[(&str, &str, &str, f32, f32, Character)] = &[
+    (
+        "fm",
+        r#""fm_ratio": 1.0, "fm_index": 6, "fm_strike": 0.15, "env": { "d": 0.9, "s": 0.5 },"#,
+        "A3",
+        1.0,
+        0.05,
+        Character::BrightThenMellow {
+            parts: 3,
+            ratio: 1.5,
+        },
+    ),
+    (
+        "pluck",
+        r#""pluck_decay": 0.995, "env": { "d": 0.1, "s": 1.0 },"#,
+        "A3",
+        1.2,
+        0.05,
+        Character::DecaysPerSeed,
+    ),
+    (
+        "epiano",
+        "",
+        "A3",
+        1.0,
+        0.05,
+        Character::BrightThenMellow {
+            parts: 4,
+            ratio: 1.3,
+        },
+    ),
+    ("organ", "", "C3", 1.0, 0.1, Character::Holds),
+    ("strings", "", "A3", 1.0, 0.05, Character::Swells),
+    (
+        "bass",
+        "",
+        "E2",
+        0.5,
+        0.05,
+        Character::DarkerThan("sawtooth"),
+    ),
+    ("brass", "", "C3", 0.8, 0.02, Character::Blat),
+    ("flute", "", "A3", 0.5, 0.02, Character::Plain),
+    (
+        "mallet",
+        "",
+        "A3",
+        0.5,
+        0.02,
+        Character::BrightThenMellow {
+            parts: 4,
+            ratio: 1.3,
+        },
+    ),
+    (
+        "bell",
+        "",
+        "A3",
+        1.0,
+        0.02,
+        Character::BrightThenMellow {
+            parts: 4,
+            ratio: 1.3,
+        },
+    ),
+];
+
+/// One note of `wave` with `extra` knobs (which may override the env), on a
+/// one-step-per-second grid.
+fn voice_note(wave: &str, extra: &str, pitch: &str, secs: f32, seed: u64) -> Vec<f32> {
+    let env = if extra.contains("\"env\"") {
+        ""
+    } else {
+        r#""env": { "a": 0.002, "s": 1.0, "r": 0.05 },"#
+    };
     let d = doc(&format!(
-        r#"{{ "name": "n", "duration": {secs}, "root": {{ "type": "seq",
-                 "bpm": 60, "steps_per_beat": 1, "wave": "{wave}",
-                 "env": {{ "a": 0.002, "s": 1.0, "r": 0.05 }},
+        r#"{{ "name": "n", "duration": {secs}, "seed": {seed}, "root": {{ "type": "seq",
+                 "bpm": 60, "steps_per_beat": 1, "wave": "{wave}", {extra} {env}
                  "notes": [ {{ "step": 0, "len": {len}, "pitch": "{pitch}" }} ] }} }}"#,
         len = secs.ceil() as u32,
     ));
@@ -894,79 +952,68 @@ fn one_note(wave: &str, pitch: &str, secs: f32) -> Vec<f32> {
 }
 
 #[test]
-fn epiano_tine_pings_then_mellows() {
-    let s = one_note("epiano", "A3", 1.0);
-    assert!(rms(&s) > 0.05, "epiano audible");
-    let q = s.len() / 4;
-    assert!(brightness(&s[..q]) > brightness(&s[3 * q..]) * 1.3);
-}
-
-#[test]
-fn organ_sustains_while_held() {
-    let s = one_note("organ", "C3", 1.0);
-    assert!(rms(&s) > 0.1, "organ audible");
-    let q = s.len() / 4;
-    // No natural decay: the last quarter holds level with the second.
-    let (mid, tail) = (rms(&s[q..2 * q]), rms(&s[3 * q..]));
-    assert!(tail > mid * 0.7, "organ holds: {mid} -> {tail}");
-}
-
-#[test]
-fn strings_swell_in_slowly() {
-    let s = one_note("strings", "A3", 1.0);
-    assert!(rms(&s) > 0.05, "strings audible");
-    let ms50 = 44_100 / 20;
-    // The bow swell: the first 50 ms is much quieter than the body.
-    assert!(rms(&s[..ms50]) < rms(&s[ms50 * 6..ms50 * 8]) * 0.6);
-}
-
-#[test]
-fn bass_is_darker_than_a_raw_saw() {
-    let b = one_note("bass", "E2", 0.5);
-    let saw = one_note("sawtooth", "E2", 0.5);
-    assert!(rms(&b) > 0.05, "bass audible");
-    assert!(
-        brightness(&b) < brightness(&saw) * 0.5,
-        "bass is filtered dark"
-    );
-}
-
-#[test]
-fn new_melodic_waves_are_audible_finite_and_deterministic() {
-    for wave in ["brass", "flute", "mallet", "bell"] {
-        let a = one_note(wave, "A3", 0.5);
-        let b = one_note(wave, "A3", 0.5);
-        assert!(rms(&a) > 0.02, "{wave} audible, rms {}", rms(&a));
-        assert!(a.iter().all(|x| x.is_finite()), "{wave}: no NaN/inf");
-        assert_eq!(a, b, "{wave} must be deterministic");
+fn every_seq_voice_has_its_character() {
+    for (wave, extra, pitch, secs, min_rms, character) in VOICES {
+        let s = voice_note(wave, extra, pitch, *secs, 9);
+        assert!(rms(&s) > *min_rms, "{wave} audible, rms {}", rms(&s));
+        assert!(s.iter().all(|x| x.is_finite()), "{wave}: no NaN/inf");
+        assert_eq!(
+            s,
+            voice_note(wave, extra, pitch, *secs, 9),
+            "{wave} is deterministic"
+        );
+        let n = s.len();
+        match character {
+            Character::BrightThenMellow { parts, ratio } => {
+                let w = n / parts;
+                assert!(
+                    brightness(&s[..w]) > brightness(&s[n - w..]) * ratio,
+                    "{wave}: the strike should be brighter than the tail"
+                );
+            }
+            Character::DecaysPerSeed => {
+                assert!(rms(&s[n / 2..]) < rms(&s[..n / 2]) * 0.5, "{wave} decays");
+                assert_ne!(
+                    s,
+                    voice_note(wave, extra, pitch, *secs, 10),
+                    "{wave}: the seed changes the burst"
+                );
+            }
+            Character::Holds => {
+                let q = n / 4;
+                let (mid, tail) = (rms(&s[q..2 * q]), rms(&s[3 * q..]));
+                assert!(tail > mid * 0.7, "{wave} holds: {mid} -> {tail}");
+            }
+            Character::Swells => {
+                let ms50 = 44_100 / 20;
+                assert!(
+                    rms(&s[..ms50]) < rms(&s[ms50 * 6..ms50 * 8]) * 0.6,
+                    "{wave} swells in"
+                );
+            }
+            Character::DarkerThan(raw) => {
+                let r = voice_note(raw, "", pitch, *secs, 9);
+                assert!(
+                    brightness(&s) < brightness(&r) * 0.5,
+                    "{wave} is filtered darker than {raw}"
+                );
+            }
+            Character::Blat => {
+                let win = |a: f32, b: f32| {
+                    brightness(&s[(a * 44_100.0) as usize..(b * 44_100.0) as usize])
+                };
+                assert!(
+                    win(0.15, 0.2) > win(0.01, 0.03) * 1.2,
+                    "{wave} brightens as the filter opens"
+                );
+            }
+            Character::Plain => {}
+        }
     }
 }
 
-#[test]
-fn brass_filter_swells_open() {
-    let s = one_note("brass", "C3", 0.8);
-    let win = |a: f32, b: f32| brightness(&s[(a * 44_100.0) as usize..(b * 44_100.0) as usize]);
-    // The blat: the tone is measurably brighter once the cutoff has opened
-    // (compare just after the attack to the fully-open steady state, before
-    // the detune beating confounds the proxy).
-    assert!(
-        win(0.15, 0.2) > win(0.01, 0.03) * 1.2,
-        "brass brightens as the filter opens"
-    );
-}
-
-#[test]
-fn mallet_strike_dies_into_the_fundamental() {
-    let s = one_note("mallet", "A3", 0.5);
-    let q = s.len() / 4;
-    assert!(brightness(&s[..q]) > brightness(&s[3 * q..]) * 1.3);
-}
-
-#[test]
-fn bell_highs_die_before_the_hum() {
-    let s = one_note("bell", "A3", 1.0);
-    let q = s.len() / 4;
-    assert!(brightness(&s[..q]) > brightness(&s[3 * q..]) * 1.3);
+fn one_note(wave: &str, pitch: &str, secs: f32) -> Vec<f32> {
+    voice_note(wave, "", pitch, secs, 0)
 }
 
 #[test]
