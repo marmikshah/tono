@@ -106,6 +106,12 @@ jobs:
       CARGO_PUBLIC_API: 0.52.0
     steps:
       - uses: actions/checkout@v5
+      - name: Install ALSA headers for the core cpal feature
+        # --all-features builds the speaker adapter, whose API is part of the
+        # snapshot, and cpal links ALSA on Linux.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
@@ -123,13 +129,14 @@ jobs:
           fi
   semver:
     # Informational until 2.0.0 is tagged: the planned 2.0 breaks the API on
-    # purpose, so this reports against the latest crates.io release without
-    # blocking. Once v2.0.0 is published, drop continue-on-error and add this
-    # job to the status aggregator's needs.
+    # purpose, so this reports against the latest crates.io release as a
+    # warning instead of failing the job (a job-level continue-on-error would
+    # still show a red cross on every PR). Once v2.0.0 is published, drop the
+    # step-level continue-on-error and the warning step, and add this job to
+    # the status aggregator's needs.
     if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
       - name: Install ALSA headers for the CLI's play feature
@@ -137,8 +144,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev
       - uses: obi1kenobi/cargo-semver-checks-action@v2
+        id: check
+        continue-on-error: true
         with:
           package: tono-core,tono
+      - name: Report the result without failing
+        if: steps.check.outcome == 'failure'
+        run: echo "::warning title=semver-checks::The API differs from the latest crates.io release at a semver-major level. Expected until v2.0.0 ships; see the step above for the report."
   dependencies:
     if: github.event_name != 'workflow_dispatch' || !inputs.bench
     runs-on: ubuntu-latest
