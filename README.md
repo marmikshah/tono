@@ -3,7 +3,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/marmikshah/tono/ci.yml?branch=master&label=CI)](https://github.com/marmikshah/tono/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/tono-core.svg)](https://crates.io/crates/tono-core)
 [![docs.rs](https://img.shields.io/docsrs/tono-core)](https://docs.rs/tono-core)
-[![MSRV 1.88](https://img.shields.io/badge/MSRV-1.88-blue.svg)](#versioning-and-stability)
+[![MSRV](https://img.shields.io/crates/msrv/tono-core)](#versioning-and-stability)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 tono is a deterministic audio engine written in Rust. It synthesizes sound
