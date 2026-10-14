@@ -88,11 +88,11 @@ pub(crate) fn parse_doc(json: &str, sample_rate: u32) -> PyResult<SoundDoc> {
 
 /// The native output device's default sample rate.
 fn device_sample_rate() -> PyResult<u32> {
-    tono_play::device_sample_rate().map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    tono_core::speaker::device_sample_rate().map_err(|e| PyRuntimeError::new_err(e.to_string()))
 }
 
 /// Run the output stream on the calling (dedicated) thread, draining
-/// `renderer` in the callback via [`tono_play::Speaker`] — the one cpal shim
+/// `renderer` in the callback via [`tono_core::speaker::Speaker`] — the one cpal shim
 /// across the native faces (device open, f32 gate, panic containment, channel
 /// spread). The stream is pinned to the engine's `sample_rate` (the ring's
 /// frames are pre-rendered at it). Reports open success/failure back over
@@ -105,7 +105,7 @@ pub(crate) fn run_stream(
     stop: Arc<AtomicBool>,
     ready: mpsc::Sender<Result<(), String>>,
 ) {
-    match tono_play::Speaker::open_at(renderer, Some(sample_rate)) {
+    match tono_core::speaker::Speaker::open_at(renderer, Some(sample_rate)) {
         Ok(speaker) => {
             let _ = ready.send(Ok(()));
             while !stop.load(Ordering::Relaxed) {

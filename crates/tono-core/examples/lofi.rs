@@ -1,7 +1,7 @@
 //! A full multi-instrument song, composed with the catalog + fluent builder.
 //!
-//!     cargo run -p tono-play --example lofi               # hear it live
-//!     cargo run -p tono-play --example lofi -- song.json  # write the SoundDoc
+//!     cargo run -p tono-core --features cpal --example lofi               # hear it live
+//!     cargo run -p tono-core --features cpal --example lofi -- song.json  # write the SoundDoc
 //!         # then: tono render song.json -o out/            # → audio + images
 //!
 //! A warm Am–F–C–G loop at 84 bpm: mellow-piano chords, a string pad, a fingered
@@ -12,7 +12,7 @@
 use tono_core::catalog::{Bass, Drums, GrandPiano, Guitar, Strings};
 use tono_core::dsl::SoundDoc;
 use tono_core::song::Song;
-use tono_play::play_doc;
+use tono_core::speaker::play_doc;
 
 fn build() -> SoundDoc {
     // The progression, one entry per bar (looped over 8 bars).

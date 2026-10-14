@@ -1,7 +1,7 @@
 //! A live two-piece band: a drum kit and a piano in one Mixer, notes sent
 //! dynamically from your code.
 //!
-//!     cargo run -p tono-play --example live_band
+//!     cargo run -p tono-core --features cpal --example live_band
 //!
 //! The shape every dynamic-instrument use has: a Mixer sums any set of
 //! sources, `mixer.add` hands back a SourceId, and you drive that source live
@@ -15,7 +15,7 @@ use tono_core::drumkit::DrumKit;
 use tono_core::instrument::{Instrument, Note};
 use tono_core::presets::preset;
 use tono_core::runtime::Mixer;
-use tono_play::{Speaker, device_sample_rate};
+use tono_core::speaker::{Speaker, device_sample_rate};
 
 fn main() -> anyhow::Result<()> {
     let sr = device_sample_rate()?;

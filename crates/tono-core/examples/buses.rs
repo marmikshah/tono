@@ -1,6 +1,6 @@
 //! Live DSP effects on mixer buses.
 //!
-//!     cargo run -p tono-play --example buses
+//!     cargo run -p tono-core --features cpal --example buses
 //!
 //! Two input buses — a "music" bus with an EQ + compressor insert, and a "sfx"
 //! bus that sends into a shared reverb return — summing through a master
@@ -14,7 +14,7 @@ use tono_core::dsl::Node;
 use tono_core::instrument::{Instrument, Note};
 use tono_core::presets;
 use tono_core::runtime::Mixer;
-use tono_play::{Speaker, device_sample_rate};
+use tono_core::speaker::{Speaker, device_sample_rate};
 
 fn node(json: &str) -> Node {
     serde_json::from_str(json).expect("valid effect node")

@@ -1,5 +1,5 @@
 //! The programmatic playground: build sounds and instruments in code and hear
-//! them. Run:  cargo run -p tono-play --example playground
+//! them. Run:  cargo run -p tono-core --features cpal --example playground
 
 use std::thread::sleep;
 use std::time::Duration;
@@ -7,7 +7,7 @@ use std::time::Duration;
 use tono_core::dsl::{Adsr, SoundDoc};
 use tono_core::instrument::{Instrument, InstrumentDesign, Note};
 use tono_core::patch::Patch;
-use tono_play::{Speaker, device_sample_rate, play_doc};
+use tono_core::speaker::{Speaker, device_sample_rate, play_doc};
 
 fn bleep() -> SoundDoc {
     serde_json::from_str(

@@ -1719,7 +1719,6 @@ version = "1.11.0"
 dependencies = [
  "anyhow",
  "clap",
- "cpal",
  "flacenc",
  "hound",
  "midly",
@@ -1748,6 +1747,7 @@ name = "tono-core"
 version = "1.11.0"
 dependencies = [
  "anyhow",
+ "cpal",
  "criterion",
  "image",
  "proptest",
@@ -1760,16 +1760,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tono-play"
-version = "1.11.0"
-dependencies = [
- "anyhow",
- "cpal",
- "serde_json",
- "tono-core",
-]
-
-[[package]]
 name = "tono-py"
 version = "1.11.0"
 dependencies = [
@@ -1777,7 +1767,6 @@ dependencies = [
  "pyo3",
  "serde_json",
  "tono-core",
- "tono-play",
 ]
 
 [[package]]

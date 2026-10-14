@@ -23,8 +23,6 @@ mod generation;
 mod imaging;
 #[cfg(feature = "midi")]
 mod midi;
-#[cfg(feature = "play")]
-mod play;
 
 const AFTER_HELP: &str = "\
 The SoundDoc format and the node vocabulary are documented in the SoundDoc
@@ -728,7 +726,7 @@ fn import_cmd(args: ImportArgs) -> anyhow::Result<()> {
 fn play_cmd(args: PlayArgs) -> anyhow::Result<()> {
     let doc = load_doc(&args.file)?;
     let secs = args.secs.unwrap_or(doc.duration + 1.0);
-    crate::play::play_doc(&doc, secs)
+    tono_core::speaker::play_doc_once(&doc, secs)
 }
 
 /// `tono presets` — list the factory presets, or render one's demo riff.

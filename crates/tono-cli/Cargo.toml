@@ -27,7 +27,6 @@ schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # Optional, each behind the feature of the same purpose (see [features]).
-cpal = { workspace = true, optional = true }
 flacenc = { workspace = true, optional = true }
 midly = { workspace = true, optional = true }
 vorbis_rs = { workspace = true, optional = true }
@@ -44,7 +43,8 @@ vorbis_rs = { workspace = true, optional = true }
 [features]
 encode = ["dep:flacenc", "dep:vorbis_rs"]
 midi = ["dep:midly"]
-play = ["dep:cpal"]
+# Speaker playback for `tono play`: core's cpal speaker adapter.
+play = ["tono-core/cpal"]
 
 [dev-dependencies]
 proptest = { workspace = true }
