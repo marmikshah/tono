@@ -1,10 +1,12 @@
-//! Audio file output: WAV (PCM, with optional `smpl` loop chunk), FLAC
-//! (lossless, pure-Rust `flacenc`), and OGG Vorbis (lossy, `vorbis_rs`) — the
-//! compressed formats games actually ship for BGM / ambience.
+//! Audio file output: WAV (PCM, with optional `smpl` loop chunk) always, and
+//! with the `encode` feature FLAC (lossless, pure-Rust `flacenc`) and OGG
+//! Vorbis (lossy, `vorbis_rs`) — the compressed formats games actually ship
+//! for BGM / ambience.
 
 use std::path::Path;
 
 /// Interleave per-channel `f32` buffers (in [-1, 1]) into `i32` PCM at `bits`.
+#[cfg(feature = "encode")]
 fn interleave_i32(channels: &[&[f32]], bits: u16) -> Vec<i32> {
     let scale = ((1i64 << (bits - 1)) - 1) as f32;
     let n = channels.iter().map(|c| c.len()).min().unwrap_or(0);
@@ -19,6 +21,7 @@ fn interleave_i32(channels: &[&[f32]], bits: u16) -> Vec<i32> {
 
 /// Write channels as a FLAC file (lossless). `bits` is 8 or 16; anything else
 /// falls back to 16 (same contract as `write_wav_stereo`).
+#[cfg(feature = "encode")]
 pub fn write_flac(
     path: &Path,
     channels: &[&[f32]],
@@ -50,6 +53,7 @@ pub fn write_flac(
 
 /// Write channels as an OGG Vorbis file (lossy VBR). `quality` is the Vorbis
 /// target quality in [0, 1] (~0.5 ≈ transparent for game audio).
+#[cfg(feature = "encode")]
 pub fn write_ogg(
     path: &Path,
     channels: &[&[f32]],
@@ -215,6 +219,7 @@ mod tests {
         assert!(bytes.windows(4).any(|w| w == b"smpl"));
     }
 
+    #[cfg(feature = "encode")]
     #[test]
     fn flac_and_ogg_write_structurally_valid_files() {
         let samples = ramp(4410);
@@ -243,7 +248,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "encode"))]
 mod ogg_block_tests {
     use super::*;
 

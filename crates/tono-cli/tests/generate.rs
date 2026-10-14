@@ -128,6 +128,7 @@ fn invalid_requests_leave_no_output_directory() {
     }
 }
 
+#[cfg(feature = "encode")]
 #[test]
 fn compressed_exports_record_their_format_and_wrap_seeds() {
     let scratch = Scratch::new();
@@ -162,6 +163,23 @@ fn compressed_exports_record_their_format_and_wrap_seeds() {
             let bytes = fs::read(dir.join(filename)).unwrap();
             assert_eq!(&bytes[..4], header);
         }
+    }
+}
+
+#[cfg(not(feature = "encode"))]
+#[test]
+fn compressed_formats_name_the_missing_feature() {
+    let scratch = Scratch::new();
+    for format in ["flac", "ogg"] {
+        let output = scratch.run(&["generate", "coin", "--format", format, "-o", "out"]);
+        assert!(!output.status.success(), "{format}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("built without the encode feature")
+                && stderr.contains("--features encode"),
+            "{format}: {stderr}"
+        );
+        assert!(!scratch.0.join("out").exists(), "{format}");
     }
 }
 

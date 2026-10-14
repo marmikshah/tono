@@ -10,6 +10,7 @@ pub mod audio;
 pub mod audition;
 pub mod compile;
 pub mod imaging;
+#[cfg(feature = "midi")]
 pub mod midi;
 #[cfg(feature = "play")]
 pub mod play;
