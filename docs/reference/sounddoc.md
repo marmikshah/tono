@@ -16,7 +16,7 @@ Document-level fields:
 | `seed` | 0 | drives every `noise` source, `dust` train, and pluck burst |
 | `version` | 2 | current document schema; other revisions are rejected |
 | `engine` | 5 | current deterministic DSP kernels; other revisions are rejected |
-| `stereo` | mono | `wide` / `haas` treatment on the final render |
+| `stereo` | mono | `{ "mode": "wide" }` or `{ "mode": "haas", "ms": 12, "pan": 0.3 }` treatment on the final render; a `tracks` root builds its image from per-track `pan` instead |
 | `normalize` | unset ⇒ a transparent −0.1 dBFS sample-peak safety limit only | loudness match + true-peak limit |
 | `playback` | `oneshot` | or `loop` |
 | `root` | — | the signal graph |
@@ -69,7 +69,17 @@ Document-level fields:
 | `convolve` | `decay` = 1.5, `size` = 0, `predelay` = 0, `damp` = 0.3, `mix` = 0.35 | synthesized-IR convolution reverb — **offline only** |
 | `granular` | `grain_ms` = 80 (5..=500), `density` = 25, `pitch` = 1, `spread` = 0.3, `mix` = 0.5 | grain cloud / frozen pad — **offline only** |
 
-**Modulators** (any numeric param, in place of a constant):
+**Modulators** (any numeric param, in place of a constant). Unlike nodes they carry no `type` field: the modulator name wraps its fields, `{ "slide": { "from": 880, "to": 220, "secs": 0.3 } }`. A pitch glide on a sine:
+
+```json
+{
+  "name": "glide",
+  "duration": 0.4,
+  "root": { "type": "mul", "inputs": [
+    { "type": "sine", "freq": { "slide": { "from": 880, "to": 220, "secs": 0.3, "curve": "exp" } } },
+    { "type": "env", "a": 0.005, "d": 0.3, "s": 0.0, "r": 0.05 } ] }
+}
+```
 
 | modulator | fields | what it does |
 |-----------|--------|--------------|

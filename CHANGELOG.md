@@ -6,6 +6,37 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 
 ## Unreleased
 
+## 1.11.0 — 2026-10-14
+
+The workspace trim: the desktop app, the unpublished play crate and the
+authored content leave the published crates, the CLI moves to clap with
+optional features, and CI gains cross-platform, MSRV, public-API and semver
+checks. The 1.x line may break in minor releases; every break is listed here.
+
+### Breaking
+- `tono_core::library` and `tono_core::bgm` moved to the unpublished
+  `tono-content` crate in this repository. Depend on it by git path if you
+  used the recipes or themes; `tono-core` no longer ships authored content.
+- The `tono` CLI parses arguments with clap: `tono` with no subcommand exits
+  with status 2 and the help text, FLAC/OGG output needs the `encode` feature
+  and MIDI import/export the `midi` feature (`cargo install tono --features
+  encode,midi,play`; WAV is always available). The undocumented `diff`,
+  `match`, `fit` and `review` subcommands are gone.
+- The cpal speaker adapter moved from the unpublished `tono-play` crate into
+  `tono-core` behind the `cpal` feature (off by default); the CLI's `play`
+  feature and the Python bindings use it. The runnable examples now live in
+  `crates/tono-core/examples` and need `--features cpal`.
+- Removed unused public API: `edit::describe`/`morph` and their map types,
+  `vary::humanize`, `music::Voicing`, the `ids` module, the `units` newtypes
+  (`Bars`, `Decibels`, `Hertz`, `Samples`), and the `Serialize` derives on
+  `Recipe` and `Composition`.
+- Program format 3: `Program` no longer duplicates `schema_version`,
+  `engine_version` and `warnings`, and `ProgramMeta`/`TrackMeta` drop the
+  fields now derived from the document. Bundles compiled by 1.10 must be
+  recompiled.
+- SoundDoc/Song schema 2 and DSP engine 5 are the only supported revisions;
+  older documents are rejected with a diagnostic instead of being upgraded.
+
 ### Added
 - Beginner audio lessons covering pitch, tempo, patterns, instruments, and sound graphs, with a playable phrase to hear how each setting affects the result.
 - Original background music collection: 12 themes × three arrangements, seamless four-bar loops, editable Song scores, and browser playback/downloads.
@@ -13,28 +44,26 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 - Curated asset-free sound library: 64 authored recipes, six editable voicings each, nine categories, and seamless ambience loops through `tono_content::library`.
 - Searchable website sound library with variation selection, local previews, editable recipe downloads, and browser-generated stereo WAVs with loop metadata.
 - Lean `tono-web` WebAssembly adapter reusing the Rust DSP, bounded worker rendering and PCM caching, plus native/WASM sample-equivalence and full-catalog checks.
+- CI runs the test suite on Linux, macOS and Windows, checks the pinned MSRV, compares the `tono-core` public API against `crates/tono-core/public-api.txt`, reports semver breakage against the latest crates.io release, and runs mypy `stubtest` against the Python type stubs.
+- Crate metadata for docs.rs and crates.io (homepage, documentation, README for `tono-core`, trimmed package contents) and a versioning policy in the README.
 
 ### Changed
-- The `tono` CLI parses arguments with clap, so every subcommand has structured `--help`. FLAC/OGG encoding and MIDI import/export are now the `encode` and `midi` cargo features (off by default; WAV is always available).
-- The curated sound library and background music themes moved from `tono-core` to the unpublished `tono-content` crate; `tono_core::library` and `tono_core::bgm` are gone.
-- The cpal speaker adapter moved from the unpublished `tono-play` crate into `tono-core` behind the `cpal` feature (off by default); the CLI's `play` feature and the Python bindings use it. The runnable examples now live in `crates/tono-core/examples`.
 - Website guides use concise, runnable Rust and Python examples with a language preference shared across code blocks and pages.
 - Website uses a charcoal audio workspace with lilac accents, a direct sound-browser homepage, consistent controls, and keyboard-accessible global search.
 - Effects and music use compact waveform rows, a selected-sound inspector, category filters, variation selectors, saved bookmarks, shareable searches, editable exports, and a persistent preview player. Smaller screens show details inline; waveform cards remain an optional view.
 - Sound Studio keeps its continuous sequencer and tabbed device dock visible together on desktop, with grouped instrument browsing, compact transport, an ADSR graph, and project utilities. Smaller screens show a lightweight preset demo instead of the composer, with demo-oriented navigation and library hints.
 - Composition examples use a searchable, compact list with direct playback, source links, and downloads.
 - Website SFX previews ship recipes and a shared synthesis engine instead of pre-rendered WAV files.
-- Builds, CI, CLI release binaries, and Python wheels are Linux-only; Windows/macOS bug patches remain welcome.
-- SoundDoc/Song schema 2 and DSP engine 5 are the supported formats; Program format 3 derives document facts and streaming capabilities from their authoritative source.
+- Release CLI binaries and Python wheels are built for Linux x86_64 only; macOS and Windows are tested in CI and bug patches for them are welcome.
+- The SoundDoc reference shows the external tagging of modulators and the object form of the `stereo` field.
 
 ### Fixed
 - Program load and scheduled swaps verify the current bundle revision, integrity hash, and resolved document.
 
 ### Removed
-- The undocumented `tono diff`, `match`, `fit` and `review` subcommands.
 - The `tono-desktop` Tauri app; the web Sound Studio replaces it. Linux CI no longer needs WebKitGTK, AppIndicator, librsvg or patchelf.
 - Historical DSP/schema implementations, obsolete identity slots, duplicate state, unused tooling, and unused assets.
-- Unused public API: `edit::describe`/`morph` and their map types, `vary::humanize`, `music::Voicing`, and the `Serialize` derives on `library::Recipe` and `bgm::Composition`.
+- The `docs/project` pages (roadmap, release workflow, performance notes); release steps and benchmark instructions now live in `CONTRIBUTING.md`.
 
 ## 1.10.1 — 2026-08-11
 
@@ -47,7 +76,7 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 compile once into a hashed, validated Program, render offline or run live
 with sample-accurate scheduling — byte-identical on every platform. The
 composition API is **frozen stable as of rc.1** (schema v2, program v2,
-engine v5; see `docs/project/release-gates.md`).
+engine v5).
 
 ### Added
 - **Engine revision 5 — cross-platform byte-identity.** Deterministic
@@ -141,8 +170,7 @@ engine v5; see `docs/project/release-gates.md`).
 
 ### Removed
 - **The C ABI and WASM faces** — shipped during the betas, dropped before
-  release as overkill (native hosts embed `tono-core`); recorded in
-  `docs/project/release-gates.md`. Can return on demand.
+  release as overkill (native hosts embed `tono-core`). Can return on demand.
 
 ### Fixed
 - **A scheduled program swap no longer renders on the audio path** — swap
@@ -171,8 +199,8 @@ engine v5; see `docs/project/release-gates.md`).
 **The hardening release** — a full-codebase review: input edges that could
 render NaN, hang, panic, or silently corrupt are closed, and the real-time
 layers keep their promises at any block size. Every pre-existing document
-renders byte-for-byte. Stated policy: tono never ships a 2.0 — breaking
-changes land in ordinary minors.
+renders byte-for-byte. Stated policy: breaking changes land in ordinary
+minors.
 
 ### Removed
 - The surface deprecated at 1.6.0–1.8.0 (`stream`, `catalog::Instrument`,

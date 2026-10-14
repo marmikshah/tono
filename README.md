@@ -71,15 +71,16 @@ from source (see below); they are not on PyPI yet.
 
 ## Versioning and stability
 
-- `tono-core` and `tono` follow [semver](https://semver.org/). Breaking API
-  changes only ship in a new major version.
+- Every version below 2.0 is AI generated and breaking: any minor release
+  (1.11, 1.12, …) may change or remove public API, CLI subcommands and
+  document fields. Each such change is listed under "Breaking" in the
+  [changelog](CHANGELOG.md) with a migration note, and the `semver` CI job
+  reports it. Pin an exact version (`tono-core = "=1.11.0"`) if you need a
+  fixed API.
 - The rendered output of any document pinned to an `engine` revision is part
-  of the API: it never changes within a major version. A different render for
-  the same document, seed and sample rate is a bug.
-- MSRV bumps happen in minor releases and are noted in the
-  [changelog](CHANGELOG.md).
-- 2.0 is in progress and will be breaking; see the
-  [roadmap](docs/project/roadmap.md).
+  of the API in every release: it never changes for that revision. A
+  different render for the same document, seed and sample rate is a bug.
+- MSRV bumps happen in minor releases and are noted in the changelog.
 
 ```text
 crates/
@@ -153,7 +154,7 @@ Before release run `cargo deny check advisories licenses` and
 Bump both versions in Cargo.toml; with Python 3.11+ run
 `python scripts/release.py check-version vX.Y.Z`, then tag the reviewed commit.
 Tags publish core then CLI and GitHub binaries. Wheels are a manual workflow;
-See the [release workflow](docs/project/release-gates.md); scripts provide `--help`.
+See the release section of [CONTRIBUTING.md](CONTRIBUTING.md); scripts provide `--help`.
 
 ## Contributing
 

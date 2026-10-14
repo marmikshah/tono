@@ -27,8 +27,7 @@ export default defineConfig({
           { text: 'Architecture', link: '/architecture.html' },
           { text: 'Decision records', link: '/adr/README' },
           { text: 'Docs development', link: '/README' },
-          { text: 'Performance checks', link: '/project/performance' },
-          { text: 'Release workflow', link: '/project/release-gates' },
+          { text: 'Contributing', link: 'https://github.com/marmikshah/tono/blob/master/CONTRIBUTING.md' },
           { text: 'Changelog', link: 'https://github.com/marmikshah/tono/blob/master/CHANGELOG.md' },
         ],
       },
@@ -81,17 +80,6 @@ export default defineConfig({
             { text: 'Program compilation', link: '/adr/0003-program-compilation' },
             { text: 'Python bindings', link: '/adr/0004-python-bindings' },
             { text: 'Command delivery', link: '/adr/0005-realtime-command-delivery' },
-          ],
-        },
-      ],
-      '/project/': [
-        {
-          text: 'Contribute',
-          items: [
-            { text: 'Architecture', link: '/architecture.html' },
-            { text: 'Decision records', link: '/adr/README' },
-            { text: 'Performance checks', link: '/project/performance' },
-            { text: 'Release workflow', link: '/project/release-gates' },
           ],
         },
       ],
