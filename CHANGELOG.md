@@ -261,4 +261,6 @@ staged for removal. Byte-for-byte stable.
 - Assorted: loud `describe()`, sentence-case review summaries, the LUFS
   doc, the tono-py crate-type collision.
 
-Older releases: https://github.com/marmikshah/tono/releases
+## Older releases
+
+Versions before 1.8.0 are listed on [GitHub releases](https://github.com/marmikshah/tono/releases).
