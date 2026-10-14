@@ -1,6 +1,6 @@
 """Type stubs for tono synthesis, typed composition and live performance."""
 
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, final
 
 from fractions import Fraction
 
@@ -47,23 +47,30 @@ __all__ = [
 # fractions.Fraction, or a (num, den) int tuple.
 Beat = Union[int, float, Fraction, tuple[int, int]]
 
+# Every class below is a PyO3 class without `subclass`, so it cannot be
+# subclassed at runtime — hence `@final`. Constructors are declared as
+# `__new__` because that is where PyO3 puts a `#[new]` (the runtime
+# `__init__` is `object.__init__`); `Cls(...)` type-checks the same way.
+
 # SoundDoc synthesis and native audio
 
 def render(doc_json: str) -> npt.NDArray[np.float32]:
     """Render a `SoundDoc` (JSON string) to a mono float32 array. Deterministic."""
     ...
 
+@final
 class Patch:
     """A zero-asset SFX patch: a graph plus named parameters."""
-    def __init__(self, json: str) -> None: ...
+    def __new__(cls, json: str) -> Patch: ...
     def render(self, **params: float) -> npt.NDArray[np.float32]:
         """Render to a mono float32 array; named kwargs set parameters."""
         ...
     def defaults(self) -> dict[str, float]: ...
 
+@final
 class Engine:
     """A live audio engine that owns an output stream."""
-    def __init__(self, sample_rate: Optional[int] = None) -> None: ...
+    def __new__(cls, sample_rate: Optional[int] = None) -> Engine: ...
     @property
     def sample_rate(self) -> int: ...
     def instrument(self, name: str) -> Instrument: ...
@@ -71,6 +78,7 @@ class Engine:
     def adaptive(self) -> AdaptiveMusic: ...
     def load_patch(self, json: str) -> PatchVoice: ...
 
+@final
 class Instrument:
     """A playable instrument voice in the mix."""
     def note_on(self, note: Union[int, str], velocity: float = 1.0) -> None: ...
@@ -78,16 +86,19 @@ class Instrument:
     def set_param(self, name: str, value: float) -> bool: ...
     def all_notes_off(self) -> None: ...
 
+@final
 class DrumKit:
     """A General MIDI drum kit in the mix."""
     def note_on(self, note: Union[int, str], velocity: float = 1.0) -> None: ...
 
+@final
 class AdaptiveMusic:
     """An adaptive-music bed: intensity-driven stems plus one-shot stingers."""
     def add_layer(self, doc_json: str, fade_in_at: float = 0.0) -> None: ...
     def set_intensity(self, x: float) -> None: ...
     def stinger(self, doc_json: str) -> None: ...
 
+@final
 class PatchVoice:
     """A loaded SFX patch: trigger one-shot instances with named parameters."""
     def trigger(self, **params: float) -> None: ...
@@ -102,6 +113,7 @@ class CompileError(TonoError):
     """A song failed to compile; `.diagnostics` carries every problem found."""
     diagnostics: list[dict[str, Any]]
 
+@final
 class Voice:
     """A catalog instrument voice — what a `Song` track plays."""
     @property
@@ -124,11 +136,12 @@ class Voice:
         """Override the song's humanize for this track (0..1); returns self."""
         ...
 
+@final
 class Pattern:
     """A reusable musical phrase, `bars` long, on a 4 steps/beat grid (16
     steps per bar). The transform methods are pure: each returns a NEW
     pattern."""
-    def __init__(self, bars: int = 1) -> None: ...
+    def __new__(cls, bars: int = 1) -> Pattern: ...
     @classmethod
     def euclidean(cls, pulses: int, steps: int, pitch: str, len: int = 1, bars: int = 1) -> Pattern:
         """`pulses` hits Bresenham-evenly across `steps` grid positions
@@ -145,8 +158,9 @@ class Pattern:
     def note(self, pitch: str, at: float = 0.0, duration: float = 1.0, gain: float = 1.0) -> None:
         """Place a note (`"C4"`, `"F#3"`, `"midi:36"`, or Hz) at beat `at`."""
         ...
-    def notes(self, pitches: list[str], durations: Union[float, list[float]] = 1.0) -> None:
-        """Place `pitches` sequentially; one shared duration or one per pitch."""
+    def notes(self, pitches: list[str], durations: Optional[Union[float, list[float]]] = None) -> None:
+        """Place `pitches` sequentially; one shared duration or one per pitch
+        (None = 1 beat each)."""
         ...
     def hit(self, drum: str, beats: list[float]) -> None:
         """Hit a drum (kick/snare/hat/openhat/clap/crash/ride/tom) at each beat."""
@@ -195,6 +209,7 @@ class Pattern:
         """Deterministic per-note jitter baked into the pattern (structural)."""
         ...
 
+@final
 class Track:
     """A handle on one of a song's tracks, returned by `Song.track`. The
     routing methods mutate the parent song."""
@@ -213,9 +228,10 @@ class Track:
         """Remove all sends, or only the send to `bus`."""
         ...
 
+@final
 class Song:
     """A full song: tracks, patterns, and an arrangement."""
-    def __init__(self, name: str, tempo: float = 120.0, seed: Optional[int] = None) -> None:
+    def __new__(cls, name: str, tempo: float = 120.0, seed: Optional[int] = None) -> Song:
         """`seed` pins the deterministic RNG stream (None = document default 0)."""
         ...
     @property
@@ -227,9 +243,10 @@ class Song:
     def track(self, name: str, voice: Voice) -> Track:
         """Add a track playing `voice` under `name`; returns its handle."""
         ...
-    def arrange(self, track: Union[Track, str], pattern: Pattern, bars: Union[int, range, list[int]] = 0) -> None:
-        """Place `pattern` on `track` at one bar (int) or each bar (range/list).
-        With a meter map or pickup set, an off-grid bar raises ValueError."""
+    def arrange(self, track: Union[Track, str], pattern: Pattern, bars: Optional[Union[int, range, list[int]]] = None) -> None:
+        """Place `pattern` on `track` at one bar (int) or each bar (range/list);
+        None = bar 0. With a meter map or pickup set, an off-grid bar raises
+        ValueError."""
         ...
     def set_tempo_map(self, points: list[tuple[Beat, float]]) -> None:
         """Tempo changes `[(beat, bpm), ...]`. Eagerly validated (first point
@@ -265,12 +282,13 @@ class Song:
         ...
     def to_json(self) -> str: ...
     @classmethod
-    def from_json(cls, s: str) -> Song: ...
+    def from_json(cls, json: str) -> Song: ...
 
+@final
 class Pitch:
     """An absolute pitch (`"C4"`, `"F#3"`, `"Gb5"`, or `"midi:N"`); equality
     is by MIDI number, so enharmonics compare equal."""
-    def __init__(self, name: str) -> None: ...
+    def __new__(cls, name: str) -> Pitch: ...
     @property
     def midi(self) -> int: ...
     @property
@@ -281,9 +299,10 @@ class Pitch:
         """The pitch `semitones` away; outside the MIDI range → ValueError."""
         ...
 
+@final
 class Key:
     """A key (`"C major"`, `"A minor"`, `"F# dorian"`): a scale on a tonic."""
-    def __init__(self, name: str) -> None: ...
+    def __new__(cls, name: str) -> Key: ...
     @property
     def name(self) -> str: ...
     def degree(self, n: int, octave: int = 4) -> Pitch:
@@ -293,9 +312,10 @@ class Key:
         """Does `pitch` belong to the key?"""
         ...
 
+@final
 class Chord:
     """A chord (`"C"`, `"Cm"`, `"Cmaj7"`, `"Cm7"`, `"C7"`, `"Cdim"`, `"Caug"`)."""
-    def __init__(self, name: str) -> None: ...
+    def __new__(cls, name: str) -> Chord: ...
     @property
     def name(self) -> str: ...
     def notes(self) -> list[str]:
@@ -311,6 +331,7 @@ class Chord:
         """The ascending arpeggio from the root (the same pitches as `pitches`)."""
         ...
 
+@final
 class Program:
     """A compiled song: validated, resolved, hashed — the immutable artifact."""
     @property
@@ -358,7 +379,7 @@ class Program:
         ...
     def to_json(self) -> str: ...
     @staticmethod
-    def from_json(s: str) -> Program: ...
+    def from_json(json: str) -> Program: ...
     def save(self, path: str) -> None: ...
     @staticmethod
     def load(path: str) -> Program: ...
@@ -380,6 +401,7 @@ class UnknownPositionError(PerformanceError):
     have."""
     ...
 
+@final
 class At:
     """Where a `Performance` command lands on the timeline. Never constructed
     directly — build with the module helpers and pass as `at=`."""
@@ -394,7 +416,7 @@ def next_beat() -> At:
 def at_frame(n: int) -> At:
     """At an absolute frame."""
     ...
-def at_beat(x: float) -> At:
+def at_beat(beat: float) -> At:
     """At an absolute beat (through the tempo map)."""
     ...
 def at_bar(n: int) -> At:
@@ -409,6 +431,7 @@ def at_marker(name: str) -> At:
     schedule time)."""
     ...
 
+@final
 class Performance:
     """A running `Program`: play, seek, loop, ride gain, fire stingers, and
     swap programs — each scheduled at a frame, beat, bar, marker, or section,
@@ -418,7 +441,7 @@ class Performance:
     `headless=True` opens nothing and is driven manually with `fill` —
     everything else works identically, so tests and CI need no audio device.
     All control methods return the scheduled command's sequence id."""
-    def __init__(self, program: Program, sample_rate: Optional[int] = None, headless: bool = False) -> None:
+    def __new__(cls, program: Program, sample_rate: Optional[int] = None, headless: bool = False) -> Performance:
         """`sample_rate` may only restate the program's compiled rate (any
         other value → ValueError — recompile the program instead)."""
         ...
