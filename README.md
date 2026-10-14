@@ -42,7 +42,7 @@ from source (see below); they are not on PyPI yet.
 ## Status
 
 - **Formats:** SoundDoc/Song 2, DSP engine 5, Program 3. Older engine
-  revisions keep rendering unchanged. The desktop app resets corrupt projects.
+  revisions keep rendering unchanged.
 - **Rust:** MSRV is 1.88 (pinned in `rust-toolchain.toml`). Versions follow
   semver; a changed render output for an existing `engine` revision is a bug.
 - **Platforms:** CI, release binaries and wheels run on Linux x86_64. macOS and
@@ -62,7 +62,6 @@ crates/
 ├── tono-web/      Lean WebAssembly adapter using the same core DSP
 ├── tono-cli/      Audio/MIDI files, feedback images and the tono command
 ├── tono-play/     Shared cpal speaker adapter and runnable Rust examples
-├── tono-desktop/  Tauri pattern station; Rust state and a static webview
 └── tono-py/       PyO3 bindings, type stubs, Python tests and examples
 docs/             VitePress guides and playable demos
 scripts/          Portable release packaging and installed-wheel checks
@@ -79,11 +78,10 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
-Auditioning needs an output device. Install ALSA, WebKitGTK 4.1,
-GTK3/AppIndicator, librsvg and patchelf development packages.
+Auditioning needs an output device. On Linux, install the ALSA development
+package (`libasound2-dev`).
 
 ```sh
-cargo run --locked -p tono-desktop --release
 cargo run --locked -p tono-play --example live_band
 cargo test --locked --workspace --all-features
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings

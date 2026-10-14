@@ -3,7 +3,6 @@
 
 import argparse
 import hashlib
-import json
 from pathlib import Path
 import shutil
 import tomllib
@@ -21,9 +20,6 @@ def check_version(tag):
         package = tomllib.loads((ROOT / member / "Cargo.toml").read_text())["package"]
         if package["version"] != {"workspace": True}:
             raise ValueError(f"{member} must inherit the workspace version")
-    desktop = json.loads((ROOT / "crates/tono-desktop/tauri.conf.json").read_text())
-    if desktop.get("version", version) != version:
-        raise ValueError("desktop version must match the workspace version")
     if tag is not None and tag != f"v{version}":
         raise ValueError(f"tag {tag} does not match workspace version {version}")
     print(f"Release metadata matches {version}")
@@ -51,7 +47,7 @@ def package_cli(target_dir, out):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    version = commands.add_parser("check-version", help="validate Cargo/desktop versions and an optional tag")
+    version = commands.add_parser("check-version", help="validate Cargo versions and an optional tag")
     version.add_argument("tag", nargs="?", help="release tag, such as v1.11.0")
     package = commands.add_parser("package-cli", help="package the Linux x86_64 CLI binary with its SHA-256 sidecar")
     package.add_argument("--target-dir", type=Path, default=ROOT / "target")
