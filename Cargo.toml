@@ -19,6 +19,8 @@ edition = "2024"
 rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/marmikshah/tono"
+homepage = "https://marmikshah.github.io/tono/"
+# `documentation` is set per crate: docs.rs URLs differ for tono-core and tono.
 
 [workspace.dependencies]
 # The version must match workspace.package.version above: cargo strips `path` at
