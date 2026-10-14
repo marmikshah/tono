@@ -2,8 +2,10 @@
 
 use std::collections::HashSet;
 
+use tono_content::bgm::{
+    BGM_VERSION, BgmSpec, BgmVariant, COMPOSITIONS, VARIANTS, composition, generate, score,
+};
 use tono_core::{
-    bgm::{BGM_VERSION, BgmSpec, BgmVariant, COMPOSITIONS, VARIANTS, composition, generate, score},
     dsl::{Node, Playback, SoundDoc},
     render,
     song::Song,

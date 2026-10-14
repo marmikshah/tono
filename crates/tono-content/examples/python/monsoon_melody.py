@@ -15,7 +15,7 @@ glockenspiel shadowing the lift an octave up, and a ritardando outro.
 
 Run with an installed tono wheel (or `maturin develop` in crates/tono-py):
 
-    python3 examples/monsoon_melody.py
+    python3 crates/tono-content/examples/python/monsoon_melody.py
 
 It compiles the song, renders the mix, and writes `monsoon_melody.wav`
 (16-bit stereo) into the current directory — that's the track to listen to.

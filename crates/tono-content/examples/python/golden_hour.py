@@ -6,7 +6,7 @@ humanize, reverb bus, gain rides) that make it feel finished.
 
 Run with an installed tono wheel (or `maturin develop` in crates/tono-py):
 
-    python3 examples/golden_hour.py
+    python3 crates/tono-content/examples/python/golden_hour.py
 
 It compiles the song, renders the mix, and writes `golden_hour.wav` (16-bit
 stereo) into the current directory — that's the track to listen to.

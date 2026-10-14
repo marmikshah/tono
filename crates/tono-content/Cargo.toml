@@ -1,0 +1,21 @@
+[package]
+name = "tono-content"
+description = "Authored sound library and background music themes built on tono-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+tono-core = { workspace = true }
+anyhow = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+# The browser resource-budget gate over the authored themes builds the WASM
+# adapter natively as an rlib.
+tono-web = { path = "../tono-web" }
+serde_json = { workspace = true }

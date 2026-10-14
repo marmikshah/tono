@@ -78,6 +78,35 @@ pub fn render_json(input: &[u8]) -> Result<RenderedAudio, String> {
     })
 }
 
+/// Estimated renderer work for a document that fits the browser graph limits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GraphBudget {
+    /// Frame work over the whole window, including the final stereo output.
+    pub work: u64,
+    /// Accumulated work of the sequenced note renders.
+    pub note_work: u64,
+}
+
+/// Check a validated document against the browser graph, memory, and work
+/// limits that [`render_json`] enforces, without rendering it. Content crates
+/// use this to gate their authored catalogs.
+pub fn check_graph_budget(doc: &SoundDoc) -> Result<GraphBudget, String> {
+    let frames = (doc.duration * doc.sample_rate as f32).ceil() as u64;
+    let mut nodes = 0;
+    let mut work = frames.saturating_mul(2); // final stereo output
+    let mut note_work = 0;
+    check_graph_with_notes(
+        &doc.root,
+        1,
+        frames,
+        doc.sample_rate,
+        &mut nodes,
+        &mut work,
+        &mut note_work,
+    )?;
+    Ok(GraphBudget { work, note_work })
+}
+
 // The core's private estimator applies to compiled songs, counting final
 // output memory. Browser requests also need limits on nested intermediates,
 // unison voices, sequenced notes and FFT work before any DSP allocation.
@@ -613,39 +642,5 @@ mod tests {
         // First beat takes .5 s; second takes 1 s. Shared tempo-map timing
         // counts the 1.5-second note rather than assuming fixed 120 BPM.
         assert!(sequence_work(&mapped, 16_000, 8_000) >= 12_000 * 7);
-    }
-
-    #[test]
-    fn every_authored_bgm_fits_the_browser_resource_limits() {
-        let mut failures = Vec::new();
-        let mut max_graph_work = 0;
-        let mut max_note_work = 0;
-        for composition in tono_core::bgm::COMPOSITIONS {
-            for variant in tono_core::bgm::VARIANTS {
-                let spec = tono_core::bgm::BgmSpec::new(composition.id, variant, 42);
-                let doc = tono_core::bgm::generate(&spec).unwrap();
-                assert!(doc.duration <= MAX_DURATION_SECONDS);
-                assert!(doc.sample_rate <= MAX_SAMPLE_RATE);
-                assert!(serde_json::to_vec(&doc).unwrap().len() <= MAX_INPUT_BYTES);
-                let frames = (doc.duration * doc.sample_rate as f32).ceil() as u64;
-                let mut work = frames * 2;
-                let mut note_work = 0;
-                if let Err(error) = check_graph_with_notes(
-                    &doc.root,
-                    1,
-                    frames,
-                    doc.sample_rate,
-                    &mut 0,
-                    &mut work,
-                    &mut note_work,
-                ) {
-                    failures.push(format!("{} / {}: {error}", composition.id, variant.id()));
-                }
-                max_graph_work = max_graph_work.max(work);
-                max_note_work = max_note_work.max(note_work);
-            }
-        }
-        assert!(failures.is_empty(), "{}", failures.join("\n"));
-        eprintln!("BGM max graph work: {max_graph_work}; max note work: {max_note_work}");
     }
 }

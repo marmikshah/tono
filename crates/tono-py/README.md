@@ -18,7 +18,8 @@ Linux builds need ALSA development headers. The manual Wheels workflow
 produces install-tested Linux x86_64 artifacts.
 
 See the [Python guide](https://marmikshah.github.io/tono/guides/python),
-[live runtime guide](https://marmikshah.github.io/tono/guides/live), and
-[runnable examples](https://github.com/marmikshah/tono/tree/master/crates/tono-py/examples).
+[live runtime guide](https://marmikshah.github.io/tono/guides/live),
+[runnable API tours](https://github.com/marmikshah/tono/tree/master/crates/tono-py/examples), and
+[complete reference scores](https://github.com/marmikshah/tono/tree/master/crates/tono-content/examples/python).
 The root [README](https://github.com/marmikshah/tono) covers contributor gates
 and releases. tono is [MIT licensed](https://github.com/marmikshah/tono/blob/master/LICENSE).

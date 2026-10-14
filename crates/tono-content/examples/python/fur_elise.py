@@ -10,7 +10,7 @@ per-note dynamics (the edition is marked pp — the left hand whispers).
 
 Run with an installed tono wheel (or `maturin develop` in crates/tono-py):
 
-    python3 examples/fur_elise.py
+    python3 crates/tono-content/examples/python/fur_elise.py
 
 It compiles the song, renders the mix, and writes `fur_elise.wav` (16-bit
 stereo) into the current directory — that's the track to listen to.
