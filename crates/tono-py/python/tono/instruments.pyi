@@ -6,6 +6,20 @@ Variant names mirror the `tono catalog` CLI slugs; an unknown variant raises
 
 from tono import Voice
 
+__all__ = [
+    "piano",
+    "electric_piano",
+    "organ",
+    "strings",
+    "bass",
+    "guitar",
+    "drums",
+    "brass",
+    "flute",
+    "mallets",
+    "bells",
+]
+
 def piano(variant: str = "grand") -> Voice:
     """Variants: grand (default), bright, mellow, felt, upright, honky-tonk."""
     ...
