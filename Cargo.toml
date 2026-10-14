@@ -27,6 +27,9 @@ repository = "https://github.com/marmikshah/tono"
 tono-core = { path = "crates/tono-core", version = "1.11.0" }
 anyhow = "1.0.102"
 base64 = "0.22.1"
+# No `color` feature: the CLI help stays plain text and skips the anstream
+# stack; derive + suggestions are the only extras over clap's core.
+clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions"] }
 cpal = "0.15.3"
 criterion = "0.5"
 flacenc = { version = "0.4", default-features = false }
