@@ -32,6 +32,64 @@ jobs:
     uses: ./.github/workflows/ci-rust.yml
     with:
       toolchain: stable
+  platforms:
+    # Byte-identical rendering on every platform is the headline claim; the
+    # Linux gate cannot prove it alone. Core and CLI need no native packages,
+    # so this runs their tests with the pinned toolchain on the other two
+    # desktop platforms and replays the golden corpus by name.
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - name: Read the pinned toolchain
+        id: pin
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.pin.outputs.channel }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Test the core and CLI crates
+        run: cargo test --locked -p tono-core -p tono
+      - name: Replay the golden corpus and cross-language hashes
+        run: cargo test --locked -p tono-core --test golden --test equivalence
+  msrv:
+    # rust-toolchain.toml pins the same version today, so this is nearly a
+    # no-op; it exists to catch a bump of one without the other.
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v5
+      - name: Read rust-version from the manifest
+        id: msrv
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["rust-version"])')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and test with the minimum supported Rust
+        env:
+          # Override rust-toolchain.toml so the MSRV is what actually compiles.
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
+        run: |
+          cargo --version
+          cargo build --locked -p tono-core -p tono
+          cargo test --locked -p tono-core -p tono
   dependencies:
     if: github.event_name != 'workflow_dispatch' || !inputs.bench
     runs-on: ubuntu-latest
@@ -43,7 +101,7 @@ jobs:
   status:
     # Preserve the existing protected check while sharing the actual gate.
     name: ci
-    needs: [ci, stable, dependencies]
+    needs: [ci, stable, platforms, msrv, dependencies]
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
     runs-on: ubuntu-latest
     steps:
