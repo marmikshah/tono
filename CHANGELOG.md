@@ -15,6 +15,7 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 - Lean `tono-web` WebAssembly adapter reusing the Rust DSP, bounded worker rendering and PCM caching, plus native/WASM sample-equivalence and full-catalog checks.
 
 ### Changed
+- The `tono` CLI parses arguments with clap, so every subcommand has structured `--help`. FLAC/OGG encoding and MIDI import/export are now the `encode` and `midi` cargo features (off by default; WAV is always available).
 - The curated sound library and background music themes moved from `tono-core` to the unpublished `tono-content` crate; `tono_core::library` and `tono_core::bgm` are gone.
 - Website guides use concise, runnable Rust and Python examples with a language preference shared across code blocks and pages.
 - Website uses a charcoal audio workspace with lilac accents, a direct sound-browser homepage, consistent controls, and keyboard-accessible global search.
@@ -29,6 +30,7 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 - Program load and scheduled swaps verify the current bundle revision, integrity hash, and resolved document.
 
 ### Removed
+- The undocumented `tono diff`, `match`, `fit` and `review` subcommands.
 - The `tono-desktop` Tauri app; the web Sound Studio replaces it. Linux CI no longer needs WebKitGTK, AppIndicator, librsvg or patchelf.
 - Historical DSP/schema implementations, obsolete identity slots, duplicate state, unused tooling, and unused assets.
 - Unused public API: `edit::describe`/`morph` and their map types, `vary::humanize`, `music::Voicing`, and the `Serialize` derives on `library::Recipe` and `bgm::Composition`.
