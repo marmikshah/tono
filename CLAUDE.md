@@ -29,18 +29,20 @@ Design records live in `docs/adr/`. Amend an ADR when a policy changes.
 ## Layout
 
 ```
-crates/tono-core   headless engine (published as tono-core)
-crates/tono-cli    the `tono` binary (published as tono); encoders, MIDI
-crates/tono-play   cpal speaker adapter + runnable examples (unpublished)
-crates/tono-py     PyO3 bindings, stubs in python/tono/*.pyi
-crates/tono-web    WASM C-ABI adapter used by the docs site
-crates/tono-desktop Tauri app (unpublished, outside default members)
-docs/              VitePress site; docs/adr/ and docs/project/ are process docs
+crates/tono-core    headless engine (published as tono-core); `cpal` feature
+                    adds the speaker adapter and the runnable examples
+crates/tono-cli     the `tono` binary (published as tono); clap CLI, features
+                    `encode` (FLAC/OGG), `midi`, `play`
+crates/tono-content curated sound library + BGM themes (unpublished); feeds
+                    the docs site through its site_samples example
+crates/tono-py      PyO3 bindings, stubs in python/tono/*.pyi (stubtest-checked)
+crates/tono-web     WASM C-ABI adapter used by the docs site
+docs/               VitePress site; docs/adr/ and docs/project/ are process docs
 scripts/           release.py (version check/packaging), wheel_test.py, site tests
 ```
 
 Default workspace members are `tono-core` and `tono-cli`; they need no native
-packages. The others need ALSA/WebKitGTK on Linux.
+packages. The `cpal` feature and `tono-py` need ALSA (`libasound2-dev`) on Linux.
 
 ## Commands
 
@@ -66,7 +68,9 @@ Lean core must still build: `cargo check -p tono-core --no-default-features`.
 
 Python: `maturin develop -m crates/tono-py/Cargo.toml`, then
 `python crates/tono-py/tests/smoke.py` and `test_typed.py`. Update the `.pyi`
-stubs by hand whenever a bound signature changes; nothing checks them for you.
+stubs by hand whenever a bound signature changes; `wheel_test.py` runs mypy
+`stubtest` against them, with reasons for exceptions in
+`crates/tono-py/stubtest-allowlist.txt`.
 
 Docs site: `npm ci && npm run docs:check && npm run docs:test`. Code examples
 in `docs/**/*.md` must run against the checkout.
@@ -100,7 +104,9 @@ in `docs/**/*.md` must run against the checkout.
   `tests/fuzz_validation.rs`, `docs/reference/sounddoc.md`, and the
   `PROCESSOR_TYPES` list in `crates/tono-py/src/song.rs`.
 - Public API of `tono-core`: `bevy_tono` and the CLI depend on it. Removing or
-  renaming a `pub` item is a semver-major change; say so in the PR.
+  renaming a `pub` item is a semver-major change; say so in the PR, and
+  regenerate `crates/tono-core/public-api.txt` (commands in CONTRIBUTING.md)
+  or the `api` CI job fails.
 - Version bumps: change `workspace.package.version` and the
   `workspace.dependencies.tono-core` version together, then run
   `python scripts/release.py check-version vX.Y.Z`.
