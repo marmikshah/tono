@@ -90,6 +90,37 @@ jobs:
           cargo --version
           cargo build --locked -p tono-core -p tono
           cargo test --locked -p tono-core -p tono
+  api:
+    # The public API of tono-core is snapshotted in crates/tono-core/public-api.txt.
+    # A PR that changes the API must regenerate the file (see CONTRIBUTING.md),
+    # so the change is explicit in review rather than blocked.
+    if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: always
+      # rustdoc JSON is nightly-only. The nightly date and the cargo-public-api
+      # version are a tested pair (see its README compatibility matrix); bump
+      # them together and regenerate the snapshot in the same commit.
+      RUSTUP_TOOLCHAIN: nightly-2026-06-26
+      CARGO_PUBLIC_API: 0.52.0
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/cache-cargo-install-action@v2
+        with:
+          tool: cargo-public-api@${{ env.CARGO_PUBLIC_API }}
+      - name: Regenerate the public API snapshot
+        run: cargo public-api -p tono-core --all-features -ss --color never > crates/tono-core/public-api.txt
+      - name: Require the snapshot to match the committed one
+        run: |
+          if ! git diff --exit-code -- crates/tono-core/public-api.txt; then
+            echo "::error file=crates/tono-core/public-api.txt::The public API of tono-core changed. Review the diff above, regenerate the snapshot as described in CONTRIBUTING.md, and commit it with a CHANGELOG entry."
+            exit 1
+          fi
   dependencies:
     if: github.event_name != 'workflow_dispatch' || !inputs.bench
     runs-on: ubuntu-latest
@@ -101,7 +132,7 @@ jobs:
   status:
     # Preserve the existing protected check while sharing the actual gate.
     name: ci
-    needs: [ci, stable, platforms, msrv, dependencies]
+    needs: [ci, stable, platforms, msrv, api, dependencies]
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && !(github.event_name == 'workflow_dispatch' && inputs.bench)
     runs-on: ubuntu-latest
     steps:
