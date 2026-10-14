@@ -2,7 +2,6 @@
 /dist
 .DS_Store
 *.swp
-/crates/tono-desktop/gen/
 
 # Python byproducts: `maturin develop` drops the extension next to the sources
 # (and a stale one there would leak into the wheel), tests write __pycache__.

@@ -15,10 +15,9 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
-The full gate, including the desktop app, speaker adapter and Python
-extension, is in the [README](README.md) and runs in CI on every pull request.
-Linux needs ALSA, WebKitGTK 4.1, GTK3/AppIndicator, librsvg and patchelf
-development packages.
+The full gate, including the speaker adapter and Python extension, is in the
+[README](README.md) and runs in CI on every pull request. Linux needs the ALSA
+development package (`libasound2-dev`).
 
 ## Ground rules
 

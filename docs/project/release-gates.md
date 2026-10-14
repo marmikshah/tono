@@ -41,6 +41,5 @@ Python wheels use a separate manual workflow with the same
 version check, manylinux build, isolated install tests, and checksums; it does
 not publish to PyPI. Retained packaging scripts document arguments in `--help`.
 
-Physical audio, an interactive desktop window, and real SoundFont playback need
-a suitable host and device. Software soak and headless tests do not replace
+Physical audio and real SoundFont playback need a suitable host and device. Software soak and headless tests do not replace
 those checks; record any unavailable verification in the release review.

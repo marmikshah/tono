@@ -25,10 +25,10 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 - SoundDoc/Song schema 2 and DSP engine 5 are the supported formats; Program format 3 derives document facts and streaming capabilities from their authoritative source.
 
 ### Fixed
-- Desktop project loading replaces unsupported or corrupt saved data with a fresh current project and reports read/write failures without crashing.
 - Program load and scheduled swaps verify the current bundle revision, integrity hash, and resolved document.
 
 ### Removed
+- The `tono-desktop` Tauri app; the web Sound Studio replaces it. Linux CI no longer needs WebKitGTK, AppIndicator, librsvg or patchelf.
 - Historical DSP/schema implementations, obsolete identity slots, duplicate state, unused tooling, and unused assets.
 - Unused public API: `edit::describe`/`morph` and their map types, `vary::humanize`, `music::Voicing`, and the `Serialize` derives on `library::Recipe` and `bgm::Composition`.
 

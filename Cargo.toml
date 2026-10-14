@@ -5,13 +5,12 @@ resolver = "3"
 members = [
     "crates/tono-cli",
     "crates/tono-core",
-    "crates/tono-desktop",
     "crates/tono-play",
     "crates/tono-py",
     "crates/tono-web",
 ]
-# Core and CLI need no native GUI/audio packages. CI also checks the desktop,
-# speaker adapter and Python extension with their platform dependencies.
+# Core and CLI need no native audio packages. CI also checks the speaker
+# adapter and Python extension with their platform dependencies.
 default-members = ["crates/tono-cli", "crates/tono-core"]
 
 [workspace.package]

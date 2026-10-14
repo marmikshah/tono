@@ -22,8 +22,7 @@ does not acquire the pump/control mutex or GIL.
 
 The shared CPAL `Speaker` wrapper uses a nonblocking source mutex and writes
 silence on contention. It grows channel-adaptation scratch on first use or a
-larger block. Desktop playback uses this wrapper with a pre-rendered deck,
-rather than the Python pump/ring path.
+larger block.
 
 Prepare stinger renders and verify replacement Programs while scheduling.
 Swaps crossfade sources, gain changes ramp, and a rejected replacement leaves

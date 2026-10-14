@@ -216,7 +216,7 @@
   <h1>From one node to a game soundtrack</h1>
   <p class="lede">tono builds sound from <strong>nodes</strong> that generate and process signals.
   Songs lower to those graphs; instruments and live hosts reuse the same DSP and playback
-  interfaces. Follow those shared layers to understand the CLI, desktop pattern station, and
+  interfaces. Follow those shared layers to understand the CLI, the web Sound Studio, and
   Python bindings. A <strong>Song</strong> composes, a <strong>SoundDoc</strong> renders, a
   <strong>Program</strong> ships, and an <strong>Engine</strong> runs sounds.</p>
 
@@ -286,9 +286,9 @@
       <div class="rung-title">A SoundDoc — <span class="unit">the unit the whole project trades in</span></div>
       <p>A root node plus metadata: name, <code>duration</code>, <code>sample_rate</code>,
       <code>seed</code>, and schema/engine pins. The CLI renders SoundDocs, Python accepts
-      them, and songs compile through them into Programs. The desktop edits a saved Song
-      project with grid state, then compiles it for playback. These are distinct authoring
-      and runtime formats.</p>
+      them, and songs compile through them into Programs. The web Sound Studio edits a
+      Song draft with grid state, then builds SoundDocs from it for playback. These are
+      distinct authoring and runtime formats.</p>
       <pre><code>{ "name": "blip", "duration": 0.3, "version": 2, "engine": 5, "root": { …the mul above… } }</code></pre>
       <div class="in-code"><b>in the code:</b> dsl/mod.rs::SoundDoc · validate() is pure (no filesystem) — loaders check sf2_paths() themselves</div>
     </li>
@@ -429,9 +429,9 @@ song host   ──►  <span class="a">runtime</span>: Performance (rung 9) — 
           <span class="run">cargo run -p tono-play --example drums</span>
         </div>
         <div class="box">
-          <span class="name">tono-desktop</span>
-          <span class="role">Tauri pattern station: step grid, live audio</span>
-          <span class="run">cargo build -p tono-desktop --release</span>
+          <span class="name">tono-web</span>
+          <span class="role">WebAssembly adapter: the docs site's Sound Studio and library previews</span>
+          <span class="run">npm run docs:test</span>
         </div>
         <div class="box">
           <span class="name">tono-py</span>
@@ -439,7 +439,7 @@ song host   ──►  <span class="a">runtime</span>: Performance (rung 9) — 
           <span class="run">maturin develop -m crates/tono-py/Cargo.toml</span>
         </div>
       </div>
-      <div class="flow-arrow">│ all four depend on ▼ (tono-desktop/py stream through tono-play's Speaker)</div>
+      <div class="flow-arrow">│ all four depend on ▼ (tono-py streams through tono-play's Speaker)</div>
       <div class="core">
         <div class="core-title">crates/tono-core <span>— DSP, compiler, transport, and runtime. Optional SoundFont loading; no audio-device dependency.</span></div>
         <div class="core-rows">
@@ -598,7 +598,7 @@ cargo test --locked</code></pre>
         <tr><td>write music in code</td><td><code>song/</code> (tracks / patterns / buses + the pattern algebra) + <code>music.rs</code> (harmony) + <code>catalog.rs</code> — compiles to a Program</td></tr>
         <tr><td>adaptive game music</td><td><code>adaptive/</code> — intensity stems, beat-quantized transitions, stingers, ducking</td></tr>
         <tr><td>deterministic PCM</td><td><code>det.rs</code> — current engine-5 kernels; Linux golden tests pin their output</td></tr>
-        <tr><td>speaker output in Rust</td><td><code>tono-play::Speaker</code> — the one cpal shim; desktop and py stream through it too</td></tr>
+        <tr><td>speaker output in Rust</td><td><code>tono-play::Speaker</code> — the one cpal shim; py streams through it too</td></tr>
         <tr><td>analyze / grade a render</td><td><code>analysis.rs</code> (numbers + images), <code>review.rs</code> (pass/warn/fail against an archetype)</td></tr>
         <tr><td>understand any workflow</td><td>the root README, <a href="project/release-gates.html">release workflow</a>, and <code>.github/workflows/</code></td></tr>
       </tbody>
@@ -606,7 +606,7 @@ cargo test --locked</code></pre>
   </div>
 
   <div class="footer">
-    tono · workspace: tono (CLI) · tono-core · tono-play · tono-desktop · tono-py ·
+    tono · workspace: tono (CLI) · tono-core · tono-play · tono-web · tono-py ·
     gates: <span class="mono">cargo fmt</span> + <span class="mono">cargo clippy</span> + <span class="mono">cargo test</span> ·
     reference: <a href="guides/sound-effects.html">sound effects</a>, <a href="guides/live.html">live runtime</a> · <a href="index.html">← back to the showcase</a>
   </div>
