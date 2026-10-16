@@ -1,6 +1,7 @@
 pub mod tono_core
 pub mod tono_core::adaptive
 pub enum tono_core::adaptive::Quantize
+pub tono_core::adaptive::Quantize::AtBeat(u64)
 pub tono_core::adaptive::Quantize::Bar
 pub tono_core::adaptive::Quantize::Bars(u32)
 pub tono_core::adaptive::Quantize::Beat
@@ -48,6 +49,10 @@ pub fn tono_core::adaptive::AdaptiveMusic::new(u32) -> Self
 pub fn tono_core::adaptive::AdaptiveMusic::pause(&mut self)
 pub fn tono_core::adaptive::AdaptiveMusic::reset(&mut self)
 pub fn tono_core::adaptive::AdaptiveMusic::resume(&mut self)
+impl tono_core::adaptive::AdaptiveMusic
+pub fn tono_core::adaptive::AdaptiveMusic::play_stinger(&mut self, &tono_core::adaptive::Stinger)
+pub fn tono_core::adaptive::AdaptiveMusic::play_stinger_at(&mut self, &tono_core::adaptive::Stinger, tono_core::adaptive::Quantize)
+pub fn tono_core::adaptive::AdaptiveMusic::render_stinger(&self, &tono_core::dsl::SoundDoc) -> tono_core::adaptive::Stinger
 impl tono_core::runtime::AudioSource for tono_core::adaptive::AdaptiveMusic
 pub fn tono_core::adaptive::AdaptiveMusic::fill(&mut self, &mut [f32]) -> usize
 pub fn tono_core::adaptive::AdaptiveMusic::reset(&mut self)
@@ -61,6 +66,15 @@ pub fn tono_core::adaptive::LoopBuffer::from_stereo(alloc::vec::Vec<f32>, alloc:
 impl tono_core::runtime::AudioSource for tono_core::adaptive::LoopBuffer
 pub fn tono_core::adaptive::LoopBuffer::fill(&mut self, &mut [f32]) -> usize
 pub fn tono_core::adaptive::LoopBuffer::reset(&mut self)
+pub struct tono_core::adaptive::Stinger
+impl tono_core::adaptive::Stinger
+pub fn tono_core::adaptive::Stinger::frames(&self) -> usize
+pub fn tono_core::adaptive::Stinger::from_stereo(&[f32], &[f32]) -> Self
+pub fn tono_core::adaptive::Stinger::render(&tono_core::dsl::SoundDoc, u32) -> Self
+impl core::clone::Clone for tono_core::adaptive::Stinger
+pub fn tono_core::adaptive::Stinger::clone(&self) -> tono_core::adaptive::Stinger
+impl core::fmt::Debug for tono_core::adaptive::Stinger
+pub fn tono_core::adaptive::Stinger::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub mod tono_core::analysis
 #[non_exhaustive] pub struct tono_core::analysis::Analysis
 pub tono_core::analysis::Analysis::attack_slope_db_per_ms: f32
@@ -1791,6 +1805,8 @@ pub fn tono_core::player::Player::position(&self) -> usize
 pub fn tono_core::player::Player::seek(&mut self, usize)
 pub fn tono_core::player::Player::set_doc(&mut self, tono_core::dsl::SoundDoc)
 pub fn tono_core::player::Player::stop(&mut self)
+impl core::clone::Clone for tono_core::player::Player
+pub fn tono_core::player::Player::clone(&self) -> tono_core::player::Player
 pub fn tono_core::player::render_stereo(&tono_core::dsl::SoundDoc) -> (alloc::vec::Vec<f32>, alloc::vec::Vec<f32>)
 pub mod tono_core::prelude
 #[non_exhaustive] pub enum tono_core::prelude::Node
@@ -1919,6 +1935,7 @@ pub fn tono_core::dsl::Node::serialize<__S>(&self, __S) -> core::result::Result<
 impl<'de> serde_core::de::Deserialize<'de> for tono_core::dsl::Node
 pub fn tono_core::dsl::Node::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub enum tono_core::prelude::Quantize
+pub tono_core::prelude::Quantize::AtBeat(u64)
 pub tono_core::prelude::Quantize::Bar
 pub tono_core::prelude::Quantize::Bars(u32)
 pub tono_core::prelude::Quantize::Beat
@@ -2124,6 +2141,10 @@ pub fn tono_core::adaptive::AdaptiveMusic::new(u32) -> Self
 pub fn tono_core::adaptive::AdaptiveMusic::pause(&mut self)
 pub fn tono_core::adaptive::AdaptiveMusic::reset(&mut self)
 pub fn tono_core::adaptive::AdaptiveMusic::resume(&mut self)
+impl tono_core::adaptive::AdaptiveMusic
+pub fn tono_core::adaptive::AdaptiveMusic::play_stinger(&mut self, &tono_core::adaptive::Stinger)
+pub fn tono_core::adaptive::AdaptiveMusic::play_stinger_at(&mut self, &tono_core::adaptive::Stinger, tono_core::adaptive::Quantize)
+pub fn tono_core::adaptive::AdaptiveMusic::render_stinger(&self, &tono_core::dsl::SoundDoc) -> tono_core::adaptive::Stinger
 impl tono_core::runtime::AudioSource for tono_core::adaptive::AdaptiveMusic
 pub fn tono_core::adaptive::AdaptiveMusic::fill(&mut self, &mut [f32]) -> usize
 pub fn tono_core::adaptive::AdaptiveMusic::reset(&mut self)
@@ -2333,6 +2354,7 @@ pub fn tono_core::runtime::Engine::new(u32) -> Self
 pub fn tono_core::runtime::Engine::param(&self, tono_core::runtime::PatchId, &str) -> core::option::Option<tono_core::runtime::ParamId>
 pub fn tono_core::runtime::Engine::play(&mut self, tono_core::runtime::PatchId) -> tono_core::runtime::InstanceHandle
 pub fn tono_core::runtime::Engine::play_looping(&mut self, tono_core::runtime::PatchId) -> tono_core::runtime::InstanceHandle
+pub fn tono_core::runtime::Engine::prepare(&self, tono_core::runtime::PatchId) -> core::option::Option<tono_core::runtime::PreparedVoice>
 pub fn tono_core::runtime::Engine::sample_rate(&self) -> u32
 pub fn tono_core::runtime::Engine::set_gain(&mut self, tono_core::runtime::InstanceHandle, f32, tono_core::runtime::Tween)
 pub fn tono_core::runtime::Engine::set_layer_gain(&mut self, tono_core::runtime::InstanceHandle, tono_core::runtime::LayerId, f32, tono_core::runtime::Tween)
@@ -2340,6 +2362,7 @@ pub fn tono_core::runtime::Engine::set_max_voices(&mut self, usize)
 pub fn tono_core::runtime::Engine::set_pan(&mut self, tono_core::runtime::InstanceHandle, f32, tono_core::runtime::Tween)
 pub fn tono_core::runtime::Engine::set_param(&mut self, tono_core::runtime::InstanceHandle, tono_core::runtime::ParamId, f32, tono_core::runtime::Tween)
 pub fn tono_core::runtime::Engine::spawn(&mut self, tono_core::runtime::PatchId, tono_core::runtime::Spawn) -> tono_core::runtime::InstanceHandle
+pub fn tono_core::runtime::Engine::spawn_prepared(&mut self, tono_core::runtime::PreparedVoice, tono_core::runtime::Spawn) -> tono_core::runtime::InstanceHandle
 pub fn tono_core::runtime::Engine::stop(&mut self, tono_core::runtime::InstanceHandle, tono_core::runtime::Tween)
 impl tono_core::runtime::Engine
 pub fn tono_core::runtime::Engine::split(self, usize) -> (tono_core::runtime::Controller, tono_core::runtime::Renderer)
@@ -3515,6 +3538,7 @@ pub fn tono_core::runtime::Engine::new(u32) -> Self
 pub fn tono_core::runtime::Engine::param(&self, tono_core::runtime::PatchId, &str) -> core::option::Option<tono_core::runtime::ParamId>
 pub fn tono_core::runtime::Engine::play(&mut self, tono_core::runtime::PatchId) -> tono_core::runtime::InstanceHandle
 pub fn tono_core::runtime::Engine::play_looping(&mut self, tono_core::runtime::PatchId) -> tono_core::runtime::InstanceHandle
+pub fn tono_core::runtime::Engine::prepare(&self, tono_core::runtime::PatchId) -> core::option::Option<tono_core::runtime::PreparedVoice>
 pub fn tono_core::runtime::Engine::sample_rate(&self) -> u32
 pub fn tono_core::runtime::Engine::set_gain(&mut self, tono_core::runtime::InstanceHandle, f32, tono_core::runtime::Tween)
 pub fn tono_core::runtime::Engine::set_layer_gain(&mut self, tono_core::runtime::InstanceHandle, tono_core::runtime::LayerId, f32, tono_core::runtime::Tween)
@@ -3522,6 +3546,7 @@ pub fn tono_core::runtime::Engine::set_max_voices(&mut self, usize)
 pub fn tono_core::runtime::Engine::set_pan(&mut self, tono_core::runtime::InstanceHandle, f32, tono_core::runtime::Tween)
 pub fn tono_core::runtime::Engine::set_param(&mut self, tono_core::runtime::InstanceHandle, tono_core::runtime::ParamId, f32, tono_core::runtime::Tween)
 pub fn tono_core::runtime::Engine::spawn(&mut self, tono_core::runtime::PatchId, tono_core::runtime::Spawn) -> tono_core::runtime::InstanceHandle
+pub fn tono_core::runtime::Engine::spawn_prepared(&mut self, tono_core::runtime::PreparedVoice, tono_core::runtime::Spawn) -> tono_core::runtime::InstanceHandle
 pub fn tono_core::runtime::Engine::stop(&mut self, tono_core::runtime::InstanceHandle, tono_core::runtime::Tween)
 impl tono_core::runtime::Engine
 pub fn tono_core::runtime::Engine::split(self, usize) -> (tono_core::runtime::Controller, tono_core::runtime::Renderer)
@@ -3634,6 +3659,13 @@ pub fn tono_core::runtime::performance::PerformanceMetrics::default() -> tono_co
 impl core::fmt::Debug for tono_core::runtime::performance::PerformanceMetrics
 pub fn tono_core::runtime::performance::PerformanceMetrics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for tono_core::runtime::performance::PerformanceMetrics
+pub struct tono_core::runtime::PreparedVoice
+impl tono_core::runtime::PreparedVoice
+pub fn tono_core::runtime::PreparedVoice::is_rendered(&self) -> bool
+pub fn tono_core::runtime::PreparedVoice::patch(&self) -> tono_core::runtime::PatchId
+pub fn tono_core::runtime::PreparedVoice::render(&mut self)
+impl core::clone::Clone for tono_core::runtime::PreparedVoice
+pub fn tono_core::runtime::PreparedVoice::clone(&self) -> tono_core::runtime::PreparedVoice
 pub struct tono_core::runtime::Priority(pub u8)
 impl tono_core::runtime::Priority
 pub const tono_core::runtime::Priority::CRITICAL: tono_core::runtime::Priority

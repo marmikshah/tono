@@ -13,6 +13,8 @@
 //! stateful block renderer for the causal subset of the graph; the runtime
 //! picks between them and both stay byte-identical to the offline bounce.
 
+use std::sync::Arc;
+
 use crate::dsl::SoundDoc;
 use crate::render;
 
@@ -26,12 +28,13 @@ pub fn render_stereo(doc: &SoundDoc) -> (Vec<f32>, Vec<f32>) {
     }
 }
 
-/// A real-time audition player. Owns a document and serves its rendered audio in
-/// interleaved-stereo blocks to an audio callback.
+/// A real-time audition player. Serves a document's rendered audio in
+/// interleaved-stereo blocks to an audio callback. Cloning shares the
+/// rendered buffers, so a clone plays the same audio without rendering again.
+#[derive(Clone)]
 pub struct Player {
-    doc: SoundDoc,
-    left: Vec<f32>,
-    right: Vec<f32>,
+    left: Arc<[f32]>,
+    right: Arc<[f32]>,
     /// Current play head, in frames.
     pos: usize,
     /// Loop back to the start at the end instead of stopping.
@@ -45,9 +48,8 @@ impl Player {
     pub fn new(doc: SoundDoc) -> Self {
         let (left, right) = render_stereo(&doc);
         Self {
-            doc,
-            left,
-            right,
+            left: left.into(),
+            right: right.into(),
             pos: 0,
             looping: true,
             playing: false,
@@ -60,9 +62,8 @@ impl Player {
     pub fn set_doc(&mut self, doc: SoundDoc) {
         let (left, right) = render_stereo(&doc);
         self.pos = self.pos.min(left.len());
-        self.doc = doc;
-        self.left = left;
-        self.right = right;
+        self.left = left.into();
+        self.right = right.into();
     }
 
     /// Length of the rendered audio in frames.

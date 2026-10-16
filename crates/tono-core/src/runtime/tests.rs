@@ -218,6 +218,93 @@ fn one_shot_culls_itself_at_end() {
     assert_eq!(e.active(), 0, "a finished one-shot removes itself");
 }
 
+/// Fill `e` for `blocks` blocks of 333 frames and keep every sample.
+fn drain(e: &mut Engine, blocks: usize) -> Vec<f32> {
+    let mut acc = Vec::new();
+    let mut out = vec![0.0f32; 333 * 2];
+    for _ in 0..blocks {
+        e.fill(&mut out);
+        acc.extend_from_slice(&out);
+    }
+    acc
+}
+
+#[test]
+fn a_voice_rendered_on_another_thread_matches_spawn() {
+    let mut direct = Engine::new(48_000);
+    let p = direct.load_patch(&pitch_patch());
+    direct.play(p);
+
+    let mut split = Engine::new(48_000);
+    let q = split.load_patch(&pitch_patch());
+    let mut voice = split.prepare(q).expect("loaded patch");
+    assert!(!voice.is_rendered(), "prepare does not render");
+    let voice = std::thread::spawn(move || {
+        voice.render();
+        voice
+    })
+    .join()
+    .unwrap();
+    let h = split.spawn_prepared(voice, Spawn::default());
+    assert!(split.is_active(h));
+
+    assert_eq!(
+        drain(&mut direct, 80),
+        drain(&mut split, 80),
+        "a prepared voice plays the bytes spawn would"
+    );
+}
+
+#[test]
+fn a_cloned_prepared_voice_replays_the_same_render() {
+    let mut e = Engine::new(48_000);
+    let p = e.load_patch(&pitch_patch());
+    let mut voice = e.prepare(p).expect("loaded patch");
+    voice.render();
+    e.spawn_prepared(voice.clone(), Spawn::default());
+    e.spawn_prepared(voice.clone(), Spawn::default());
+
+    let mut twice = Engine::new(48_000);
+    let q = twice.load_patch(&pitch_patch());
+    twice.play(q);
+    twice.play(q);
+    assert_eq!(drain(&mut e, 80), drain(&mut twice, 80));
+
+    // The instance keeps its patch, so live parameters still apply.
+    let h = e.spawn_prepared(voice, Spawn::default());
+    let pitch = e.param(p, "pitch").expect("pitch param");
+    e.set_param(h, pitch, 880.0, Tween::IMMEDIATE);
+    assert!(e.is_active(h));
+}
+
+#[test]
+fn a_prepared_voice_respects_its_engine_and_the_cap() {
+    let mut other = Engine::new(44_100);
+    let p = other.load(&doc(0.5));
+    let foreign = other.prepare(p).expect("loaded patch");
+    let mut e = Engine::new(48_000);
+    e.load(&doc(0.5));
+    let h = e.spawn_prepared(foreign, Spawn::default());
+    assert!(
+        !e.is_active(h),
+        "a voice rendered at another rate is refused"
+    );
+
+    e.set_max_voices(1);
+    let p = PatchId(0);
+    let high = Spawn {
+        priority: Priority::HIGH,
+        ..Spawn::default()
+    };
+    e.spawn_prepared(e.prepare(p).unwrap(), high);
+    let low = Spawn {
+        priority: Priority::LOW,
+        ..Spawn::default()
+    };
+    let denied = e.spawn_prepared(e.prepare(p).unwrap(), low);
+    assert!(!e.is_active(denied), "the cap applies to prepared voices");
+}
+
 #[test]
 fn param_resolves_and_set_param_keeps_it_playing() {
     let mut e = Engine::new(44_100);

@@ -6,6 +6,27 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 
 ## Unreleased
 
+### Breaking
+- `Quantize` has a new variant, `AtBeat(u64)`. A `match` over `Quantize`
+  without a wildcard arm needs an arm for it.
+
+### Added
+- `Engine::prepare` and `Engine::spawn_prepared` split `spawn` so the render
+  of a one-shot runs outside the lock a real-time host keeps around its
+  engine. `PreparedVoice::render` does the render on any thread; a rendered
+  voice clones without rendering again, so a host can keep one per sound.
+- `Stinger` holds a rendered stinger that plays any number of times without
+  a copy: `Stinger::render` (any thread) or `AdaptiveMusic::render_stinger`,
+  then `AdaptiveMusic::play_stinger` or `play_stinger_at`.
+- `Quantize::AtBeat(n)` schedules on an absolute beat counted from the last
+  reset, so a cue rendered on a worker still lands on the beat it was
+  written for. A beat already reached applies at once; `reset` drops pending
+  ones.
+
+### Fixed
+- A scheduled `AdaptiveMusic` stinger no longer allocates inside `fill` when
+  it fires; the queue's room is reserved when it is scheduled.
+
 ## 1.11.0 — 2026-10-14
 
 The workspace trim: the desktop app, the unpublished play crate and the

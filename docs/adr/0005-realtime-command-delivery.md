@@ -26,7 +26,12 @@ contention. It grows channel-adaptation scratch on first use or a
 larger block.
 
 Prepare stinger renders and verify replacement Programs while scheduling.
-Swaps crossfade sources, gain changes ramp, and a rejected replacement leaves
+A host that keeps an `Engine` or `AdaptiveMusic` behind a lock the callback
+only `try_lock`s renders outside that lock: `Engine::prepare` and
+`spawn_prepared` bracket a voice render that runs on any thread, and a
+`Stinger` is rendered first and handed in with `play_stinger_at`, which
+reserves the queue capacity its later firing needs. `Quantize::AtBeat` names
+an absolute beat, so the render time cannot move a cue. Swaps crossfade sources, gain changes ramp, and a rejected replacement leaves
 the current Program running. Runtime voice pools enforce their configured cap
 and priority rules rather than growing without limit.
 
