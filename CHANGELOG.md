@@ -6,6 +6,11 @@ Design decisions live in [docs/adr/](docs/adr/README.md).
 
 ## Unreleased
 
+## 1.12.0 — 2026-10-16
+
+Real-time hosts can render one-shots and stingers outside the lock their
+audio callback contends for, and schedule a cue on an absolute beat.
+
 ### Breaking
 - `Quantize` has a new variant, `AtBeat(u64)`. A `match` over `Quantize`
   without a wildcard arm needs an arm for it.

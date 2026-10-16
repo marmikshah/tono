@@ -77,7 +77,7 @@ wheel, other platforms build from the sdist with a Rust toolchain.
   (1.11, 1.12, …) may change or remove public API, CLI subcommands and
   document fields. Each such change is listed under "Breaking" in the
   [changelog](CHANGELOG.md) with a migration note, and the `semver` CI job
-  reports it. Pin an exact version (`tono-core = "=1.11.0"`) if you need a
+  reports it. Pin an exact version (`tono-core = "=1.12.0"`) if you need a
   fixed API.
 - The rendered output of any document pinned to an `engine` revision is part
   of the API in every release: it never changes for that revision. A
