@@ -28,19 +28,6 @@ impl OneShot {
         }
     }
 
-    /// Interleave planar channels into a one-shot at unity gain. Channels of
-    /// unequal length are truncated to the shorter one, so the mix never
-    /// indexes past either.
-    pub(crate) fn from_planar(left: &[f32], right: &[f32]) -> Self {
-        let n = left.len().min(right.len());
-        let mut buf = Vec::with_capacity(n * 2);
-        for i in 0..n {
-            buf.push(left[i]);
-            buf.push(right[i]);
-        }
-        OneShot::new(buf.into(), 1.0, Tween::IMMEDIATE)
-    }
-
     /// Add the next frames to `out` (interleaved stereo), advancing the head.
     pub(crate) fn mix_into(&mut self, out: &mut [f32]) {
         let frames = out.len() / 2;

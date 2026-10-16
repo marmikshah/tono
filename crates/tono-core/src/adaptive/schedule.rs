@@ -3,8 +3,7 @@
 //! lets [`AudioSource::fill`](crate::runtime::AudioSource::fill) render
 //! identically at any host block size.
 
-use super::{Action, AdaptiveMusic, SoundDoc};
-use crate::runtime::oneshot::OneShot;
+use super::{Action, AdaptiveMusic, SoundDoc, Stinger};
 
 /// When a scheduled change takes effect, relative to the musical clock. Anything
 /// but [`Immediate`](Quantize::Immediate) needs a tempo ([`set_tempo`](AdaptiveMusic::set_tempo));
@@ -22,6 +21,11 @@ pub enum Quantize {
     /// reset, so `Bars(2)` at 0.5 bars in fires at bar 2 — the grid keeps
     /// repeated schedules deterministic). `0`/`1` = the next bar.
     Bars(u32),
+    /// Apply on beat `n`, counted from the last reset like the `Bars` grid
+    /// (beat 0 is the first frame). Lets a caller compute the beat first and
+    /// do slow work, such as rendering a stinger, before scheduling it. A beat
+    /// the clock has already reached applies at once.
+    AtBeat(u64),
 }
 
 impl AdaptiveMusic {
@@ -71,8 +75,9 @@ impl AdaptiveMusic {
     }
 
     /// The frame at which quantization `q` next lands — the next boundary
-    /// strictly ahead (on a boundary, "next bar" means the following one).
-    /// Returns the current frame only for `Immediate` or when no tempo is set.
+    /// strictly ahead (on a boundary, "next bar" means the following one), or
+    /// the named beat for `AtBeat`, which may already be behind. Returns the
+    /// current frame for `Immediate` or when no tempo is set.
     fn fire_frame(&self, q: Quantize) -> u64 {
         let now = self.clock.position_frames();
         if self.bpm <= 0.0 {
@@ -83,6 +88,7 @@ impl AdaptiveMusic {
             Quantize::Beat => self.clock.next_beat(),
             Quantize::Bar => self.clock.next_bar(1),
             Quantize::Bars(n) => self.clock.next_bar(n),
+            Quantize::AtBeat(n) => self.clock.frame_at_beat(n as f64),
         }
     }
 
@@ -114,16 +120,19 @@ impl AdaptiveMusic {
 
     /// Fire a stinger on a beat/bar boundary. The stinger is **rendered now** (off
     /// the audio thread); only its playback is deferred to the boundary.
+    /// A boundary relative to the clock ([`Quantize::Beat`] and the rest) is
+    /// resolved after the render, so a long render can land a beat late; render
+    /// with [`render_stinger`](Self::render_stinger) and schedule with
+    /// [`play_stinger_at`](Self::play_stinger_at) and [`Quantize::AtBeat`] instead.
     pub fn stinger_at(&mut self, doc: &SoundDoc, q: Quantize) {
-        let (left, right) =
-            crate::render::render_product(&doc.at_sample_rate(self.sample_rate)).into_stereo();
-        self.stinger_stereo_at(left, right, q);
+        let stinger = self.render_stinger(doc);
+        self.play_stinger_at(&stinger, q);
     }
 
     /// Schedule a stinger from pre-rendered stereo — render off the audio thread
     /// and hand the buffers in, so a real-time caller never renders under a lock.
     pub fn stinger_stereo_at(&mut self, left: Vec<f32>, right: Vec<f32>, q: Quantize) {
-        self.apply_or_schedule(q, Action::Stinger(OneShot::from_planar(&left, &right)));
+        self.play_stinger_at(&Stinger::from_stereo(&left, &right), q);
     }
 
     /// Fire every scheduled action due at the current position, in

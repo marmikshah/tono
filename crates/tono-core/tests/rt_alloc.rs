@@ -17,8 +17,8 @@
 //! harness cannot contaminate the measured audio path.
 //!
 //! Not covered (documented control-side operations, off the audio path):
-//! scheduling commands, `Performance::stinger`/`swap_to` (they render at
-//! schedule time), `Pump::pump` (the control thread's own buffer), and a
+//! scheduling commands, `Performance::stinger`/`swap_to` and the
+//! `AdaptiveMusic` stinger calls (they render or reserve at schedule time), `Pump::pump` (the control thread's own buffer), and a
 //! stream seek / loop wrap (the `SongSource::Stream` rebuild is an O(duration)
 //! re-probe — a control-side operation).
 
@@ -26,6 +26,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::Arc;
 
+use tono_core::adaptive::{AdaptiveMusic, LoopBuffer, Quantize, Stinger};
 use tono_core::dsl::{Adsr, SeqWave, SoundDoc};
 use tono_core::runtime::{
     At, AudioSource, Command, Engine, Performance, SCRATCH_FRAMES, StreamSource,
@@ -202,6 +203,32 @@ fn performance_fill_firing_a_stinger_is_allocation_free() {
         allocs, 0,
         "firing a stinger inside Performance::fill must not render or allocate \
          (the render happened at schedule time)"
+    );
+}
+
+#[test]
+fn adaptive_fill_firing_scheduled_stingers_is_allocation_free() {
+    let mut music = AdaptiveMusic::new(48_000);
+    music.add_layer(LoopBuffer::from_doc(&blip()), 0.0);
+    music.set_tempo(120.0, 4); // a beat every 24 000 frames
+    // The renders and the queue's growth happen here, off the audio path.
+    // The caller keeps the stingers, so a finished one frees nothing in fill.
+    let a = Stinger::render(&blip(), 48_000);
+    let b = music.render_stinger(&blip());
+    music.play_stinger_at(&a, Quantize::AtBeat(1));
+    music.play_stinger_at(&b, Quantize::Beat);
+    music.play_stinger_at(&a, Quantize::AtBeat(2));
+
+    let mut block = vec![0.0f32; 1024 * 2];
+    music.fill(&mut block); // warm-up: grows the bed's scratch
+    start_counting();
+    for _ in 0..60 {
+        music.fill(&mut block); // past beat 2: all three fire mid-block
+    }
+    let allocs = stop_counting();
+    assert_eq!(
+        allocs, 0,
+        "firing a scheduled stinger inside AdaptiveMusic::fill must not allocate"
     );
 }
 

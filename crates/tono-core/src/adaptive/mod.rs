@@ -20,12 +20,14 @@
 mod layers;
 mod schedule;
 mod sections;
+mod stinger;
 
 use crate::dsl::SoundDoc;
 use crate::runtime::oneshot::OneShot;
 use crate::runtime::timeline::Timeline;
 use crate::runtime::{AudioSource, Transport};
 pub use schedule::Quantize;
+pub use stinger::Stinger;
 
 /// A stereo buffer played on a seamless loop — a music stem.
 pub struct LoopBuffer {
@@ -970,5 +972,87 @@ mod tests {
             b[..n],
             "the deferred transition fires at an exact frame, not a block edge"
         );
+    }
+
+    /// Render `blocks` blocks of `block` frames and keep every sample.
+    fn run(m: &mut AdaptiveMusic, block: usize, frames: usize) -> Vec<f32> {
+        let mut acc = Vec::new();
+        let mut out = vec![0.0f32; block * 2];
+        while acc.len() < frames * 2 {
+            m.fill(&mut out);
+            acc.extend_from_slice(&out);
+        }
+        acc.truncate(frames * 2);
+        acc
+    }
+
+    #[test]
+    fn a_worker_rendered_stinger_lands_on_its_beat() {
+        // 120 bpm at 48 kHz: 24 000 frames per beat, beat 3 at frame 72 000.
+        let mut sync = AdaptiveMusic::new(48_000);
+        sync.set_tempo(120.0, 4);
+        sync.stinger_at(&tone(1320.0), Quantize::AtBeat(3));
+
+        let mut ahead = AdaptiveMusic::new(48_000);
+        ahead.set_tempo(120.0, 4);
+        let sting = std::thread::spawn(|| Stinger::render(&tone(1320.0), 48_000))
+            .join()
+            .unwrap();
+        // The render took real time; the schedule still names beat 3.
+        ahead.fill(&mut vec![0.0f32; 1000 * 2]);
+        ahead.play_stinger_at(&sting, Quantize::AtBeat(3));
+        let mut lead = vec![0.0f32; 1000 * 2];
+        sync.fill(&mut lead);
+
+        let a = run(&mut sync, 333, 90_000);
+        let b = run(&mut ahead, 512, 90_000);
+        assert_eq!(a, b, "byte-identical to the synchronous schedule");
+        let first = b
+            .iter()
+            .position(|&x| x != 0.0)
+            .expect("the stinger sounds")
+            / 2
+            + 1000;
+        // A sine starts at zero, so the first audible frame is one past the onset.
+        assert_eq!(first, 72_001, "starts on beat 3 exactly");
+    }
+
+    #[test]
+    fn a_passed_beat_fires_now_and_reset_drops_pending_beats() {
+        let mut m = AdaptiveMusic::new(48_000);
+        m.set_tempo(120.0, 4);
+        advance(&mut m, 30_000); // past beat 1
+        m.play_stinger_at(&m.render_stinger(&tone(990.0)), Quantize::AtBeat(1));
+        assert_eq!(
+            m.active_stingers(),
+            1,
+            "a beat already reached fires at once"
+        );
+
+        m.reset();
+        m.play_stinger_at(&m.render_stinger(&tone(990.0)), Quantize::AtBeat(1));
+        m.reset();
+        advance(&mut m, 30_000);
+        assert_eq!(m.active_stingers(), 0, "reset cleared the pending beat");
+    }
+
+    #[test]
+    fn a_prepared_stinger_replays_identically() {
+        let sting = Stinger::render(&tone(990.0), 48_000);
+        let copy = sting.clone();
+        assert!(
+            copy.shares_buffer_with(&sting),
+            "a clone does not copy audio"
+        );
+
+        let mut m = AdaptiveMusic::new(48_000);
+        m.set_tempo(120.0, 4);
+        m.play_stinger_at(&sting, Quantize::AtBeat(1));
+        m.play_stinger_at(&copy, Quantize::AtBeat(4));
+        let out = run(&mut m, 256, 5 * 24_000);
+        let len = sting.frames() * 2;
+        let at = |beat: usize| &out[beat * 48_000..beat * 48_000 + len];
+        assert_eq!(at(1), at(4), "both plays are the same audio");
+        assert!(peak(at(1)) > 0.0);
     }
 }

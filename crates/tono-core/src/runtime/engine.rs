@@ -77,6 +77,52 @@ pub struct Spawn {
     pub priority: Priority,
 }
 
+/// A voice captured from a patch by [`Engine::prepare`], to be rendered off
+/// the engine's lock and handed back to [`Engine::spawn_prepared`].
+///
+/// A real-time host keeps its `Engine` behind a lock the audio callback only
+/// `try_lock`s, so rendering a long one-shot inside [`spawn`](Engine::spawn)
+/// silences the whole output for the length of the render. Splitting the
+/// spawn moves that render out: `prepare` and `spawn_prepared` only copy and
+/// insert, and [`render`](Self::render) runs on any thread. Cloning a rendered
+/// voice shares its audio, so a game can keep one per sound and replay it
+/// without rendering again.
+#[derive(Clone)]
+pub struct PreparedVoice {
+    patch: usize,
+    sample_rate: u32,
+    values: BTreeMap<String, f32>,
+    state: VoiceState,
+}
+
+#[derive(Clone)]
+enum VoiceState {
+    /// The patch instantiated at its defaults, at the engine's rate.
+    Doc(Box<SoundDoc>),
+    Rendered(Player),
+}
+
+impl PreparedVoice {
+    /// Render the voice's audio now, if it is not rendered yet. This is the
+    /// O(duration) step; call it wherever a render may block.
+    pub fn render(&mut self) {
+        if let VoiceState::Doc(doc) = &self.state {
+            let player = Player::new((**doc).clone());
+            self.state = VoiceState::Rendered(player);
+        }
+    }
+
+    /// Whether [`render`](Self::render) has run.
+    pub fn is_rendered(&self) -> bool {
+        matches!(self.state, VoiceState::Rendered(_))
+    }
+
+    /// The patch this voice plays.
+    pub fn patch(&self) -> PatchId {
+        PatchId(self.patch)
+    }
+}
+
 /// Equal-level stereo balance (unity at centre): `pan` −1 = hard left, +1 = hard
 /// right. Returns per-channel gains `(left, right)`.
 pub(super) fn balance(pan: f32) -> (f32, f32) {
@@ -125,7 +171,9 @@ pub(super) struct Instance {
 /// [`stop`](Self::stop), …) render the whole document synchronously —
 /// O(duration), with allocations — so they must never run on an audio
 /// callback thread. Real-time hosts use [`split`](Self::split) to render on a
-/// pump thread joined to the callback by a wait-free ring. Note that
+/// pump thread joined to the callback by a wait-free ring, or keep the engine
+/// behind a lock and render one-shots outside it with
+/// [`prepare`](Self::prepare) and [`spawn_prepared`](Self::spawn_prepared). Note that
 /// `set_param` re-renders the whole doc per call with no coalescing —
 /// rate-limit parameter automation on the control side.
 pub struct Engine {
@@ -240,9 +288,44 @@ impl Engine {
     /// survives a steal; a voice outranked by every sounding instance is
     /// denied and returns an inert handle ([`is_active`](Self::is_active) is
     /// `false`). [`play`](Self::play) and [`play_looping`](Self::play_looping)
-    /// are the common cases.
+    /// are the common cases. Renders the patch here; a host that holds the
+    /// engine under a lock uses [`prepare`](Self::prepare) instead.
     pub fn spawn(&mut self, patch: PatchId, how: Spawn) -> InstanceHandle {
+        match self.prepare(patch) {
+            Some(voice) => self.spawn_prepared(voice, how),
+            // .get() in prepare: a PatchId is Copy and could come from another
+            // Engine — return the inert handle rather than panic.
+            None => InstanceHandle(0),
+        }
+    }
+
+    /// Capture a patch at its default parameters for a later
+    /// [`spawn_prepared`](Self::spawn_prepared), without rendering it. `None`
+    /// if the patch is not loaded in this engine.
+    pub fn prepare(&self, patch: PatchId) -> Option<PreparedVoice> {
+        let values = self.patches.get(patch.0).map(Patch::defaults)?;
+        let mut doc = self.build_doc(patch.0, &values, &BTreeMap::new());
+        // Instances render at the engine's rate, not each doc's own — one internal
+        // rate for the whole mix (resampling to the device belongs at the adapter).
+        doc.sample_rate = self.sample_rate;
+        Some(PreparedVoice {
+            patch: patch.0,
+            sample_rate: self.sample_rate,
+            values,
+            state: VoiceState::Doc(Box::new(doc)),
+        })
+    }
+
+    /// Spawn a voice from [`prepare`](Self::prepare), rendering it first if
+    /// [`PreparedVoice::render`] has not run. Behaves as [`spawn`](Self::spawn)
+    /// does, including a denial under the voice cap; a voice prepared at
+    /// another sample rate, or for a patch this engine never loaded, returns
+    /// the inert handle.
+    pub fn spawn_prepared(&mut self, voice: PreparedVoice, how: Spawn) -> InstanceHandle {
         let Spawn { looping, priority } = how;
+        if voice.sample_rate != self.sample_rate || voice.patch >= self.patches.len() {
+            return InstanceHandle(0);
+        }
         // Enforce the polyphony budget (if any) before adding a voice.
         if let Some(max) = self.max_voices
             && !self.make_room(max, priority)
@@ -250,19 +333,18 @@ impl Engine {
             // Outranked by every sounding voice — deny (virtualize to silence).
             return InstanceHandle(0);
         }
-        // .get(): a PatchId is Copy and could come from another Engine —
-        // return the inert handle rather than panic.
-        let Some(values) = self.patches.get(patch.0).map(Patch::defaults) else {
-            return InstanceHandle(0);
+        let mut player = match voice.state {
+            VoiceState::Doc(doc) => Player::new(*doc),
+            VoiceState::Rendered(player) => player,
         };
-        let doc = self.build_doc(patch.0, &values, &BTreeMap::new());
-        let player = self.new_player(doc, looping, 0);
+        player.looping = looping;
+        player.play();
         let id = self.next_id;
         self.next_id += 1;
         self.instances.push(Instance {
             id,
-            patch: patch.0,
-            values,
+            patch: voice.patch,
+            values: voice.values,
             layer_gains: BTreeMap::new(),
             player,
             fading_in: None,
