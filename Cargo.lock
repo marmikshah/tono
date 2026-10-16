@@ -1715,7 +1715,7 @@ dependencies = [
 
 [[package]]
 name = "tono"
-version = "1.11.0"
+version = "1.12.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1732,7 +1732,7 @@ dependencies = [
 
 [[package]]
 name = "tono-content"
-version = "1.11.0"
+version = "1.12.0"
 dependencies = [
  "anyhow",
  "schemars",
@@ -1744,7 +1744,7 @@ dependencies = [
 
 [[package]]
 name = "tono-core"
-version = "1.11.0"
+version = "1.12.0"
 dependencies = [
  "anyhow",
  "cpal",
@@ -1761,7 +1761,7 @@ dependencies = [
 
 [[package]]
 name = "tono-py"
-version = "1.11.0"
+version = "1.12.0"
 dependencies = [
  "numpy",
  "pyo3",
@@ -1771,7 +1771,7 @@ dependencies = [
 
 [[package]]
 name = "tono-web"
-version = "1.11.0"
+version = "1.12.0"
 dependencies = [
  "serde_json",
  "tono-core",
