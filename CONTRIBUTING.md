@@ -69,15 +69,19 @@ is where that is disclosed, so the release is only as good as its notes.
    that the `semver` CI job's report matches the "Breaking" section. Run the
    full gate from the README plus `cargo test --locked -p tono-core --test
    soak -- --ignored` and `cargo deny check advisories licenses`.
-4. Merge, then tag the reviewed commit on `master` as `vX.Y.Z` and push the
-   tag. `publish.yml` publishes `tono-core` to crates.io, waits for the index,
-   then publishes `tono`; versions already on crates.io are skipped on a
-   retry. `release.yml` creates the GitHub Release from that version's
-   changelog section (missing notes fail the workflow) and attaches the CLI
-   binaries for Linux x86_64, macOS (Apple silicon and Intel) and Windows
-   x86_64 with SHA-256 sidecars. `wheels.yml` builds the `tono-py` wheel and
-   sdist, runs the installed-wheel test, and publishes them to PyPI through
-   the `pypi` environment (trusted publishing, `skip-existing` on re-runs).
+4. Merge, wait for master CI to pass on the merge commit, then run
+   **Actions → Release → Run workflow** on `master`. Nobody tags by hand.
+   `release.yml` refuses a dispatch that is not the live `master`, whose
+   version is already tagged, whose changelog heading is missing or undated,
+   or whose master CI run has not passed. It then builds the CLI binaries
+   (Linux x86_64, macOS Apple silicon and Intel, Windows x86_64, with SHA-256
+   sidecars) and the tested `tono-py` wheel and sdist (`wheels.yml`),
+   publishes `tono-core` and then `tono` to crates.io (`production`
+   environment), publishes the wheel and sdist to PyPI (`pypi` environment,
+   trusted publishing), and last creates the `vX.Y.Z` tag and the GitHub
+   Release from that changelog section with the binaries attached. Every
+   publish skips what is already published, so "Re-run failed jobs" resumes
+   a release that stopped partway.
 5. A published crate version cannot be unpublished, only yanked. Speaker
    playback and real SoundFont output need a host with a device; record any
    check that could not be run in the release review.

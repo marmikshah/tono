@@ -1,47 +1,101 @@
 name: Release
 
+# Manually dispatched release: Actions → Release → Run workflow on master.
+# The version comes from Cargo.toml and the notes from its CHANGELOG.md
+# section; nobody tags by hand. Order matters:
+#
+#   preflight  the live master, a dated changelog entry, a vacant tag, and
+#              a green CI run on this exact commit
+#   build      CLI binaries for four targets + the tested tono-py wheel/sdist
+#   crates     tono-core, then tono once the index serves it (`production`)
+#   pypi       the wheel and sdist through trusted publishing (`pypi`)
+#   github     the vX.Y.Z tag and GitHub Release with the binaries, last, so
+#              a failed publish never leaves a tag behind
+#
+# Every publish step skips what is already published, so "Re-run failed jobs"
+# resumes a half-finished release.
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  UA: "tono-ci (https://github.com/marmikshah/tono)"
+
 jobs:
-  github-release:
+  preflight:
+    name: Verify release identity
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    timeout-minutes: 5
+    outputs:
+      commit: ${{ steps.identity.outputs.commit }}
+      tag: ${{ steps.identity.outputs.tag }}
+      version: ${{ steps.identity.outputs.version }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: python scripts/release.py check-version "$GITHUB_REF_NAME"
-      - name: Create the GitHub Release from the changelog
+      - name: Verify release identity
+        id: identity
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            exit 0
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+
+          [ "$GITHUB_REF" = refs/heads/master ] || fail "dispatch the release from master (got $GITHUB_REF)"
+          COMMIT="$(git rev-parse HEAD)"
+          LIVE="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/master" --jq .object.sha)"
+          [ "$COMMIT" = "$LIVE" ] || fail "master moved to $LIVE after the dispatch of $COMMIT; dispatch again"
+
+          VERSION="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "not a release version: '$VERSION'"
+          TAG="v$VERSION"
+          python scripts/release.py check-version "$TAG"
+
+          HEADING="$(grep -m1 -F "## $VERSION — " CHANGELOG.md || true)"
+          [ -n "$HEADING" ] || fail "CHANGELOG.md has no '## $VERSION — <date>' section"
+          [[ "$HEADING" =~ —\ [0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || fail "date the changelog heading: $HEADING"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            fail "tag $TAG already exists; bump the version"
           fi
-          notes="$RUNNER_TEMP/release-notes.md"
-          if ! awk -v version="${GITHUB_REF_NAME#v}" '
-            $1 == "##" { included = $2 == version; next }
-            included { print; if (NF) found = 1 }
-            END { if (!found) exit 1 }
-          ' CHANGELOG.md > "$notes"; then
-            echo "::error::No changelog entries for $GITHUB_REF_NAME"
-            exit 1
-          fi
-          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$notes" --verify-tag
+
+          # master CI (the gate, platforms, MSRV, public API, dependencies)
+          # already ran on this commit when it landed; require it green
+          # rather than spend another 45 minutes running it again.
+          CI="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$COMMIT&event=push&branch=master" \
+            --jq '[.workflow_runs[] | {status, conclusion}][0] // empty')"
+          [ -n "$CI" ] || fail "no master CI run for $COMMIT"
+          [ "$(jq -r .status <<<"$CI")" = completed ] || fail "master CI for $COMMIT is still running; dispatch once it finishes"
+          [ "$(jq -r .conclusion <<<"$CI")" = success ] || fail "master CI for $COMMIT did not pass ($(jq -r .conclusion <<<"$CI"))"
+
+          {
+            echo "commit=$COMMIT"
+            echo "tag=$TAG"
+            echo "version=$VERSION"
+          } >> "$GITHUB_OUTPUT"
+          # Literal Markdown backticks belong in the summary format string.
+          # shellcheck disable=SC2016
+          printf '## Release preflight\n\n- Version: `%s`\n- Tag: `%s`\n- Commit: `%s`\n' \
+            "$VERSION" "$TAG" "$COMMIT" >> "$GITHUB_STEP_SUMMARY"
+
   binaries:
-    needs: github-release
+    name: CLI (${{ matrix.target }})
+    needs: preflight
     # Default-feature builds only: no ALSA, FLAC/OGG or MIDI, so every target
     # builds without native packages. Cargo features are a `cargo install`
     # decision.
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           - os: ubuntu-latest
@@ -53,24 +107,134 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
-    permissions:
-      contents: write
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
       - uses: dtolnay/rust-toolchain@1.88.0
         with:
           targets: ${{ matrix.target }}
-      - shell: bash
-        run: python scripts/release.py check-version "$GITHUB_REF_NAME"
       - name: Build the CLI
         run: cargo build --locked --release -p tono --bin tono --target ${{ matrix.target }}
       - name: Package with checksum
         run: python scripts/release.py package-cli --target ${{ matrix.target }}
-      - name: Upload to the GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: dist
+          if-no-files-found: error
+
+  wheels:
+    needs: preflight
+    uses: ./.github/workflows/wheels.yml
+    with:
+      ref: ${{ needs.preflight.outputs.commit }}
+
+  crates:
+    name: Publish to crates.io
+    needs: [preflight, binaries, wheels]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_API_TOKEN }}
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.88.0
+      # cargo strips the CLI's path dependency and pins the crates.io
+      # version, so tono-core must be indexed before tono is published.
+      - name: Publish tono-core
+        run: |
+          if curl -sf -H "User-Agent: $UA" https://index.crates.io/to/no/tono-core | grep -qF "\"vers\":\"$VERSION\""; then
+            echo "tono-core $VERSION already on crates.io; skipping"
+          else
+            cargo publish --locked -p tono-core
+          fi
+      - name: Wait for crates.io to index tono-core
+        run: |
+          for _ in $(seq 1 20); do
+            if curl -sf -H "User-Agent: $UA" https://index.crates.io/to/no/tono-core | grep -qF "\"vers\":\"$VERSION\""; then
+              echo "tono-core $VERSION indexed"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::tono-core $VERSION still not indexed after 5 minutes"
+          exit 1
+      - name: Publish tono (CLI)
+        run: |
+          if curl -sf -H "User-Agent: $UA" https://index.crates.io/to/no/tono | grep -qF "\"vers\":\"$VERSION\""; then
+            echo "tono $VERSION already on crates.io; skipping"
+          else
+            cargo publish --locked -p tono
+          fi
+
+  pypi:
+    name: Publish to PyPI
+    needs: [preflight, binaries, wheels]
+    runs-on: ubuntu-latest
+    environment: pypi
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheels-linux-x86_64
+          path: dist
+      - name: Drop the checksum sidecars
+        run: rm -f dist/*.sha256
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          # A re-run must not fail on files already uploaded.
+          skip-existing: true
+
+  github:
+    name: Tag and create the GitHub Release
+    needs: [preflight, crates, pypi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      COMMIT: ${{ needs.preflight.outputs.commit }}
+      TAG: ${{ needs.preflight.outputs.tag }}
+      VERSION: ${{ needs.preflight.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*
+          path: dist
+          merge-multiple: true
+      - name: Create the release
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            exit 0
+          fi
+          notes="$RUNNER_TEMP/release-notes.md"
+          if ! awk -v version="$VERSION" '
+            $1 == "##" { included = $2 == version; next }
+            included { print; if (NF) found = 1 }
+            END { if (!found) exit 1 }
+          ' CHANGELOG.md > "$notes"; then
+            echo "::error::No changelog entries for $TAG"
+            exit 1
+          fi
+          gh release create "$TAG" --target "$COMMIT" --title "$TAG" --notes-file "$notes" dist/*
+          echo "Released [$TAG](https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG)." >> "$GITHUB_STEP_SUMMARY"
