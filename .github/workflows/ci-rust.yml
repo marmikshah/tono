@@ -12,7 +12,8 @@ permissions:
 
 jobs:
   gate:
-    runs-on: ubuntu-latest
+    # Python 3.9 is unavailable from setup-python on Ubuntu 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       CARGO_TERM_COLOR: always
