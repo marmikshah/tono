@@ -50,7 +50,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Read the pinned toolchain
         id: pin
         run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
@@ -71,7 +71,7 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Read rust-version from the manifest
         id: msrv
         run: |
@@ -105,7 +105,7 @@ jobs:
       RUSTUP_TOOLCHAIN: nightly-2026-06-26
       CARGO_PUBLIC_API: 0.52.0
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install ALSA headers for the core cpal feature
         # --all-features builds the speaker adapter, whose API is part of the
         # snapshot, and cpal links ALSA on Linux.
@@ -116,7 +116,7 @@ jobs:
         with:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/cache-cargo-install-action@v2
+      - uses: taiki-e/cache-cargo-install-action@v3
         with:
           tool: cargo-public-api@${{ env.CARGO_PUBLIC_API }}
       - name: Regenerate the public API snapshot
@@ -139,7 +139,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install ALSA headers for the CLI's play feature
         run: |
           sudo apt-get update
@@ -156,7 +156,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || !inputs.bench
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories licenses
@@ -178,11 +178,11 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.bench
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.120.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo bench --locked -p tono-core 2>&1 | tee bench.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: criterion-report
           path: |
