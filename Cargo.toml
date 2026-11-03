@@ -31,9 +31,9 @@ base64 = "0.22.1"
 # No `color` feature: the CLI help stays plain text and skips the anstream
 # stack; derive + suggestions are the only extras over clap's core.
 clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions"] }
-cpal = "0.15.3"
-criterion = "0.5"
-flacenc = { version = "0.4", default-features = false }
+cpal = "0.18.2"
+criterion = "0.8"
+flacenc = { version = "0.5", default-features = false }
 hound = "3.5.1"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 midly = "0.5"
